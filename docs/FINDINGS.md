@@ -121,8 +121,8 @@ m·g (0.981 N), peak deviation at physics rate in brackets:
 
 A 2 N inertial swing on a 0.1 kg load is small next to the 13–45 N contact forces in M1, but it
 is the *same size* as the M1 lateral-push forces (0.2–3 N) and larger than any sensible contact
-detection threshold. The ratio scales with load mass: robosuite's Panda gripper is ~0.7 kg
-(M4 will measure), so the same accelerations give ~7× these numbers.
+detection threshold. The ratio scales with load mass: robosuite's `Wipe` tool turned out to be
+only 0.03 kg (M4), but a parallel gripper is ~0.9 kg, i.e. 9× these numbers (M4 emulates that).
 
 **How well does compensation work? It depends entirely on where the acceleration comes from.**
 Residual RMS as % of m·g:
@@ -232,3 +232,84 @@ dt 0.002 data would see ~2× larger, ~2× shorter spikes on a dt 0.0005 sim or o
 stiff contact — and it will never see them at all through a 20 Hz observation. Peak-force
 features must come from the physics-rate buffer (`ft_raw_hf`), and augmentation over
 solref/timestep is the sim-side equivalent of domain randomization for force.
+
+## M4 — Track B: robosuite Panda on `Wipe` (2026-09-19)
+
+Command: `make m4` (= `python scripts/04_robosuite_wipe_ft.py --out outputs/m4`; BASIC/OSC_POSE,
+kp 150, 20 Hz, seed 0). Artifacts: `report.json`, `load_params.json`, `free_space_{0.2,0.5,1.0}.*`,
+`press_slide_{raw,comp}.{npz,json,mp4}` + `_raw/_comp/_fmag/_joint_torque.png`, `heavy_tool/`.
+
+**API facts pinned.** `env.robots[0].ee_force["right"]` equals the raw `gripper0_right_force_ee`
+sensor to the last bit (max diff 0.0) — it is a plain sensordata read. The sensor site
+`gripper0_right_ft_frame` sits on body `gripper0_right_wiping_gripper` (parent
+`robot0_right_hand`); everything distal weighs **0.03 kg** with COM at the site. Sign convention
+is the same as Track A: rest reading `(0.0007, 0.041, −0.291) N` = `m·Rᵀ(−g)` exactly, i.e. the
+force the hand applies to the tool, in the site frame, whose z axis points *down* (world
+`(0.11, 0.00, −0.99)`). **Frame trap:** `obs["robot0_eef_quat"]` is the grip site, rotated
+exactly 90° about z relative to `ft_frame`; using it to rotate the wrench swaps Fx/Fy. Episodes
+now log the F/T-site pose as `ee_pos/ee_quat`. **Seeding trap:** robosuite 1.5.2 draws init
+noise and placements from `env.rng` (a Generator shared by reference with the placement
+sampler); `np.random.seed` has no effect. `ArmRig.reset(seed)` reseeds that Generator in place;
+verified bit-identical episodes. **Joint torques** via `sim.data.ctrl[0:7]` (M0).
+
+**Load identification on the arm** (OSC rotation deltas ±20° about x and y, 78 static samples):
+m = 0.02999 kg, COM = (−1.5e-5, 1.1e-5, −1.2e-4) m, residual 2.8e-5 N. With the tool mass
+patched to 0.9 kg (`ArmRig.set_tool_mass`): m = 0.89999 kg, residual 6.5e-5 N. Same LSQ as
+Track A, works unchanged.
+
+**Free-space F/T on the arm vs Track A.** Alternating ±z then ±x moves, peak EE speed 0.25 m/s,
+peak accel 7.3 m/s² (larger than any Track A motion):
+
+| tool | m·g | raw swing, control rate (peak) | raw swing, physics rate (peak) | after compensation (peak) |
+|---|---|---|---|---|
+| Wipe tool 0.03 kg | 0.29 N | 0.125 N | 0.41 N | 0.004 N |
+| 0.9 kg gripper | 8.83 N | 3.95 N | 11.3 N | 0.13 N |
+
+Physics-rate compensation (same code path as Track A, hooked into robosuite's per-substep
+`_update_observables`) removes 97–99 % of the swing. The arm adds nothing Track A didn't have:
+the sensor is still exactly `m·Rᵀ(a−g)` + contact. What the arm *does* add is a 3× larger
+physics-rate-vs-control-rate ratio (0.41 vs 0.125 N) because the OSC excites the arm at
+frequencies the 20 Hz observation cannot see. The joint-torque signal is dominated by gravity
+(RMS 25–43 N·m); contact changes each joint by only 1–5 N·m, comparable to what a
+posture change does — it is a poor stand-in for the wrist sensor.
+
+**Press and slide** (descend at 0.1 m/s, 1 N threshold, hold target 10 mm below the contact
+height, slide +y): contact at t = 2.15 s detected on the same control step as ground truth
+(`n_contacts > 0`). Onset: physics-rate Fz jumps −0.3 → **54.6 N** in one step and decays over
+~200 ms to 17 N; the control-rate sample reads 33 N (the 56 N spike is 60 % under-observed, as
+in M1/M3). Steady press: `ft_comp` world = `(0.25, 0.40, −15.75) N` vs summed contact wrench
+`(−0.24, −0.39, +15.24) N` — sign-opposite as they should be (tool-on-table vs table-on-tool),
+3 % apart because `ft_comp` is a control-interval average while the contact sum is an end-of-
+interval sample (Fz std 0.95 N at physics rate during the slide). **Pressing straight down gives
+a world −Z wrench of the tool on the table ✓**, while the raw sensor reads
+`(0.33, −1.92, +14.82) N` in its own (z-down) frame. Later in a longer slide the force climbed to
+72 N as the arm approached its workspace limit — that rise is *posture*, not task, another reason
+force targets do not transfer between configurations.
+
+**OSC `kp` is not a stiffness.** A 10 mm press with kp = 150 gives 15–17 N, not 1.5 N: robosuite's
+OSC computes `F = Λ (kp·Δx − kd·ẋ)` with Λ the task-space inertia matrix (~1 kg-scale here), so
+the effective Cartesian stiffness is Λ·kp and configuration dependent. M5 quantifies it.
+
+**Does a threshold detector false-trigger before/after compensation?**
+Sweep threshold × descend speed (0.4 / 1.0 action ≈ 0.10 / 0.25 m/s), raw vs compensated:
+
+| tool | threshold | raw, 0.1 m/s | raw, 0.25 m/s | compensated (any) |
+|---|---|---|---|---|
+| 0.03 kg | 0.1 / 0.3 / 1.0 N | 0 / 0 / 0 | 0 / 0 / 0 | 0 |
+| 0.9 kg | 0.3 N | **1** false | **4** false | 0 |
+| 0.9 kg | 1.0 N | 0 | **1** false | 0 |
+| 0.9 kg | 3.0 N | 0 | 0 | 0 |
+
+With the 30 g wiping tool the inertial swing (0.125 N) never reaches even a 0.1 N threshold, so
+the plan's expected false triggers do not occur — the tool is too light. With a realistic 0.9 kg
+gripper the raw signal false-triggers at any threshold below ~4 N when moving fast; the
+compensated signal never does, and a 0.3 N threshold becomes usable. Every run still found the
+true contact afterwards (no misses).
+
+What this means for a force-aware policy: (1) on the arm, everything measured in Track A holds
+and compensation is equally exact; (2) contact detection thresholds are a property of *tool mass
+× acceleration*, so a policy trained with a light tool will learn thresholds that false-trigger
+with a heavier one unless inputs are compensated; (3) the observation must carry the F/T-site
+frame (or the wrench in world), not the grip-site frame; (4) OSC gains must be reported as
+Λ·kp, and effective stiffness in N/m measured, before force magnitudes across datasets can be
+compared.
