@@ -93,3 +93,72 @@ only the quasi-static wind-up is, so a "spike detector" must run on physics-rate
 the steady force is set by the controller (kp × overshoot), not by the task, so force targets
 learned under one kp do not transfer; (3) sign and frame must be pinned before any learning:
 here +Fz means the wrist is pulling *up* on the peg.
+
+## M2 — Contamination: gravity and inertia (2026-09-19)
+
+Command: `make m2` (= `python scripts/02_contamination.py --out outputs/m2`, 20 Hz control,
+kp = 800, 0.1 kg peg). Artifacts: `outputs/m2/{tilt,hold,descent_50,descent_150,sine_0.5,sine_2,
+sine_5}.{npz,json}`, `*_raw.png`, `*_comp.png`, `tilt_{raw,comp}.png`, `report.json`,
+`load_params.json`.
+
+**Identification from static poses (tilt 0→90° about y, 10 holds, 100 static samples).**
+Least squares gives m = 0.10000 kg (true 0.1), COM = (0, 0, −0.0300) m (true −0.030), static
+residual 8e-7 N. At 90° tilt the full 0.981 N moves from Fz into Fx (`tilt_raw.png`) — the
+"contamination" is the load weight rotating through the sensor frame, and it is removed exactly
+by `m·Rᵀ(−g)` with the identified parameters (`tilt_comp.png`).
+
+**How big is free-space contamination vs M1 contact forces?** RMS of `ft_raw − m·g` as % of
+m·g (0.981 N), peak deviation at physics rate in brackets:
+
+| motion | raw RMS % of m·g | peak dev [N] | peak accel [m/s²] |
+|---|---|---|---|
+| hold | 0.0 | 0.00 | 0.0 |
+| descent 50 mm/s | 6.5 | 0.33 | 1.5 |
+| descent 150 mm/s | 12.9 | 1.00 | 4.4 |
+| sine 0.5 Hz, 10 mm | 5.5 | 0.21 | 0.9 |
+| sine 2 Hz, 10 mm | 22.6 | 0.78 | 3.1 |
+| sine 5 Hz, 10 mm | 53.2 | 2.09 | 7.5 |
+
+A 2 N inertial swing on a 0.1 kg load is small next to the 13–45 N contact forces in M1, but it
+is the *same size* as the M1 lateral-push forces (0.2–3 N) and larger than any sensible contact
+detection threshold. The ratio scales with load mass: robosuite's Panda gripper is ~0.7 kg
+(M4 will measure), so the same accelerations give ~7× these numbers.
+
+**How well does compensation work? It depends entirely on where the acceleration comes from.**
+Residual RMS as % of m·g:
+
+| motion | gravity only | + FD accel @ 20 Hz (control rate) | + FD accel @ 500 Hz, averaged per control step | + exact MuJoCo site accel |
+|---|---|---|---|---|
+| descent 150 | 12.9 | 14.8 | **0.30** | 0.0 |
+| sine 2 Hz | 22.6 | 25.1 | **0.22** | 0.0 |
+| sine 5 Hz | 53.2 | 88.1 | **2.9** | 0.0 |
+
+- With MuJoCo's exact site acceleration the residual is 0 to machine precision: the simulated
+  sensor is *exactly* `m·Rᵀ(a − g)` plus contact. There is no noise, bias, or sensor dynamics.
+- Differentiating the 20 Hz velocity is **worse than not compensating at all**: the one-sample
+  lag of a causal difference at 50 ms turns the correction into a phase-shifted copy of the
+  error (`sine_2_comp.png`, green vs orange). Central differences at 20 Hz merely break even.
+- Differencing at physics rate (2 ms) and averaging the compensated wrench over the control
+  interval brings 2 Hz to 0.2 % and 5 Hz to 2.9 %. This is what a real F/T driver does (1 kHz
+  compensation → downsample), so `Gantry.step` now does it and `ft_comp` in every episode is
+  produced this way. `test_compensation.py` pins < 5 % at 2 Hz (actual 0.22 %).
+- **MuJoCo gotcha:** `mj_objectAcceleration` / `cacc` returns *proper* acceleration (+9.81 ẑ at
+  rest) because `mj_rnePostConstraint` sets the world acceleration to −g. `Gantry.ee_acc_world`
+  adds gravity back. Verified: rest reading 0.000 m/s² after the fix (`report.json:
+  cacc_check_rest_accel_mps2`).
+
+**Does `ft_comp` match ground truth in contact?** Static press on the rim (2 mm offset,
+4 contacts): `ft_comp = (0, 0, −13.870) N`, summed `mj_contactForce` on the peg = (0, 0, +13.870)
+N world; error 1e-10 %. Torque: `ft_comp Ty = 0.1283 N·m` = −(contact torque about the site)
+within 1e-10. `test_contact_consistency.py` pins 2 %. **Sign convention for `ft_comp`:** it is
+the wrench the load applies *to the environment* (minus the contact wrench on the load), so
+pressing down reads −Fz. PLAN §5 updated. `mj_contactForce` sign: the returned force (contact
+frame, normal from geom1 to geom2) is the force **on geom2**; `fvb.contacts.geom_contact_wrench`
+flips the sign when the peg is geom1 — the 1e-10 agreement above is the check.
+
+What this means for a force-aware policy: compensation is cheap and exact *if* it runs at the
+physics/driver rate before downsampling; do it in the data pipeline, not in the policy. A policy
+fed raw 20 Hz F/T plus 20 Hz proprioception cannot learn to compensate inertia itself, because the
+information (acceleration) is aliased away at that rate. Contact detection thresholds must be set
+above the *uncompensated* inertial swing unless compensation is in the loop (M4 tests this on
+the arm).

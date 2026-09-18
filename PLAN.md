@@ -131,7 +131,7 @@ One `.npz` per episode plus a sibling `.json` with the full config, seed, git SH
 | `ee_vel` | (T,6) | linear + angular velocity, world |
 | `ft_raw` | (T,6) | force(3)+torque(3) in **sensor-site frame**, unmodified |
 | `ft_world` | (T,6) | same wrench rotated to world frame |
-| `ft_comp` | (T,6) | after gravity + inertial compensation (sensor frame) |
+| `ft_comp` | (T,6) | after gravity + inertial compensation (sensor frame). Computed at physics rate and averaged over the control interval (M2). Sign: the wrench the **load applies to the environment** = −(contact wrench on the load). |
 | `ft_raw_hf` | (T·k,6) | every physics step, for spike analysis |
 | `contact_wrench` | (T,6) | ground truth: sum of `mj_contactForce` on peg/tool geoms, world frame |
 | `n_contacts` | (T,) | active contacts involving the peg/tool |
