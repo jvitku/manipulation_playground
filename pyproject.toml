@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fvb"
+version = "0.0.1"
+description = "force-vla-basics: Stage 0 - trustworthy F/T readings on simulated peg-in-hole"
+requires-python = ">=3.11"
+dependencies = [
+  "mujoco==3.3.0",
+  "robosuite==1.5.2",
+  "numpy<2",
+  "scipy",
+  "matplotlib",
+  "imageio",
+  "imageio-ffmpeg",
+  "h5py",
+  "tqdm",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"fvb.scenes" = ["*.xml"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["outputs", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+ignore = ["E741"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = ["ignore::DeprecationWarning"]

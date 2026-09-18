@@ -1,0 +1,39 @@
+<mujoco model="peg_in_hole">
+  <option timestep="0.002" integrator="implicitfast" cone="elliptic"/>
+  <default><geom condim="4" friction="0.6 0.005 0.0001" solref="0.005 1"/></default>
+  <worldbody>
+    <geom name="floor" type="plane" size="1 1 .1"/>
+    <!-- square hole: opening 21 mm, depth 40 mm; peg is 20 mm -> 0.5 mm clearance per side -->
+    <body name="hole" pos="0 0 0.02">
+      <geom name="w_px" type="box" size="0.02 0.0505 0.02" pos=" 0.0305 0 0"/>
+      <geom name="w_nx" type="box" size="0.02 0.0505 0.02" pos="-0.0305 0 0"/>
+      <geom name="w_py" type="box" size="0.0105 0.02 0.02" pos="0  0.0305 0"/>
+      <geom name="w_ny" type="box" size="0.0105 0.02 0.02" pos="0 -0.0305 0"/>
+    </body>
+    <body name="gantry_x" pos="0 0 0.15">
+      <joint name="jx" type="slide" axis="1 0 0" damping="20"/>
+      <inertial pos="0 0 0" mass="0.5" diaginertia="1e-3 1e-3 1e-3"/>
+      <body name="gantry_y">
+        <joint name="jy" type="slide" axis="0 1 0" damping="20"/>
+        <inertial pos="0 0 0" mass="0.5" diaginertia="1e-3 1e-3 1e-3"/>
+        <body name="wrist">
+          <joint name="jz" type="slide" axis="0 0 1" damping="20"/>
+          <inertial pos="0 0 0" mass="0.5" diaginertia="1e-3 1e-3 1e-3"/>
+          <body name="peg" pos="0 0 -0.01">
+            <site name="ft" pos="0 0 0" size="0.004"/>
+            <geom name="peg" type="box" size="0.010 0.010 0.03" pos="0 0 -0.03" mass="0.1"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="ax" joint="jx" kp="800"/>
+    <position name="ay" joint="jy" kp="800"/>
+    <position name="az" joint="jz" kp="800"/>
+  </actuator>
+  <sensor>
+    <force name="ft_force" site="ft"/>
+    <torque name="ft_torque" site="ft"/>
+  </sensor>
+</mujoco>

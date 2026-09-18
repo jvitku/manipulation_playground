@@ -1,0 +1,29 @@
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: fvb:latest
+    volumes:
+      - ..:/workspace
+    working_dir: /workspace
+    shm_size: 2gb
+    environment:
+      - HOME=/tmp
+    stdin_open: true
+    tty: true
+
+  # Not needed for Stage 0. Exists so later stages don't require a Docker rewrite.
+  dev-gpu:
+    extends: dev
+    environment:
+      - MUJOCO_GL=egl
+      - PYOPENGL_PLATFORM=egl
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

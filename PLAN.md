@@ -20,6 +20,8 @@ Non-goals for this stage: policies, datasets at scale, VLAs, tactile sim, real h
 | Sim defaults | robosuite model timestep 0.002 s, solver iterations 100, `control_freq=20` → 25 physics steps per action. |
 | Built-in tasks | Single-arm peg-in-hole does **not** exist. Available contact-rich tasks: `Wipe`, `NutAssemblyRound`, `NutAssemblySquare`, `Door`, `ToolHang`, `TwoArmPegInHole` (two arms). |
 | GL backend | robosuite forces `MUJOCO_GL=egl` when `macros.MUJOCO_GPU_RENDERING` is true unless `MUJOCO_GL` is already `osmesa` or `glx`. Set `MUJOCO_GL=osmesa` explicitly for CPU containers. |
+| Joint torques (corrected M0, 2026-09-19) | `env.robots[0].torques` is **`None`** in robosuite 1.5.2 (never populated on the composite-controller path). Use `env.sim.data.ctrl[env.robots[0]._ref_arm_joint_actuator_indexes]` — identical to `composite_controller.part_controllers["right"].torques` and to `qfrc_actuator[:7]` (all Panda arm actuators have gear 1). Wrapped as `RobosuiteFT.joint_torques()`. |
+| Raw-scene F/T at rest (M0) | Free-hanging 0.1 kg peg, sensor reads `ft_force = [0, 0, +0.981]` N: **+Fz** for a peg pulling *down* on the wrist. See M1 for the sign derivation. |
 | Raw MuJoCo scene in §6 | Runs as written. Free-space Fz ≈ +0.945 N during accelerating descent for a 0.1 kg peg (static value is m·g = 0.981 N — the difference is inertial contamination). Aligned insert bottoms out at ~21 N; 4 mm lateral offset jams on the rim at ~53 N. |
 
 Because no single-arm peg-in-hole ships with robosuite, the plan has two tracks:
@@ -134,7 +136,7 @@ One `.npz` per episode plus a sibling `.json` with the full config, seed, git SH
 | `contact_wrench` | (T,6) | ground truth: sum of `mj_contactForce` on peg/tool geoms, world frame |
 | `n_contacts` | (T,) | active contacts involving the peg/tool |
 | `action` | (T,A) | commanded action |
-| `joint_torque` | (T,J) | Track B only: `env.robots[0].torques` |
+| `joint_torque` | (T,J) | Track B only: applied arm torques, `sim.data.ctrl[arm actuator idx]` (see §2) |
 | `image` | (T,H,W,3) uint8 | optional, off by default |
 | `success` | () | bool |
 
@@ -223,7 +225,7 @@ Each milestone: implement → run → save artifacts to `outputs/mN/` → add te
 
 ### M4 — Track B: robosuite Panda on `Wipe`
 - `04_robosuite_wipe_ft.py`: `suite.make("Wipe", robots="Panda", controller_configs=cfg, has_renderer=False, has_offscreen_renderer=<GL ok>, use_camera_obs=False, control_freq=20)`. Scripted policy: move above the table, descend until |F| crosses a threshold, slide laterally while regulating downward displacement. Actions are OSC_POSE deltas (6-D here; `Wipe` uses a gripperless wiping tool).
-- Log both `env.robots[0].ee_force["right"]` and the raw `gripper0_right_force_ee` sensor and assert they agree. Also log `env.robots[0].torques` as the joint-torque view of the same contact (the TA-VLA-style signal).
+- Log both `env.robots[0].ee_force["right"]` and the raw `gripper0_right_force_ee` sensor and assert they agree. Also log the applied joint torques (`RobosuiteFT.joint_torques()`, see §2) as the joint-torque view of the same contact (the TA-VLA-style signal).
 - Rotate the wrench to world using the `ft_frame` site rotation (`env.sim.data.site_xmat`); sanity check: pressing straight down on the table gives a world-Z force.
 - **Questions:** How does arm F/T in free space compare to Track A (the tool is heavier and the arm accelerates in all axes)? Does the threshold-based contact detector false-trigger during fast free-space motion before compensation? After?
 
