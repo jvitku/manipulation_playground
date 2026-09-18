@@ -87,6 +87,7 @@ class ArmRig:
     _comp_n: int = 0
     _prev_vel: np.ndarray | None = None
     _pending_action: np.ndarray | None = None
+    default_grip: float = -1.0  # appended when a 6-D arm action is given to a 7-D env (open)
 
     def __post_init__(self) -> None:
         self.ft = RobosuiteFT(self.env)
@@ -185,7 +186,10 @@ class ArmRig:
         self._hf_ft.clear()
         self._comp_acc[:] = 0.0
         self._comp_n = 0
-        self.obs, r, done, info = self.env.step(np.asarray(action, dtype=np.float64))
+        action = np.asarray(action, dtype=np.float64)
+        if len(action) == self.env.action_dim - 1:  # arm-only action on a gripper env
+            action = np.append(action, self.default_grip)
+        self.obs, r, done, info = self.env.step(action)
         if log is not None:
             for t, f in zip(self._hf_t, self._hf_ft, strict=True):
                 log.step_hf(t, f)
@@ -413,3 +417,164 @@ def press_and_slide_variable_kp(
         k += 1
     events["phase_idx"]["end"] = k
     return events
+
+
+# ----------------------------------------------------------------------------------------------
+# NutAssemblyRound scripted grasp -> transport -> mate (M6)
+# ----------------------------------------------------------------------------------------------
+@dataclass
+class NutMateParams:
+    hover: float = 0.10  # m above the handle before descending
+    grasp_dz: float = 0.006  # eef site height above the (settled) handle centre when closing
+    lift_z: float = 1.04  # world z to carry the nut (peg top is at 0.95)
+    settle_steps: int = 8  # the nut is spawned ~6 cm above the table and must drop first
+    carry_gain: float = 0.4  # P-gain (of the 0.05 m/step saturation) while carrying the nut
+    lower_speed: float = -0.3  # unit action during mating descent
+    contact_threshold_N: float = 2.0
+    mate_steps: int = 40  # steps of lowering after contact is detected
+    release: bool = True
+
+
+def _yaw_action(rig: ArmRig, yaw_target_world: float) -> float:
+    """Unit yaw delta (rotation about world z) moving the finger closing axis to a target yaw."""
+    R = rig.ee_rot()
+    # finger closing axis is the site's x axis in world (see M6 probe: fingers along world y at
+    # yaw 0, site x = world y) -> current closing yaw
+    ax = R[:, 0]
+    cur = float(np.arctan2(ax[1], ax[0]))
+    err = (yaw_target_world - cur + np.pi) % (2 * np.pi) - np.pi
+    return float(np.clip(err / 0.5, -1, 1))
+
+
+def nut_grasp_and_mate(
+    rig: ArmRig,
+    prm: NutMateParams,
+    log: EpisodeLogger | None = None,
+    nut_geoms: list[str] | None = None,
+) -> dict:
+    """Scripted NutAssemblyRound: yaw-align, descend on the handle, grasp, lift, carry over
+    peg2, lower until the F/T detector fires, keep lowering, release. Uses privileged sim
+    state (nut/handle/peg poses) — this is a data-collection script, not a policy.
+
+    Returns phase indices (control steps), event times and the env's own success flag.
+    """
+    env, m, d = rig.env, rig.m, rig.d
+    sid_h = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "RoundNut_handle_site")
+    sid_c = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "RoundNut_center_site")
+    bid_peg = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "peg2")
+    ev: dict = {"phase_idx": {}, "t_contact_gt": None, "t_detect": None, "grasped": False}
+    k = 0
+
+    def step(a6, grip, phase=None):
+        nonlocal k
+        rig.step(np.concatenate([a6, [grip]]), log)
+        k += 1
+
+    def eef():
+        return np.array(env.sim.data.site_xpos[env.robots[0].eef_site_id["right"]])
+
+    def towards(target, gain=1.0, dz=None, yaw=0.0):
+        err = np.asarray(target) - eef()
+        a = np.zeros(6)
+        a[:3] = np.clip(gain * err / 0.05, -1, 1)
+        if dz is not None:
+            a[2] = dz
+        a[5] = yaw
+        return a
+
+    # 0. let the nut drop onto the table (spawned above it), then read its pose
+    ev["phase_idx"]["settle"] = k
+    base_geoms = list(rig.tool_geoms)
+    for _ in range(prm.settle_steps):
+        step(np.zeros(6), -1.0)
+    handle = np.array(d.site_xpos[sid_h])
+    center = np.array(d.site_xpos[sid_c])
+    radial = handle[:2] - center[:2]
+    yaw_close = float(np.arctan2(radial[1], radial[0]) + np.pi / 2)  # close across the handle
+    ev["handle_z_settled"] = float(handle[2])
+    # 1. open + yaw align + hover above handle
+    ev["phase_idx"]["approach"] = k
+    hover = handle + np.array([0, 0, prm.hover])
+    for _ in range(60):
+        step(towards(hover, yaw=_yaw_action(rig, yaw_close)), -1.0)
+        if np.linalg.norm(eef() - hover) < 4e-3 and abs(_yaw_action(rig, yaw_close)) < 0.02:
+            break
+    # 2. descend to grasp height
+    ev["phase_idx"]["descend"] = k
+    g = np.array([handle[0], handle[1], handle[2] + prm.grasp_dz])
+    for _ in range(60):
+        step(towards(g, yaw=_yaw_action(rig, yaw_close)), -1.0)
+        if np.linalg.norm(eef() - g) < 3e-3:
+            break
+    # 3. close
+    ev["phase_idx"]["grasp"] = k
+    for _ in range(12):
+        step(towards(g), +1.0)
+    # 4. lift; from here the nut is part of the tool for the ground-truth contact wrench
+    ev["phase_idx"]["lift"] = k
+    if nut_geoms:
+        rig.tool_geoms = base_geoms + list(nut_geoms)
+    lift = np.array([eef()[0], eef()[1], prm.lift_z])
+    for _ in range(50):
+        step(towards(lift, gain=prm.carry_gain), +1.0)
+        if abs(eef()[2] - prm.lift_z) < 4e-3:
+            break
+    ev["grasped"] = bool(d.site_xpos[sid_c][2] > 0.95)
+    ev["failure_mode"] = None if ev["grasped"] else "grasp_missed"
+    # 5. transport: bring the nut centre over peg2 (closed loop on the nut's actual pose)
+    ev["phase_idx"]["transport"] = k
+    peg = np.array(d.xpos[bid_peg])
+    for _ in range(80):
+        if not ev["grasped"]:
+            break
+        if d.site_xpos[sid_c][2] < 0.95:
+            ev["grasped"] = False
+            ev["failure_mode"] = "dropped_in_transport"
+            break
+        off = peg[:2] - np.array(d.site_xpos[sid_c])[:2]
+        tgt = np.array([eef()[0] + off[0], eef()[1] + off[1], prm.lift_z])
+        step(towards(tgt, gain=prm.carry_gain), +1.0)
+        if np.linalg.norm(off) < 3e-3 and np.linalg.norm(rig.ee_vel()[:3]) < 1e-2:
+            break
+    ev["xy_error_before_mate_mm"] = 1e3 * float(
+        np.linalg.norm(peg[:2] - np.array(d.site_xpos[sid_c])[:2])
+    )
+    # 6. lower until the detector fires, then keep lowering (mating)
+    ev["phase_idx"]["lower"] = k
+    detected = False
+    for _ in range(80 if ev["grasped"] else 0):
+        off = peg[:2] - np.array(d.site_xpos[sid_c])[:2]
+        tgt = np.array([eef()[0] + off[0], eef()[1] + off[1], prm.lift_z])
+        step(towards(tgt, dz=prm.lower_speed), +1.0)
+        _, n = rig.contact_wrench()
+        if n > 0 and ev["t_contact_gt"] is None:
+            ev["t_contact_gt"] = float(d.time)
+        if np.linalg.norm(rig.ft_comp_last()[:3]) > prm.contact_threshold_N and not detected:
+            ev["t_detect"] = float(d.time)
+            detected = True
+            break
+        if eef()[2] < 0.86:
+            break
+    ev["phase_idx"]["mate"] = k
+    for _ in range(prm.mate_steps if ev["grasped"] else 0):
+        off = peg[:2] - np.array(d.site_xpos[sid_c])[:2]
+        tgt = np.array([eef()[0] + off[0], eef()[1] + off[1], prm.lift_z])
+        step(towards(tgt, dz=prm.lower_speed * 0.5), +1.0)
+        if eef()[2] < 0.86:
+            break
+    # 7. release and back off
+    ev["phase_idx"]["release"] = k
+    if prm.release:
+        for _ in range(8):
+            step(np.zeros(6), -1.0)
+        for _ in range(15):
+            step(towards(eef() + np.array([0, 0, 0.08])), -1.0)
+    ev["phase_idx"]["end"] = k
+    ev["nut_center_final"] = np.array(d.site_xpos[sid_c]).tolist()
+    ev["peg_xy"] = peg[:2].tolist()
+    ev["nut_on_peg"] = bool(env.on_peg(np.array(d.xpos[env.obj_body_id["RoundNut"]]), 1))
+    ev["env_success"] = bool(env._check_success())
+    if ev["failure_mode"] is None and not ev["env_success"]:
+        ev["failure_mode"] = "mate_failed" if ev["grasped"] else "unknown"
+    rig.tool_geoms = base_geoms
+    return ev

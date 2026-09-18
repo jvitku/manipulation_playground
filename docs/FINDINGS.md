@@ -375,3 +375,126 @@ overshoot and must be logged with kp, ζ and posture to be interpretable; (2) th
 unobservable impact scales with approach speed, so speed near expected contact is the lever a
 policy has *before* contact, stiffness is the lever *after* — this is the case for policies that
 output stiffness (or an "expect contact" flag) as part of the action.
+
+## M6 — Peg-like task on the arm + episode recorder (2026-09-19)
+
+Commands: `make m6` = `python scripts/06_robosuite_nut_round.py --out outputs/m6` (8 seeds run:
+`--n 8`), then `07_record_episodes.py --track A --n 50 --noise-mm 0.5`, `--track B --task Wipe
+--n 20`, `--track B --task NutAssemblyRound --n 10`. Artifacts: `outputs/m6/results.json`,
+`nut_seed*.{npz,json,mp4}`, `nut_seed*_{comp,fmag}.png`; datasets in `data/track{A,B_*}/`
+(`ep0000.npz`… + `summary.json` + `peak_force_distribution.png`, git-ignored).
+
+**NutAssemblyRound scripted grasp → lift → transport → lower → release (7-D action, Panda
+gripper 0.52 kg identified to 0.5200 kg).** Success **7/8** by the env's own criterion (nut
+centre within 3 cm of peg2 and below table + 5 cm). Phase forces (compensated, sensor frame):
+
+| phase | typical mean / peak |F| | notes |
+|---|---|---|
+| grasp (fingers close on handle) | 0.2–13 N / 1–26 N | handle squeezed against the table when the fingers land 6 mm low; internal finger↔nut forces do not pass through the wrist sensor |
+| lift + transport | 0.19 N / 0.35–0.54 N | free flight; residual = **0.19 N = the nut's weight** (0.019 kg·g): the load model identified before grasping no longer matches the payload |
+| lower onto peg | 0.2 N until contact; spikes 30–33 N (79–94 N physics rate) in 3/8 | peg top hits the gripper/nut assembly |
+| mate | 0.2 N (5/8, contact-free) or 12–20 N mean / 16–31 N peak (2/8) | ring rides down the peg with lateral force + 1 N·m torque |
+| release | < 1 N | |
+
+Failure modes seen: (1) *dropped in transport* (1/8 at carry gain 0.4; 1/3 at gain 1.0 before
+the fix): the OSC overshoots the 5 cm/step saturated command, the nut slips out of the pads, and
+a naive closed-loop "follow the nut centre" then drives the arm into a joint limit pressing the
+table at 100 N — the recorder now aborts the episode with `failure_mode="dropped_in_transport"`;
+(2) *grasp too high* (all episodes before the fix): the nut is spawned 6 cm above the table and
+settles in the first ~0.3 s, so poses read at reset are wrong — read them after settling.
+
+**A 20 Hz ground-truth contact flag misses real contact.** Seed 6: the assembly hits the peg top
+at t = 9.162 s with 93.6 N at physics rate (32.5 N at control rate), as a bouncing contact of
+2–26 ms bursts; the control samples at 9.20, 9.25 and 9.30 s all fall in gaps between bursts, so
+`n_contacts` reads 0 for three consecutive steps while the F/T sees the impact. The wrist sensor
+is a better contact detector than an end-of-step contact query — at control rate *both* are
+undersampled, but the sensor value integrates the interval's impulse.
+
+**Uncompensated rotational inertia.** Yaw-aligning the gripper at 1 rad/s² produces a 2.2 N·m
+`Tz` spike and 0.5 N·m in `Tx/Ty` with no contact (`nut_seed0_comp.png`, t = 0.45 s):
+`fvb.ft.compensate` deliberately drops the `Iω̇ + ω×Iω` terms. On a 0.52 kg gripper that is the
+size of the mating torques (1 N·m) — Track B needs the rotational terms before torque can be used
+for contact detection during re-orientation.
+
+**Recorder + schema (`07_record_episodes.py`, `test_logger_schema.py`).** Every file written is
+re-loaded and validated (keys, shapes, dtypes, finite, monotonic `t`/`t_hf`, `ft_raw_hf` length
+= T × physics steps); optional `image` stream verified at 96×128. Datasets:
+
+| set | n | success | peak |F| control rate, median [min, max] | physics rate | hf/control ratio |
+|---|---|---|---|---|---|
+| Track A, σ = 0.5 mm | 50 | 28 | 9.9 N [9.9, 41.9] | 13.5 N [12.2, 40.9] | 1.24 (max 1.44) |
+| Track A, σ = 2 mm (PLAN default) | 50 | 1 | 41.9 N | 40.9 N | 0.98 |
+| Track B Wipe | 20 | 20 | 37.0 N [28, 52] | 61.8 N [33, 88] | 1.68 (max 1.91) |
+| Track B NutAssemblyRound | 10 | 9 | 27.1 N [1.6, 54] | 51.2 N [7.5, 94] | 2.03 (max 5.5) |
+
+Track A is bimodal: inserted episodes peak at 9.9 N (bottoming out, kp 800 × 12 mm overshoot),
+rim-jams at 41.9 N — the peak force *is* the success label, which is exactly the shortcut a
+policy would learn. With the plan's 2 mm noise on a 0.5 mm clearance only 1/50 inserts, so the
+main set uses 0.5 mm (Makefile updated). Track B peaks are 1.7–2× larger at physics rate than
+at control rate; the ratio reaches 5.5 in the nut task (brief impacts), so the control-rate
+peak is not a usable proxy for the physical peak there. Recording cost: 0.1 s (A) / 0.85 s
+(Wipe) / 1.7 s (Nut) per episode, wall-clock.
+
+**Stretch (custom single-arm `PegInHole` env): not attempted**, per the plan's ordering. Track A
+already answers the peg-in-hole questions and NutAssemblyRound supplies the arm-side mating
+signal; the missing piece is only the sub-mm-clearance jam on the arm.
+
+What this means for a force-aware policy: (1) the payload changes the gravity model at grasp
+time — either re-identify after grasp or give the policy the uncompensated residual as a
+"holding something" cue (0.19 N here, but 9 N for a 0.9 kg object); (2) contact labels for
+training must come from the physics-rate F/T impulse, not from a control-rate contact query;
+(3) rotational inertia matters on the arm as soon as the gripper re-orients.
+
+---
+
+## Stage 0 summary
+
+**Sensor convention.** A MuJoCo `force`/`torque` sensor on a site reports the wrench the
+*parent* body applies to the *child* subtree, in the site frame (derived in M1: hanging peg reads
+`+m·g`, `Fz = m(g + a_z)` under vertical acceleration). robosuite's `ee_force` is that raw
+sensordata; its `ft_frame` site has z pointing *down* and is rotated 90° about z from the
+grip-site frame used by `robot0_eef_quat`. `ft_comp` in the §5 logs is sign-flipped to the
+wrench the tool applies to the environment (pressing down ⇒ −Z in world).
+
+**Gravity/inertial contamination.** Exactly `m·Rᵀ(a − g)` (plus torque `c × F`); m and COM
+recover by least squares from 3–4 static orientations to 1e-5 relative error on both tracks. RMS
+contamination in free space: 5–53 % of m·g for 0.5–5 Hz motion of a 0.1 kg peg; on the arm 0.125 N
+(30 g tool) to 4 N (0.9 kg gripper) at 0.25 m/s. Compensation reduces it to 0.2–3 % **only if
+the acceleration is differenced at physics rate and the result averaged per control step**;
+differencing at 20 Hz makes it worse than doing nothing. Rotational inertia (not modelled) shows
+up as 2 N·m torque spikes when the gripper re-orients. A grasped payload shifts the residual by
+its weight.
+
+**Sim-parameter sensitivity (M3, 864 runs).** Main effects on physics-rate peak force: approach
+speed 30 N, kp 30 N, solref time constant 25 N, timestep 16 N, cone 0.4 N, integrator 0,
+noslip 0. solref and timestep move the force 16–25 N while moving the trajectory < 0.05 mm.
+MuJoCo clamps solref ≥ 2·dt, so the stiff-contact impact (94 N) exists only at dt ≤ 1 ms; soft
+contact (solref 0.02) hides the spike but penetrates 1–2.5 mm. **Chosen defaults:** `timestep
+0.001, implicitfast, elliptic, solref (0.005, 1), noslip 0` (converged within 3 % of dt 0.0005,
+penetration < clearance, 2× robosuite cost). robosuite's own dt 0.002 halves the onset spike.
+
+**Stiffness vs peak force (M5).** robosuite OSC `kp` is an acceleration gain; effective tool
+stiffness = Λ·kp ≈ 10.5·kp N/m at low kp (Λ_z ≈ 10.5 kg). kp 50→1000: tracking lag 17→9 mm per
+step, steady contact 5.5→108 N, onset peak 29→119 N (physics) / 16→113 N (control). Switching
+1000→50 at zero latency removes 58 % of the observable peak and 94 % of the steady force but
+none of the 2 ms impact; one 50 ms step of latency at high kp doubles the peak. Approach speed
+governs the spike, stiffness governs everything after it.
+
+**Recommended preprocessing for a learning pipeline.**
+- *Compensation:* identify m, COM per tool from static poses; compensate at driver/physics
+  rate (FD acceleration from the same-rate velocity) and average per control step; re-identify
+  or flag after grasp; add rotational terms if the wrist re-orients.
+- *Rates & history:* keep the physics-rate buffer (`ft_raw_hf`, 25 samples per 20 Hz step here);
+  a force token should summarise at least the last control interval's max-|F| and impulse, not
+  just the sample. Contact labels from the hf impulse, never from a control-rate contact query.
+- *Filtering:* none before the peak/impulse features; a causal 2nd-order Butterworth at 5–10 Hz
+  (`fvb.ft.filters.butter_lowpass`) for the "steady" channel only — the 1–5 ms spikes are signal
+  in this domain, and any low-pass removes them.
+- *Normalisation:* per-track ranges observed — Track A |F| ∈ [0, 45] N (kp 800), torque
+  ≤ 0.2 N·m; Track B |F| ∈ [0, 120] N at kp ≤ 400 (up to 220 N with latency at kp 1000),
+  torque ≤ 2.5 N·m. Normalise by a fixed physical scale (e.g. 50 N, 1 N·m) rather than dataset
+  statistics, and log kp/ζ/dt/solref with every episode since force scales with all four.
+- *Frames:* store the wrench and the pose in the *same* site frame (done in §5), and the world
+  rotation alongside; never the grip-site quaternion with the ft-site wrench.
+- *Solver metadata as a domain-randomisation axis:* timestep and solref change peak forces 2×
+  without changing motion; sample them when generating data, and log them.

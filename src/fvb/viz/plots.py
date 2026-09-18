@@ -128,3 +128,25 @@ def write_mp4(frames: list[np.ndarray], path: str | Path, fps: int = 30) -> Path
     except Exception as e:  # noqa: BLE001
         print(f"[viz] mp4 write failed: {type(e).__name__}: {e}")
         return None
+
+
+def plot_peak_force_distribution(peaks_by_label: dict[str, tuple[list, list]], path, title=""):
+    """Histogram of per-episode peak |F|: control-rate (ft_comp) vs physics-rate (ft_raw_hf)."""
+    fig, axes = plt.subplots(
+        1, len(peaks_by_label), figsize=(4.5 * len(peaks_by_label), 3.6), squeeze=False
+    )
+    for ax, (label, (pk_c, pk_hf)) in zip(axes[0], peaks_by_label.items(), strict=True):
+        pk_c, pk_hf = np.asarray(pk_c), np.asarray(pk_hf)
+        hi = max(pk_hf.max(), pk_c.max()) if len(pk_c) else 1.0
+        bins = np.linspace(0, hi * 1.05, 20)
+        ax.hist(
+            pk_hf, bins=bins, alpha=0.6, label=f"physics rate (median {np.median(pk_hf):.1f} N)"
+        )
+        ax.hist(pk_c, bins=bins, alpha=0.6, label=f"control rate (median {np.median(pk_c):.1f} N)")
+        ax.set_xlabel("episode peak |F| [N] (compensated / raw hf, sensor frame)")
+        ax.set_ylabel("episodes")
+        ax.set_title(f"{label} (n={len(pk_c)})")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+    fig.suptitle(title)
+    return _save(fig, path)

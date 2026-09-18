@@ -1,17 +1,33 @@
 # force-vla-basics — Stage 0
 
-Trustworthy force/torque readings from a simulated peg-in-hole task (MuJoCo + robosuite),
-and an understanding of what contaminates them. See `PLAN.md` for the full plan and
-`docs/FINDINGS.md` for results.
+Trustworthy force/torque readings from simulated peg-in-hole-style tasks (MuJoCo 3.3.0 +
+robosuite 1.5.2), and an understanding of what contaminates them. The plan is `PLAN.md`;
+the results are `docs/FINDINGS.md` (M0–M6 + Stage 0 summary).
 
 ## Quickstart
 
 ```bash
 make build      # build the Docker image (CPU, headless)
-make test       # pytest inside the container
-make m0         # API probe -> outputs/m0/probe.json
-make m1         # Track A gantry insertion -> outputs/m1/
+make test       # pytest inside the container (11 tests)
+make m0         # API probe             -> outputs/m0/probe.json
+make m1         # Track A insertion     -> outputs/m1/
+make m2         # contamination + comp  -> outputs/m2/
+make m3         # solver sweep (864)    -> outputs/m3/
+make m4         # Panda on Wipe         -> outputs/m4/
+make m5         # stiffness sweep       -> outputs/m5/
+make m6         # NutAssemblyRound + record 50 A / 20 Wipe / 10 Nut episodes -> data/
 ```
 
-Everything runs inside Docker. `make shell` drops you into the container,
-`make run S=scripts/xx.py ARGS="..."` runs one script.
+Everything runs inside Docker (`make shell` for a prompt, `make run S=scripts/xx.py ARGS="..."`
+for one script). Without `make`: `docker compose -f docker/compose.yaml run --rm -T -u $(id -u):$(id -g) dev <cmd>`.
+
+## Layout
+
+- `src/fvb/scenes` — Track A MJCF builder (clearance, mass, kp, solver params, tilt hinge)
+- `src/fvb/ft` — `read` (MuJoCo + robosuite F/T, one interface), `frames`, `compensate`
+  (LSQ mass/COM identification, gravity + inertial), `filters`
+- `src/fvb/control` — `gantry` (Track A) and `osc_scripts` (Track B: `ArmRig`, press-and-slide,
+  variable-kp, nut grasp-and-mate)
+- `src/fvb/contacts.py` — ground-truth contact wrench from `mj_contactForce`
+- `src/fvb/logging/episode.py` — PLAN §5 `.npz` + `.json` episode logger and validator
+- `scripts/0*.py` — one thin CLI per milestone; `tests/` — pytest
