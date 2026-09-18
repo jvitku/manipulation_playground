@@ -348,3 +348,68 @@ def press_and_slide(
         k += 1
     events["phase_idx"]["end"] = k
     return events
+
+
+def press_and_slide_variable_kp(
+    rig: ArmRig,
+    target_xy: np.ndarray,
+    table_z: float,
+    prm: PressSlideParams,
+    kp_free: float,
+    kp_contact: float,
+    log: EpisodeLogger | None = None,
+    switch_delay_steps: int = 0,
+) -> dict:
+    """Same behaviour as :func:`press_and_slide` on a ``variable_kp`` controller.
+
+    The 12-D action is ``[kp(6) in raw units, delta(6)]``. ``kp_free`` is used until the F/T
+    detector fires, then ``kp_contact`` (after ``switch_delay_steps`` more control steps — a
+    detection/actuation latency knob). The detector runs on the compensated wrench.
+    """
+    hover = np.array([target_xy[0], target_xy[1], table_z + prm.hover_height])
+    events = {"phase_idx": {}, "t_detect": None, "t_contact_gt": None, "t_switch": None}
+    kp = float(kp_free)
+
+    def act(a6):
+        return np.concatenate([np.full(6, kp), a6])
+
+    k = 0
+    for _ in range(80):
+        rig.step(act(rig.action_towards(hover)), log)
+        k += 1
+        if np.linalg.norm(rig.ee_pos() - hover) < 3e-3 and np.linalg.norm(rig.ee_vel()) < 1e-2:
+            break
+    events["phase_idx"]["descend"] = k
+    contact_height = None
+    delay = None
+    for _ in range(prm.max_descend_steps):
+        rig.step(act(rig.action_towards(hover, dz_override=prm.descend_speed)), log)
+        k += 1
+        _, n = rig.contact_wrench()
+        fired = np.linalg.norm(rig.ft_comp_last()[:3]) > prm.contact_threshold_N
+        if n > 0 and events["t_contact_gt"] is None:
+            events["t_contact_gt"] = float(rig.d.time)
+        if fired and n > 0 and events["t_detect"] is None:
+            events["t_detect"] = float(rig.d.time)
+            contact_height = rig.ee_pos()[2]
+            delay = switch_delay_steps
+        if delay is not None:
+            if delay == 0:
+                kp = float(kp_contact)
+                events["t_switch"] = float(rig.d.time)
+                break
+            delay -= 1
+    events["phase_idx"]["slide"] = k
+    events["contact_height"] = None if contact_height is None else float(contact_height)
+    if contact_height is None:
+        return events
+    for _ in range(prm.slide_steps):
+        tgt = rig.ee_pos().copy()
+        tgt[2] = contact_height - prm.press_depth
+        a = rig.action_towards(tgt)
+        a[1] = prm.slide_speed
+        a[0] = 0.0
+        rig.step(act(a), log)
+        k += 1
+    events["phase_idx"]["end"] = k
+    return events

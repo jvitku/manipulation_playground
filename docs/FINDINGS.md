@@ -313,3 +313,65 @@ with a heavier one unless inputs are compensated; (3) the observation must carry
 frame (or the wrench in world), not the grip-site frame; (4) OSC gains must be reported as
 Λ·kp, and effective stiffness in N/m measured, before force magnitudes across datasets can be
 compared.
+
+## M5 — Controller stiffness vs contact force (2026-09-19)
+
+Command: `make m5` (= `python scripts/05_robosuite_gain_sweep.py --out outputs/m5`; Wipe, seed 0,
+descend at −0.4 action, 1 N compensated detector, 10 mm press, 40-step slide). Artifacts:
+`fixed_grid.json`, `variable_kp.json`, `fixed_kp*_z*.npz`, `varkp_*.npz`,
+`stiffness_tradeoff.png`, `variable_kp.png`.
+
+**OSC kp is an acceleration gain; the tool's stiffness is Λ·kp.** Steady press force (ζ = 1)
+divided by the commanded 10 mm:
+
+| kp [1/s²] | 50 | 150 | 400 | 1000 |
+|---|---|---|---|---|
+| steady force [N] | 5.5 | 15.8 | 29.4 | 108.5 |
+| effective stiffness [N/m] | 550 | 1580 | 2950 | 10850 |
+| onset peak, physics rate [N] | 29.3 | 46.3 | 56.9 | 118.8 |
+| onset peak, control rate [N] | 16.5 | 33.3 | 50.9 | 113.3 |
+| free-space lag per 20 mm/step command [mm] | 16.9 | 14.7 | 12.0 | 8.6 |
+| steps to settle at hover (3 mm) | 43 | 30 | 21 | 15 |
+
+For kp ≤ 150 the stiffness is 10.5 × kp → task-space inertia Λ_z ≈ 10.5 kg in this posture;
+above that the steady force grows faster than kp because the press also drags the tool
+(friction) and drives the arm toward its limits. The **trade-off**: going from kp 50 to 1000 cuts
+the free-space lag 2× and the settling time 3×, and raises the steady contact force 20× and the
+onset peak 4×. Damping ratio: ζ = 2 halves the achievable descent speed (0.062 → 0.033 m/s at
+kp 50) and with it the impact peak (29 → 15 N); ζ = 0.7 lets the press ring (kp 400: 101 N peak,
+64 N "steady" vs 57 / 29 N at ζ = 1). Impact speed, not kp, sets the physics-rate spike: at ζ = 1
+the tool arrives at 0.06–0.15 m/s and the spike is 29–119 N, all of it between two 20 Hz samples.
+
+**Switching to low stiffness on contact (`impedance_mode="variable_kp"`, kp raw in action[:6],
+`kp_limits` raised to [0, 1000]).** Approach at kp_free, switch to kp_contact when the
+compensated detector fires, with 0/1/2 control steps (0/50/100 ms) of extra latency during which
+the descent command continues:
+
+| kp_free → kp_contact | latency | peak physics [N] | peak control [N] | steady [N] | peak after switch, control / physics [N] |
+|---|---|---|---|---|---|
+| 1000 → 1000 | 0 | 118.8 | 113.3 | 108.5 | 185.6 / 186.3 |
+| 1000 → 150 | 0 | 117.2 | 48.3 | 17.2 | 34.9 / 50.4 |
+| 1000 → 50 | 0 | 117.2 | 48.3 | 6.7 | 27.8 / 48.2 |
+| 1000 → 1000 | 1 | 220.5 | 217.7 | 106.0 | 184.7 / 185.5 |
+| 1000 → 50 | 1 | 220.5 | 217.7 | 7.0 | 18.4 / 26.3 |
+| 400 → 400 | 0 | 56.9 | 50.9 | 29.4 | 50.9 / 56.9 |
+| 400 → 50 | 0 | 54.0 | 31.3 | 5.4 | 31.3 / 54.0 |
+| 400 → 50 | 2 | 104.9 | 101.7 | 4.9 | 5.1 / 7.2 |
+
+- With zero latency, dropping 1000 → 50 reduces the control-rate peak 113 → 48 N (−58 %) and the
+  steady force 108 → 6.7 N (−94 %), while the **physics-rate impact is untouched (119 → 117 N)**:
+  it is over before the controller can see it. What the switch removes is the *wind-up* after
+  the impact, which is the part a 20 Hz policy actually observes.
+- One control step of latency at kp 1000 doubles the peak (119 → 220 N) whether or not the
+  switch follows — the cost of latency is paid at the high stiffness. After the switch the force
+  collapses within one step (e.g. 220 N → 18 N for 1000 → 50, delay 1).
+- The whole benefit of variable stiffness is therefore in *predicting* contact (switching
+  before impact) or in bounding the latency; a reactive switch buys the steady-state, not the
+  spike.
+
+What this means for a force-aware policy: (1) force magnitudes in demonstrations are ≈ Λ·kp ×
+overshoot and must be logged with kp, ζ and posture to be interpretable; (2) the observable
+(20 Hz) peak scales with stiffness ≈ linearly, so a policy can learn "stiff = high force"; (3) the
+unobservable impact scales with approach speed, so speed near expected contact is the lever a
+policy has *before* contact, stiffness is the lever *after* — this is the case for policies that
+output stiffness (or an "expect contact" flag) as part of the action.
