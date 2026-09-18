@@ -162,3 +162,73 @@ fed raw 20 Hz F/T plus 20 Hz proprioception cannot learn to compensate inertia i
 information (acceleration) is aliased away at that rate. Contact detection thresholds must be set
 above the *uncompensated* inertial swing unless compensation is in the loop (M4 tests this on
 the arm).
+
+## M3 — Solver and contact-parameter sensitivity (2026-09-19)
+
+Command: `make m3` (= `python scripts/03_solver_sweep.py --out outputs/m3`): one-at-a-time sweep
+(`oat.csv`) plus the full 864-run factorial (`full.csv`, 3 s wall on 30 workers), 0.3 mm offset,
+20 Hz control, insertion bottoms out on the hole floor. Artifacts: `ranking.{txt,json}`,
+`heat_<metric>__<row>_x_<col>.png` (15 heatmaps + 3 integrator/cone maps),
+`unstable_or_tunnelling.json`.
+
+**Ranking — main effect on the physics-rate peak |F| (mean range in N when only that parameter
+varies, all other combinations averaged):** approach speed 30.2, kp 29.5, solref time constant
+24.9, timestep 16.0, cone 0.36, noslip 0.00, integrator 0.00. For the *motion* (z-trajectory
+RMS): speed 13.6 mm, kp 12.2 mm, then solref 0.05, timestep 0.05, cone 0.02 mm, noslip/integrator
+0. So **solref and timestep change the force signal by 16–25 N without changing the motion by
+more than 0.05 mm** — the answer to "which parameters change force without changing motion".
+Integrator (Euler vs implicitfast) and `noslip_iterations` change nothing at all in this scene
+(identical to the last digit); the cone type changes the peak by < 0.4 N.
+
+**The onset spike is contact stiffness, and the timestep silently sets it.** At 150 mm/s, kp 800
+(`heat_peak_F_hf_N__timestep_x_solref_tc.png`):
+
+| timestep \ solref tc | 0.002 s | 0.005 s | 0.02 s |
+|---|---|---|---|
+| 0.0005 | **94 N** (spike 81, 1 ms) | 37 N | 12.8 N, pen 1.18 mm |
+| 0.001 | **99 N** | 38 N | 12.8 N, pen 1.17 mm |
+| 0.002 | 44 N | 36 N | 12.8 N, pen 1.00 mm |
+| 0.005 | 21 N | 21 N | 12.8 N, pen 1.12 mm |
+
+Steady force is 12.9 N in every cell. MuJoCo clamps the solref time constant to ≥ 2×timestep
+(documented behaviour), so solref 0.002 at dt 0.002/0.005 is really 0.004/0.010 and the stiff
+contact simply *does not exist* at the default timestep — the 94–99 N impact is physical for
+the parameters as written and appears only when the timestep is small enough to represent it.
+Conversely solref 0.02 (soft) removes the spike entirely but lets the peg sink 1.0–1.2 mm into
+the floor (2.5 mm with kp 3000 at dt 0.005) — 2× the 0.5 mm hole clearance, i.e. tunnelling-scale
+error for this task. All 100 runs flagged for > 1 mm penetration are at 150 mm/s and 84 of them
+have solref 0.02. No run diverged (0 NaN failures in 864).
+
+**What the policy sees vs what physics does.** The control-rate peak (`peak_F_c_N`) has main
+effects speed 0.003 N, solref 0.2 N, timestep 0.04 N, kp 27.8 N. At 20 Hz *none* of the
+solver-driven spikes are visible; only kp (through the quasi-static wind-up) is. Every spike in
+the table above is 1–5 ms wide (`spike_width_hf_ms` = 1–2 physics steps) and lands between
+control samples.
+
+**Stiffness × speed** (`heat_peak_F_hf_N__kp_x_speed_mmps.png`): steady force = kp × overshoot
+(6.9 / 12.9 / 34.8 N for kp 200 / 800 / 3000), peak at 150 mm/s = 38 / 36 / 70 N. Speed sets the
+spike, kp sets the plateau; low kp does *not* protect against the impact spike (38 N at kp 200).
+
+**F/T-threshold detector false triggers (preview of M4).** With a 0.3 N threshold on the raw
+physics-rate |F| − baseline, the detector fired *before* true contact (ground truth: `ncon > 0`)
+in 288 of 864 runs: 0 % at 10 mm/s, 33 % at 50 mm/s, 67 % at 150 mm/s, up to 1.44 s early —
+the inertial transient at the start of the descent (M2: 0.33 N at 50 mm/s, 1.0 N at 150 mm/s)
+exceeds the threshold.
+
+**Cost:** wall-clock per simulated second 0.005 / 0.013 / 0.026 / 0.051 s for dt 0.005 / 0.002 /
+0.001 / 0.0005 (this tiny scene; robosuite scenes are ~50× heavier).
+
+**Defensible default for data collection:** `timestep 0.001, implicitfast, elliptic, solref
+(0.005, 1), noslip 0` — the spike it produces (38 N at 150 mm/s) is within 3 % of the dt 0.0005
+value (37 N), so the force signal is converged with respect to the timestep, penetration stays
+≤ 0.29 mm (< clearance), and it costs 2× the robosuite default. Keep `kp` and approach speed as
+*logged experiment variables*, never fixed defaults: they move the force more than any solver
+knob. If robosuite's dt 0.002 must be kept (M4–M6), note that its onset spikes are ~half of the
+converged value and carry a solref ≥ 0.004 s that the XML does not state.
+
+What this means for a force-aware policy: the peak-force *distribution* in a dataset is a
+property of (timestep, solref, approach speed) as much as of the task; a policy trained on
+dt 0.002 data would see ~2× larger, ~2× shorter spikes on a dt 0.0005 sim or on hardware with a
+stiff contact — and it will never see them at all through a 20 Hz observation. Peak-force
+features must come from the physics-rate buffer (`ft_raw_hf`), and augmentation over
+solref/timestep is the sim-side equivalent of domain randomization for force.

@@ -37,41 +37,49 @@ def contact_onset_index(fmag: np.ndarray, threshold: float, baseline_n: int = 10
 
 
 def spike_metrics(
-    fmag: np.ndarray, t: np.ndarray, onset: int | None, settle_frac: float = 0.25
+    fmag: np.ndarray,
+    t: np.ndarray,
+    onset: int | None,
+    settle_frac: float = 0.25,
+    window_s: float = 0.1,
 ) -> dict:
-    """Peak height above the eventual steady value, and width at half that height.
+    """Onset-transient metrics.
 
-    ``steady`` is the median of the last ``settle_frac`` of the series.
+    ``steady`` is the median of the last ``settle_frac`` of the series. The *spike* is the
+    excess of |F| over ``steady`` within ``window_s`` after ``onset`` (so a slow quasi-static
+    wind-up is not counted as a spike); ``spike_width_s`` is the time that excess stays above
+    half its peak inside the window.
     """
     fmag = np.asarray(fmag, dtype=np.float64)
     t = np.asarray(t, dtype=np.float64)
     n = len(fmag)
     steady = float(np.median(fmag[int(n * (1 - settle_frac)) :])) if n else float("nan")
+    peak = float(np.max(fmag)) if n else float("nan")
     if onset is None or onset >= n:
         return {
-            "peak": float(np.max(fmag)) if n else float("nan"),
+            "peak": peak,
             "spike_height": 0.0,
             "spike_width_s": 0.0,
             "steady": steady,
             "t_peak": float("nan"),
         }
-    seg = fmag[onset:]
-    ipk = int(np.argmax(seg)) + onset
-    peak = float(fmag[ipk])
-    height = peak - steady
-    half = steady + 0.5 * height
-    above = fmag[onset:] >= half
-    # width of the contiguous region around the peak that stays above half height
-    lo = ipk
-    while lo > onset and above[lo - onset - 1]:
-        lo -= 1
-    hi = ipk
-    while hi + 1 < n and above[hi + 1 - onset]:
-        hi += 1
-    width = float(t[hi] - t[lo]) if height > 0 else 0.0
+    win = (t >= t[onset]) & (t <= t[onset] + window_s)
+    excess = np.where(win, fmag - steady, -np.inf)
+    ipk = int(np.argmax(excess))
+    height = max(float(excess[ipk]), 0.0)
+    if height <= 0:
+        return {
+            "peak": peak,
+            "spike_height": 0.0,
+            "spike_width_s": 0.0,
+            "steady": steady,
+            "t_peak": float(t[ipk]),
+        }
+    above = win & (fmag - steady >= 0.5 * height)
+    width = float(np.sum(above) * np.median(np.diff(t))) if n > 1 else 0.0
     return {
         "peak": peak,
-        "spike_height": float(height),
+        "spike_height": height,
         "spike_width_s": width,
         "steady": steady,
         "t_peak": float(t[ipk]),
