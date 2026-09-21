@@ -46,5 +46,7 @@ m6:
 	$(RUN) python scripts/07_record_episodes.py --track A --n 50 --noise-mm 0.5 --out data/trackA
 	$(RUN) python scripts/07_record_episodes.py --track B --task Wipe --n 20 --out data/trackB_Wipe
 	$(RUN) python scripts/07_record_episodes.py --track B --task NutAssemblyRound --n 10 --out data/trackB_NutAssemblyRound
+	$(RUN) python scripts/08_robosuite_peg_in_hole.py --out outputs/m6_pih
+	$(RUN) python scripts/07_record_episodes.py --track B --task PegInHole --n 20 --noise-mm 0.5 --out data/trackB_PegInHole
 
 all: m0 m1 m2 m3 m4 m5 m6

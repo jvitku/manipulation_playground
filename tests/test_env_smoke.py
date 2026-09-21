@@ -32,3 +32,22 @@ def test_robosuite_wipe_smoke(wipe_env):
     assert ft.ft_raw().shape == (6,)
     assert ft.ft_robosuite().shape == (6,)
     assert np.all(np.isfinite(ft.ft_raw()))
+
+
+def test_custom_peg_in_hole_env():
+    """M6 stretch: fvb.envs.PegInHole makes, resets, steps; flange F/T reads m*g at rest."""
+    from fvb.control.osc_scripts import ArmRig, make_env
+
+    env = make_env("PegInHole", seed=0, clearance=0.0005)
+    rig = ArmRig(env)
+    rig.reset(0)
+    assert env.action_dim == 6
+    for _ in range(15):
+        rig.step(np.zeros(6))
+    assert rig.d.ncon == 0
+    f = rig.ft.ft_raw()
+    assert f.shape == (6,) and np.all(np.isfinite(f))
+    mg = float(rig.m.body_subtreemass[rig.sensor_body]) * 9.81
+    assert abs(np.linalg.norm(f[:3]) - mg) / mg < 0.02
+    assert env.hole_half_opening == env.peg_radius + 0.0005
+    env.close()

@@ -90,6 +90,8 @@ class RobosuiteFT:
 
     env: object  # robosuite env
     arm: str = "right"
+    force_sensor: str | None = None  # override for envs without a gripper (fvb.envs.PegInHole)
+    torque_sensor: str | None = None
 
     def __post_init__(self) -> None:
         robot = self.env.robots[0]
@@ -98,8 +100,8 @@ class RobosuiteFT:
         self._raw = MujocoFT(
             self.env.sim.model._model,
             self.env.sim.data._data,
-            force_sensor=f"{prefix}force_ee",
-            torque_sensor=f"{prefix}torque_ee",
+            force_sensor=self.force_sensor or f"{prefix}force_ee",
+            torque_sensor=self.torque_sensor or f"{prefix}torque_ee",
         )
 
     @property
@@ -111,7 +113,13 @@ class RobosuiteFT:
         return self._raw.ft_raw()
 
     def ft_robosuite(self) -> np.ndarray:
-        """Same wrench through robosuite's ``ee_force``/``ee_torque`` accessors."""
+        """Same wrench through robosuite's ``ee_force``/``ee_torque`` accessors.
+
+        Only meaningful when the robot has a gripper with the ``*_force_ee`` sensors; for
+        fvb.envs.PegInHole (no gripper) this returns the raw sensor instead.
+        """
+        if self.force_sensor is not None:
+            return self.ft_raw()
         return np.concatenate(
             [np.asarray(self.robot.ee_force[self.arm]), np.asarray(self.robot.ee_torque[self.arm])]
         ).astype(np.float64)

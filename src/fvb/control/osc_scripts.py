@@ -58,7 +58,11 @@ def make_env(
 ):
     import robosuite as suite
 
+    import fvb.envs  # noqa: F401  (registers PegInHole)
+
     cfg = controller_config or make_controller_config()
+    if task == "PegInHole":
+        kw.setdefault("gripper_types", None)
     env = suite.make(
         task,
         robots="Panda",
@@ -88,9 +92,20 @@ class ArmRig:
     _prev_vel: np.ndarray | None = None
     _pending_action: np.ndarray | None = None
     default_grip: float = -1.0  # appended when a 6-D arm action is given to a 7-D env (open)
+    ft_sensors: tuple[str, str] | None = None  # (force, torque) sensor names if not the gripper's
 
     def __post_init__(self) -> None:
-        self.ft = RobosuiteFT(self.env)
+        if self.ft_sensors is None and hasattr(self.env, "peg") and hasattr(self.env, "ft_site_id"):
+            from fvb.envs.peg_in_hole import FT_FORCE, FT_TORQUE
+
+            self.ft_sensors = (FT_FORCE, FT_TORQUE)
+            if not self.tool_geoms:
+                self.tool_geoms = ["peg_g0"]
+        self.ft = RobosuiteFT(
+            self.env,
+            force_sensor=self.ft_sensors[0] if self.ft_sensors else None,
+            torque_sensor=self.ft_sensors[1] if self.ft_sensors else None,
+        )
         self.m = self.env.sim.model._model
         self.d = self.env.sim.data._data
         self.robot = self.env.robots[0]
@@ -577,4 +592,107 @@ def nut_grasp_and_mate(
     if ev["failure_mode"] is None and not ev["env_success"]:
         ev["failure_mode"] = "mate_failed" if ev["grasped"] else "unknown"
     rig.tool_geoms = base_geoms
+    return ev
+
+
+# ----------------------------------------------------------------------------------------------
+# fvb.envs.PegInHole scripted insertion (M6 stretch)
+# ----------------------------------------------------------------------------------------------
+@dataclass
+class PegInsertParams:
+    hover: float = 0.03  # tip height above the hole top before descending, m
+    hover_tol: float = 0.0002  # m; the OSC has no integral action, so the approach adds one
+    tilt_tol_deg: float = 0.2  # peg axis must be this close to vertical before descending
+    rot_gain: float = 1.0
+    descend_action: float = -0.06  # unit z action (x 0.05 m/step commanded = 3 mm/step)
+    target_depth: float = 0.03  # stop when the tip is this deep (m)
+    max_force_N: float = 40.0  # or when |F_comp| exceeds this (jam)
+    hold_push: float = 0.002  # m of downward target offset held after stopping
+    hold_steps: int = 20
+    max_descend_steps: int = 200
+
+
+def peg_insert(
+    rig: ArmRig, offset_xy: np.ndarray, prm: PegInsertParams, log: EpisodeLogger | None = None
+) -> dict:
+    """Hover the peg tip above the hole with a lateral offset, descend until inserted or
+    jammed (force limit), then hold a small downward push. Closed loop on the peg tip
+    (privileged sim state). The approach integrates the residual tip error because the OSC
+    (a PD in task space with model-based gravity compensation) settles ~1 mm off the goal."""
+    env = rig.env
+    hole_top = env.hole_center_world + np.array([0, 0, env.hole_depth])
+    ev: dict = {"phase_idx": {}, "t_contact_gt": None, "t_detect": None, "stop_reason": None}
+    k = 0
+    bias = np.zeros(3)
+
+    def tilt_rotvec():
+        """World-frame rotation vector taking the peg axis to straight down (rad)."""
+        a = env.peg_axis_world()
+        d = np.array([0.0, 0.0, -1.0])
+        r = np.cross(a, d)
+        ang = float(np.arctan2(np.linalg.norm(r), np.dot(a, d)))
+        return r / max(np.linalg.norm(r), 1e-9) * ang
+
+    def tip_target_action(tip_target, dz=None, integrate=False, xy_only=False):
+        nonlocal bias
+        tip = env.peg_tip_pos()
+        if integrate:
+            err = np.asarray(tip_target) - tip
+            if xy_only:
+                err = err * np.array([1, 1, 0])
+            bias = np.clip(bias + 0.5 * err, -0.01, 0.01)
+        site_target = np.asarray(tip_target) + bias + (rig.ee_pos() - tip)
+        # OSC delta rotations are world-frame rotation vectors (x0.5 rad/step); zero means
+        # "hold the current orientation", which drifts under contact torque, so always servo
+        # the peg axis to vertical (the Panda's home pose already has the flange 8 deg off).
+        rot = np.clip(prm.rot_gain * tilt_rotvec() / 0.5, -1, 1)
+        return rig.action_towards(site_target, dz_override=dz, rot=rot)
+
+    hover = hole_top + np.array([offset_xy[0], offset_xy[1], prm.hover])
+    ev["phase_idx"]["approach"] = k
+    for _ in range(150):
+        rig.step(tip_target_action(hover, integrate=True), log)
+        k += 1
+        if (
+            np.linalg.norm(env.peg_tip_pos() - hover) < prm.hover_tol
+            and np.linalg.norm(rig.ee_vel()[:3]) < 2e-3
+        ):
+            break
+    ev["tip_error_at_hover_mm"] = (1e3 * (env.peg_tip_pos()[:2] - hover[:2])).tolist()
+    ev["phase_idx"]["descend"] = k
+    tgt = hover.copy()
+    tgt[2] = hole_top[2] - prm.target_depth
+    tilt_max = 0.0
+    for _ in range(prm.max_descend_steps):
+        # keep servoing xy on the tip (z is the commanded descent)
+        rig.step(tip_target_action(tgt, dz=prm.descend_action, integrate=True, xy_only=True), log)
+        k += 1
+        ax = env.peg_axis_world()
+        tilt_max = max(tilt_max, float(np.degrees(np.arccos(np.clip(-ax[2], -1, 1)))))
+        _, n = rig.contact_wrench()
+        f = np.linalg.norm(rig.ft_comp_last()[:3])
+        if n > 0 and ev["t_contact_gt"] is None:
+            ev["t_contact_gt"] = float(rig.d.time)
+        if f > 1.0 and ev["t_detect"] is None:
+            ev["t_detect"] = float(rig.d.time)
+        if env.insertion_depth() >= prm.target_depth:
+            ev["stop_reason"] = "inserted"
+            break
+        if f > prm.max_force_N:
+            ev["stop_reason"] = "force_limit"
+            break
+    else:
+        ev["stop_reason"] = "timeout"
+    ev["tilt_max_deg_descent"] = tilt_max
+    ev["tip_lateral_error_at_stop_mm"] = (1e3 * env.tip_lateral_error()).tolist()
+    ev["phase_idx"]["hold"] = k
+    for _ in range(prm.hold_steps):
+        hold = env.peg_tip_pos() + np.array([0, 0, -prm.hold_push])
+        hold[:2] = tgt[:2]
+        rig.step(tip_target_action(hold), log)
+        k += 1
+    ev["phase_idx"]["end"] = k
+    ev["depth_mm"] = 1e3 * float(env.insertion_depth())
+    ev["tip_lateral_error_mm"] = (1e3 * env.tip_lateral_error()).tolist()
+    ev["success"] = bool(env._check_success())
     return ev

@@ -77,8 +77,10 @@ def record_track_b(
 ) -> dict:
     from fvb.control.osc_scripts import (
         NutMateParams,
+        PegInsertParams,
         PressSlideParams,
         nut_grasp_and_mate,
+        peg_insert,
         press_and_slide,
     )
 
@@ -113,6 +115,14 @@ def record_track_b(
         target = np.array(rig.obs["wipe_centroid"][:2]) + rng.normal(0, noise_mm * 1e-3, 2)
         ev = press_and_slide(rig, target, float(rig.env.table_offset[2]), prm, log)
         success = ev.get("contact_height") is not None
+    elif task == "PegInHole":
+        prm = PegInsertParams()
+        cfg["peg_insert"] = prm.__dict__
+        off = rng.normal(0, noise_mm * 1e-3, 2)
+        cfg["offset_m"] = off.tolist()
+        ev = peg_insert(rig, off, prm, log)
+        ev["failure_mode"] = None if ev["success"] else ev["stop_reason"]
+        success = bool(ev["success"])
     else:
         prm = NutMateParams()
         cfg["nut_mate"] = prm.__dict__
@@ -138,7 +148,7 @@ def record_track_b(
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--track", choices=["A", "B"], required=True)
-    ap.add_argument("--task", default="Wipe", choices=["Wipe", "NutAssemblyRound"])
+    ap.add_argument("--task", default="Wipe", choices=["Wipe", "NutAssemblyRound", "PegInHole"])
     ap.add_argument("--n", type=int, default=10)
     ap.add_argument("--noise-mm", type=float, default=2.0)
     ap.add_argument("--seed", type=int, default=0)

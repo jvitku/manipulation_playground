@@ -8,14 +8,14 @@ the results are `docs/FINDINGS.md` (M0–M6 + Stage 0 summary).
 
 ```bash
 make build      # build the Docker image (CPU, headless)
-make test       # pytest inside the container (11 tests)
+make test       # pytest inside the container (12 tests)
 make m0         # API probe             -> outputs/m0/probe.json
 make m1         # Track A insertion     -> outputs/m1/
 make m2         # contamination + comp  -> outputs/m2/
 make m3         # solver sweep (864)    -> outputs/m3/
 make m4         # Panda on Wipe         -> outputs/m4/
 make m5         # stiffness sweep       -> outputs/m5/
-make m6         # NutAssemblyRound + record 50 A / 20 Wipe / 10 Nut episodes -> data/
+make m6         # NutAssemblyRound, custom PegInHole, record 50 A / 20 Wipe / 10 Nut / 20 PegInHole episodes
 ```
 
 Everything runs inside Docker (`make shell` for a prompt, `make run S=scripts/xx.py ARGS="..."`
@@ -28,6 +28,7 @@ for one script). Without `make`: `docker compose -f docker/compose.yaml run --rm
   (LSQ mass/COM identification, gravity + inertial), `filters`
 - `src/fvb/control` — `gantry` (Track A) and `osc_scripts` (Track B: `ArmRig`, press-and-slide,
   variable-kp, nut grasp-and-mate)
+- `src/fvb/envs/peg_in_hole.py` — custom single-arm `PegInHole` robosuite env (peg on the flange, tight hole on the table, flange F/T)
 - `src/fvb/contacts.py` — ground-truth contact wrench from `mj_contactForce`
 - `src/fvb/logging/episode.py` — PLAN §5 `.npz` + `.json` episode logger and validator
 - `scripts/0*.py` — one thin CLI per milestone; `tests/` — pytest

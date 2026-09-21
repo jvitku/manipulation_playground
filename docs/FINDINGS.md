@@ -498,3 +498,63 @@ governs the spike, stiffness governs everything after it.
   rotation alongside; never the grip-site quaternion with the ft-site wrench.
 - *Solver metadata as a domain-randomisation axis:* timestep and solref change peak forces 2×
   without changing motion; sample them when generating data, and log them.
+
+## M6 stretch — custom single-arm `PegInHole` on the Panda (2026-09-21)
+
+Command: `python scripts/08_robosuite_peg_in_hole.py --out outputs/m6_pih` (offsets 0 / 0.3 / 1 /
+4 mm × OSC kp 150 / 400, 0.5 mm clearance, seed 0) and `07_record_episodes.py --track B --task
+PegInHole --n 20 --noise-mm 0.5`. Artifacts: `outputs/m6_pih/results.json`, `kp*_offset_*mm.{npz,
+json}`, `*_comp.png`, `*_fmag.png`, `kp*_offset_4mm.mp4`; `data/trackB_PegInHole/`.
+
+**The env (`fvb.envs.PegInHole`, registered with robosuite).** A 19 mm × 100 mm cylindrical peg
+(`CylinderObject`, 28 g) welded to the Panda flange in place of the gripper, a four-box square hole
+with parametrised clearance fixed to the table (the plan's `PlateWithHoleObject` has a 100 mm
+square opening — 2–4 cm of clearance around any peg, so it was not reused), a `force`/`torque`
+sensor pair on a flange site, tip/axis/hole observables, dense reward and a depth-based success
+check. Three things had to be discovered before a 0.5 mm-clearance insertion could succeed at
+all, and each is a lesson in its own right:
+
+1. **`CylinderObject` writes `margin="0.001"`** — a 1 mm collision skin. With 0.5 mm clearance the
+   peg "touched" the rim at 1.0 mm above the plate with 0.01 mm of lateral error, every time. The
+   env now zeroes the margin. Any robosuite object used for tight tolerances needs this.
+2. **The OSC settles ~1.1 mm off its goal** (PD in task space, model-based gravity compensation,
+   no integral action): the scripted approach integrates the residual tip error until it is
+   < 0.2 mm. A learned policy has to close this loop itself.
+3. **A zero rotation delta does not hold orientation.** With delta actions the orientation goal
+   is re-anchored to the current pose every step, so contact torque pivots the peg freely:
+   7–18° of tilt during the first descents, where 0.5 mm over 100 mm allows 0.3°. The script now
+   servos the peg axis to vertical with world-frame rotation-vector deltas (the Panda home pose
+   already has the flange 8° off vertical). Result: ≤ 0.08° tilt when free, ≤ 0.25° in contact.
+
+**Offset sweep (tip servo ≤ 0.2 mm, descent 3 mm/step, 40 N stop, then a 2 mm push held):**
+
+| kp | offset | result | depth | peak |F| control / physics | held force (site frame) | Ty |
+|---|---|---|---|---|---|---|
+| 150 | 0 / 0.3 mm | inserted | 39.8 mm | 0.0 / 0.3 N | 0 | 0 |
+| 150 | 1 mm | **wedged** | 3.4 mm | 27.0 / 79.4 N | (−1.5, 0, 0.9) N | −0.14 N·m |
+| 150 | 4 mm | rim | 0 | 26.9 / 79.3 N | (0.2, 0, 4.1) N | 0 |
+| 400 | 0 / 0.3 mm | inserted, bottoms out | 40.0 mm | 35 / 79–91 N | (9.9, 0, 16.9) N | 0.8 N·m |
+| 400 | 1 / 4 mm | rim, force limit | 0 | 49 / 117 N | (14, 0, 23) N | 1.2 N·m |
+
+- Same binary outcome as Track A — pass below the clearance, jam above it — with one arm-only
+  behaviour: at kp 150 and 1 mm offset the peg **wedges 3.4 mm in** over ~6 s
+  (`kp150_offset_1mm_comp.png`): Fz 13.5 N + Fx 8 N on the rim, then the lateral compliance and
+  the xy servo drag the tip across the edge; Fx falls through zero and reverses (−2.4 N) as the
+  second wall is met and Ty follows Fx × lever. That Fx sign flip with a growing Ty is the
+  two-point-contact jam signature the peg-in-hole literature describes, and it appears only when
+  the arm is compliant enough to let the tip move.
+- The rim impact at 3 mm/step is 79 N at physics rate vs 27 N at control rate (kp 150), 117 vs
+  49 N (kp 400) — the arm's 20 Hz observation sees a third of it, consistent with M4/M5.
+- Held rim force is Λ·kp × the 2 mm push: 4 N at kp 150, 23 N at kp 400 (the same 10 kg-scale Λ
+  as M5), so the *steady* jam force again measures the controller, not the jam.
+
+**Recorded set, σ = 0.5 mm lateral noise, 20 episodes:** 13 inserted, 7 jams (1 force limit, 6
+timeouts). Successful episodes peak at 11.3 N control / 54 N physics (bottoming out), failures at
+25 N / 78 N; physics/control peak ratio median 4.25 (max 83 on a clean insertion whose only
+force is a 2 ms bottom-out tick). 17 s wall for 20 episodes of 166 steps.
+
+What this means for a force-aware policy: the arm reproduces every Track A result and adds
+three requirements a policy must meet on its own — close the ~1 mm steady-state OSC error,
+actively hold orientation (a zero delta is not a hold), and read the Fx-reversal / Ty-growth
+signature to tell a wedge from a rim stall. All three are visible in `ft_comp` at 20 Hz; the
+impact itself is not.
