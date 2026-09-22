@@ -13,6 +13,24 @@ services:
     stdin_open: true
     tty: true
 
+  # Stage 1: Stage 0 image + PyTorch, GPU passthrough. `make build-train`, `make train ...`.
+  train:
+    extends: dev
+    image: fvb-train:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.train
+    environment:
+      - HOME=/tmp
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
   # Not needed for Stage 0. Exists so later stages don't require a Docker rewrite.
   dev-gpu:
     extends: dev

@@ -247,7 +247,7 @@ For each milestone: date, commit SHA, command line used, 3–6 bullet findings w
 
 ## 9. Hooks for later stages (do not build now)
 
-- Stage 1 (demos): `07_record_episodes.py` + §5 schema → converter to LeRobot / robomimic HDF5.
+- Stage 1 (demos): `07_record_episodes.py` + §5 schema → converter to LeRobot / robomimic HDF5. **Started 2026-09-22 as a Tier 1 BC experiment** (`fvb.policy`, scripts 09–11, `make s1`, `docker/Dockerfile.train` adds torch): see FINDINGS “Stage 1”.
 - Stage 2–3 (small policies with force fusion): add `torch` to the image, use the `dev-gpu` compose service. `ft_comp` and a short `ft_raw_hf` history window are the inputs a force token would summarize.
 - Stage 4 (SmolVLA / openpi LoRA on LIBERO): separate image; LIBERO has its own robosuite pin, so do not merge environments.
 

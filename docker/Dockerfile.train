@@ -1,0 +1,3 @@
+# Stage 1 image: the Stage 0 image plus PyTorch (CUDA 12.x wheels; falls back to CPU at runtime).
+FROM fvb:latest
+RUN pip install --no-cache-dir "torch==2.5.1" --index-url https://download.pytorch.org/whl/cu124

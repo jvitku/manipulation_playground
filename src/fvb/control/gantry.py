@@ -31,6 +31,9 @@ class Gantry:
         self._prev_vel: np.ndarray | None = None
         self._comp_acc = np.zeros(6)
         self._comp_n = 0
+        self.last_hf_ft = np.zeros(
+            (1, 6)
+        )  # raw wrench at every physics step of the last control step
         self.ft = MujocoFT(self.m, self.d)
         self.peg_body = mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_BODY, "peg")
         self.peg_geoms = ["peg"]
@@ -104,9 +107,11 @@ class Gantry:
         self.set_target(target)
         self._comp_acc[:] = 0.0
         self._comp_n = 0
-        for _ in range(self.n_sub):
+        hf = np.empty((self.n_sub, 6))
+        for i in range(self.n_sub):
             mujoco.mj_step(self.m, self.d)
             raw = self.ft.ft_raw()
+            hf[i] = raw
             if log is not None:
                 log.step_hf(self.d.time, raw)
             if self.load is not None:
@@ -119,6 +124,7 @@ class Gantry:
                 self._prev_vel = v
                 self._comp_acc += compensate(raw, self.ee_rot(), self.load, a)
                 self._comp_n += 1
+        self.last_hf_ft = hf
         if log is not None:
             comp = self._comp_acc / self._comp_n if self.load is not None else None
             self.log_row(log, target, ft_comp=comp)

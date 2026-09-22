@@ -558,3 +558,68 @@ three requirements a policy must meet on its own — close the ~1 mm steady-stat
 actively hold orientation (a zero delta is not a hold), and read the Fx-reversal / Ty-growth
 signature to tell a wedge from a rim stall. All three are visible in `ft_comp` at 20 Hz; the
 impact itself is not.
+
+---
+
+# Stage 1 — Tier 1 behaviour cloning with a force token (2026-09-22)
+
+Commands: `make build-train && make s1` (= `09_collect_expert.py --n 300`, `10_train_bc.py
+--force 1/0`, `11_eval_bc.py --n 50`); MLP baselines and the σ = 3 mm eval were run by hand.
+Artifacts: `data/expert_trackA/` (300 episodes, §5 files + `ep*_policy.npz`), `outputs/s1/{force,
+noforce,mlp_force,mlp_noforce}/{best.pt,history.json,loss.png}`, `outputs/s1/eval/eval.{json,png}`,
+`outputs/s1/eval_sigma3/`. Design and gotchas: the Tier 1 explainer (artifact) and
+`fvb/policy/task.py`.
+
+**Task.** Track A gantry, M3 defaults (dt 1 ms, kp 800), 0.5 mm clearance, hole centre drawn
+from N(0, 1.5 mm) per axis (clipped ±4 mm) and **hidden**: the policy sees peg position relative
+to the episode start, velocity, `ft_comp`, three physics-rate force summaries and its previous
+action (18 dims × H = 10 history). Output: K = 5 future target deltas (clipped ±5 mm/step).
+Success = 30 mm depth within 8 s. A privileged scripted expert (descend 50 mm/s; on |F| > 3 N
+with stalled depth: retract 3 mm, step ≤ 0.5 mm toward the true hole, descend) succeeds 300/300
+with 2.4 jam-recoveries per episode; the only information about the correction direction in the
+observation is the torque at the jam (sign(dx) = −sign(Ty) in 78 %, sign(dy) = +sign(Tx) in 83 %
+of corrections; the rest are corner contacts).
+
+**Models.** ACT-lite: linear embed → 3-layer transformer encoder (d 128, 4 heads) → 5 learned
+queries through a 2-layer decoder → linear, 800 k parameters; MLP baseline 116 k. Masked L1 on
+z-scored chunks, AdamW 3e-4, cosine, 40 epochs, batch 256, 270/30 episode split (9 772 / 1 035
+windows). **16 s per training run on the RTX 4060 Laptop** (1.4 GB free of 8 GB was enough);
+data collection 25 s; evaluation of 50 episodes ~1 min per policy.
+
+**Closed-loop results, 50 fresh seeds, σ = 1.5 mm:**
+
+| policy | val L1 | success | steps (success) | peak |F| | retracts / episode |
+|---|---|---|---|---|---|
+| expert (privileged) | — | 50/50 | 37.4 | 3.7 N | 2.6 |
+| ACT-lite + force | 0.073 | **50/50** | 36.9 | 3.4 N | 2.6 |
+| ACT-lite, force zeroed | 0.152 | **5/50** | — | 7.6 N | 19.7 |
+| MLP + force | 0.132 | 45/50 | 67.1 | 3.7 N | 8.1 |
+| MLP, force zeroed | 0.158 | 5/50 | — | 7.9 N | 20.3 |
+
+- The five no-force successes are the episodes whose offset is within the clearance or lands
+  in on the first try; on |offset| ≥ 0.5 mm the no-force policies succeed in 4/49 vs 49/49 (ACT)
+  and 44/49 (MLP) with force. Median final depth without force: 0.0 mm — on the rim at timeout.
+- The no-force policy *does* learn the jam → retract reflex (from the velocity stall and the
+  previous action), but with no direction signal it retracts ~20 times per episode and dithers,
+  at 2× the peak force. This is the multi-modality failure predicted in the explainer §6: the
+  same observation precedes +x and −x corrections, and L1 regression averages them.
+- Validation loss separates the variants only mildly (0.07 vs 0.15) because 90 % of the steps
+  are "descend 2.5 mm" and both fit those; the closed-loop gap is 10×. Loss ≠ success.
+- The history transformer beats the MLP on the same data with force (50 vs 45/50; 37 vs 67
+  steps; 2.6 vs 8.1 retracts): reading the torque sign and executing a multi-step manoeuvre is
+  easier from a sequence than from a flattened window.
+
+**Generalisation to larger offsets (σ = 3 mm, twice the training distribution):** expert 50/50
+with 5.1 recoveries; ACT-lite + force **50/50** with 5.4 recoveries (57 steps); MLP + force 28/50.
+The learned correction is a per-jam local rule (read Tx/Ty, step 0.5 mm), so it composes to
+offsets it never saw.
+
+What this means for a force-aware policy: on a task where position observations cannot
+disambiguate the contact geometry, a 0.8 M-parameter policy trained in 16 s on 300 simulated
+episodes goes from 10 % to 100 % success by being given the compensated wrench, and generalises
+beyond the training offsets. The signal it uses is tiny — 0.018 N·m of torque at a 3 N jam — and
+exists only because Stage 0 established a noiseless, compensated, correctly-framed sensor; on
+hardware the same rule needs the compensation pipeline and a torque resolution well below
+0.02 N·m. Next steps from here: DAgger if a harder variant (noise, timestep/solref
+randomisation, the arm's 1 mm OSC error) drops success; injected sensor noise to find the
+torque-resolution floor; the same experiment on `fvb.envs.PegInHole`.

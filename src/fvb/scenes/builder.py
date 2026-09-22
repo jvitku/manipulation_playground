@@ -26,6 +26,7 @@ class SceneParams:
     peg_len: float = 0.060  # m, full length
     clearance: float = 0.0005  # m per side
     hole_depth: float = 0.040  # m
+    hole_xy: tuple[float, float] = (0.0, 0.0)  # hole centre in the world xy plane, m
     peg_mass: float = 0.1  # kg
     start_height: float = 0.15  # m, wrist origin above floor
     # controller (position actuators = springs)
@@ -80,7 +81,7 @@ def build_xml(p: SceneParams | None = None) -> str:
   <worldbody>
     <light pos="0 0 1" dir="0 0 -1"/>
     <geom name="floor" type="plane" size="1 1 .1" rgba="0.8 0.8 0.8 1"/>
-    <body name="hole" pos="0 0 {hz:g}">
+    <body name="hole" pos="{p.hole_xy[0]:g} {p.hole_xy[1]:g} {hz:g}">
       <geom name="w_px" type="box" size="{wall:g} {hh + 2 * wall:g} {hz:g}" pos=" {px_pos:g} 0 0"/>
       <geom name="w_nx" type="box" size="{wall:g} {hh + 2 * wall:g} {hz:g}" pos="-{px_pos:g} 0 0"/>
       <geom name="w_py" type="box" size="{py_len:g} {wall:g} {hz:g}" pos="0  {px_pos:g} 0"/>
