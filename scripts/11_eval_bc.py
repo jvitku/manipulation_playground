@@ -21,12 +21,19 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=50000, help="eval seeds are disjoint from data")
     ap.add_argument("--offset-sigma-mm", type=float, default=1.5)
     ap.add_argument("--clearance-mm", type=float, default=0.5)
+    ap.add_argument("--force-noise-N", type=float, default=0.0)
+    ap.add_argument("--torque-noise-Nm", type=float, default=0.0)
     ap.add_argument("--out", default="outputs/s1/eval")
     ap.add_argument("--device", default="cpu")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    p = TaskParams(clearance=args.clearance_mm * 1e-3, offset_sigma=args.offset_sigma_mm * 1e-3)
+    p = TaskParams(
+        clearance=args.clearance_mm * 1e-3,
+        offset_sigma=args.offset_sigma_mm * 1e-3,
+        force_noise_N=args.force_noise_N,
+        torque_noise_Nm=args.torque_noise_Nm,
+    )
     seeds = [args.seed + i for i in range(args.n)]
     results = {"task": asdict(p), "seeds": [seeds[0], seeds[-1]], "policies": {}}
     print("expert ...")

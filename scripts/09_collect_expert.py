@@ -66,10 +66,17 @@ def main() -> None:
     ap.add_argument("--out", default="data/expert_trackA")
     ap.add_argument("--offset-sigma-mm", type=float, default=1.5)
     ap.add_argument("--clearance-mm", type=float, default=0.5)
+    ap.add_argument("--force-noise-N", type=float, default=0.0)
+    ap.add_argument("--torque-noise-Nm", type=float, default=0.0)
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    p = TaskParams(clearance=args.clearance_mm * 1e-3, offset_sigma=args.offset_sigma_mm * 1e-3)
+    p = TaskParams(
+        clearance=args.clearance_mm * 1e-3,
+        offset_sigma=args.offset_sigma_mm * 1e-3,
+        force_noise_N=args.force_noise_N,
+        torque_noise_Nm=args.torque_noise_Nm,
+    )
     (out / "config.json").write_text(json.dumps({**vars(args), "task": asdict(p)}, indent=2))
     t0 = time.perf_counter()
     rows = [run_episode(args.seed + i, p, out, i) for i in range(args.n)]

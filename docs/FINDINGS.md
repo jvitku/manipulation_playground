@@ -623,3 +623,40 @@ hardware the same rule needs the compensation pipeline and a torque resolution w
 0.02 N·m. Next steps from here: DAgger if a harder variant (noise, timestep/solref
 randomisation, the arm's 1 mm OSC error) drops success; injected sensor noise to find the
 torque-resolution floor; the same experiment on `fvb.envs.PegInHole`.
+
+## Stage 1b — sensor-noise floor (2026-09-22)
+
+Command: `python scripts/12_noise_sweep.py` (train image). Gaussian noise added to the raw
+sensor at every 1 kHz physics step, before compensation; torque std ∈ {0, 0.002, 0.005, 0.01,
+0.02, 0.05} N·m with force std 20× that in N. For each level: 300 noisy expert episodes → train
+ACT-lite + force → evaluate at that noise (50 episodes); the noise-free policy from Stage 1 is
+also evaluated at each level. Artifacts: `outputs/s1_noise/sweep.json`, `noise_sweep.png`,
+per-level `t*_f*/{train,eval}/`.
+
+| torque σ [N·m] | force σ [N] | expert | trained at this noise | trained noise-free |
+|---|---|---|---|---|
+| 0 | 0 | 50/50 | 50/50 | 50/50 |
+| 0.002 | 0.05 | 50/50 | 50/50 | 50/50 |
+| 0.005 | 0.1 | 50/50 | 50/50 | 50/50 |
+| 0.01 | 0.2 | 50/50 | 50/50 | 41/50 (4.4 retracts) |
+| 0.02 | 0.5 | 50/50 | 50/50 (2.7 retracts) | 3/50 (0.7 retracts: never retracts) |
+| 0.05 | 1.0 | 50/50 | 20/50 (15 retracts: dithers) | 2/50 |
+
+- The signal is 0.018 N·m of torque at the jam. The policy trained at each level is unaffected
+  up to σ = 0.02 N·m — *the same size as the signal* — because compensation averages 50
+  physics-rate samples per control step (σ/√50 ≈ 0.003 N·m effective) and the network also
+  integrates over its 10-step history. At σ = 0.05 (2.8× the signal) it drops to 40 % and dithers
+  like the no-force policy did.
+- The noise-free policy is far more brittle: 82 % at 0.01 N·m, 6 % at 0.02. Its failure mode is
+  the opposite of dithering — it stops retracting at all (0.7 retracts/episode), because its
+  jam detector was fitted to noiseless `ft_comp` and the physics-rate summary channels (max |F|,
+  max |T|) that noise inflates: on noisy data those channels no longer mean "contact".
+  Training with the noise present teaches it to rely on the averaged channels instead.
+- For hardware: an ATI Nano/Mini-class sensor has torque noise well below 0.002 N·m, and the
+  expert's 3 N threshold could be raised to make the torque signal larger (it scales with the
+  jam force). The practical requirement is that the training data contain the sensor's real
+  noise, not that the sensor be quiet.
+
+What this means for a force-aware policy: noise robustness comes from two averaging stages
+(driver-rate compensation + temporal context) and from training on noisy data; a policy fit to
+a clean simulator will silently lose its contact detector on a real sensor.

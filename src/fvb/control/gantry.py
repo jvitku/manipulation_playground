@@ -26,11 +26,14 @@ class Gantry:
     params: SceneParams
     control_freq: float = 100.0
     load: LoadParams | None = None  # if set, ft_comp is computed at physics rate (see step)
+    noise_std: np.ndarray | None = None  # (6,) Gaussian sensor noise per physics step (N, N·m)
+    noise_seed: int = 0
 
     def __post_init__(self) -> None:
         self._prev_vel: np.ndarray | None = None
         self._comp_acc = np.zeros(6)
         self._comp_n = 0
+        self._noise_rng = np.random.default_rng(self.noise_seed)
         self.last_hf_ft = np.zeros(
             (1, 6)
         )  # raw wrench at every physics step of the last control step
@@ -111,6 +114,8 @@ class Gantry:
         for i in range(self.n_sub):
             mujoco.mj_step(self.m, self.d)
             raw = self.ft.ft_raw()
+            if self.noise_std is not None:  # sensor noise: on the raw reading, before compensation
+                raw = raw + self._noise_rng.normal(0.0, 1.0, 6) * self.noise_std
             hf[i] = raw
             if log is not None:
                 log.step_hf(self.d.time, raw)

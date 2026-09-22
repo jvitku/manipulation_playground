@@ -39,6 +39,8 @@ class TaskParams:
     retract: float = 0.003  # m
     correct_step: float = 0.0005  # m per correction (= clearance)
     start_height_above_rim: float = 0.02
+    force_noise_N: float = 0.0  # Gaussian sensor noise std per physics step, force channels
+    torque_noise_Nm: float = 0.0  # same, torque channels
 
 
 class GantryTask:
@@ -57,7 +59,18 @@ class GantryTask:
         )
         self.m, self.d = build_model(self.scene)
         load = LoadParams(mass=self.scene.peg_mass, com=np.array([0, 0, -self.scene.peg_len / 2]))
-        self.g = Gantry(self.m, self.d, self.scene, CONTROL_FREQ, load=load)
+        noise = None
+        if p.force_noise_N > 0 or p.torque_noise_Nm > 0:
+            noise = np.array([p.force_noise_N] * 3 + [p.torque_noise_Nm] * 3)
+        self.g = Gantry(
+            self.m,
+            self.d,
+            self.scene,
+            CONTROL_FREQ,
+            load=load,
+            noise_std=noise,
+            noise_seed=seed + 7919,
+        )
         # start: peg tip start_height_above_rim above the rim, over the origin (not the hole)
         z0 = (
             -(self.scene.start_height - 0.01 - self.scene.peg_len - self.scene.hole_depth)
