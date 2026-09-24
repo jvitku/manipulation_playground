@@ -247,7 +247,7 @@ For each milestone: date, commit SHA, command line used, 3–6 bullet findings w
 
 ## 9. Hooks for later stages (do not build now)
 
-- Stage 1 (demos): `07_record_episodes.py` + §5 schema → converter to LeRobot / robomimic HDF5. **Started 2026-09-22 as a Tier 1 BC experiment** (`fvb.policy`, scripts 09–11, `make s1`, `docker/Dockerfile.train` adds torch): see FINDINGS “Stage 1”.
+- Stage 1 (demos): `07_record_episodes.py` + §5 schema → converter to LeRobot / robomimic HDF5. **Started 2026-09-22 as a Tier 1 BC experiment** (`fvb.policy`, scripts 09–11, `make s1`, `docker/Dockerfile.train` adds torch): see FINDINGS “Stage 1”. Completed under §11.
 - Stage 2–3 (small policies with force fusion): add `torch` to the image, use the `dev-gpu` compose service. `ft_comp` and a short `ft_raw_hf` history window are the inputs a force token would summarize.
 - Stage 4 (SmolVLA / openpi LoRA on LIBERO): separate image; LIBERO has its own robosuite pin, so do not merge environments.
 
@@ -258,3 +258,83 @@ For each milestone: date, commit SHA, command line used, 3–6 bullet findings w
 3. Prefer the smallest implementation that answers the milestone's questions. No frameworks, no config systems beyond argparse + a dataclass.
 4. If a result contradicts §2 or a claim in this plan, trust the experiment, fix the doc, and say so in FINDINGS.
 5. Ask before adding dependencies, changing pinned versions, or changing the §5 schema.
+
+## 11. Stage 1 — force-token policies: arm transfer, physics robustness, data export (2026-09-24)
+
+Stage 1 started 2026-09-22 as a Tier 1 experiment on the gantry (FINDINGS "Stage 1", "Stage 1b"):
+on a hidden-hole insertion a 0.8 M-parameter ACT-lite succeeds 50/50 with the compensated wrench
+and ~5/50 without it, and training on sensor noise buys robustness up to σ = 0.02 N·m. This
+section finishes the stage.
+
+### 11.1 Goals
+
+- **G1 — Arm transfer.** The same hidden-hole behaviour-cloning experiment on the Panda
+  (`fvb.envs.PegInHole`): privileged expert, ACT-lite and MLP with and without force, closed-loop
+  eval. *Accept:* expert ≥ 95 % success; ACT-lite + force beats force-zeroed by ≥ 30 points.
+- **G2 — Robustness to simulator parameters.** M3 showed timestep and solref change peak force
+  ~2× without changing motion. Measure how the nominal gantry policy degrades over a
+  timestep × solref grid, and whether training on randomised physics fixes it. *Accept:* the
+  randomised-physics policy ≥ 90 % in every grid cell.
+- **G3 — Data pipeline.** Export §5 episodes + policy observations/actions to a robomimic-style
+  HDF5 (`h5py` only — already in the image; LeRobot would be a new dependency, so it is left
+  out per §10.5). *Accept:* schema test green; both expert datasets export.
+- **G4 — Report.** Findings appended to `docs/FINDINGS.md`, plus an HTML report with arm videos
+  (untrained / no force / force / expert).
+- **Fallback — DAgger**, only if G1 or G2 misses its bar: roll out the learned policy, relabel
+  the visited states with the privileged expert (run in shadow on the same trajectory),
+  aggregate, retrain.
+
+### 11.2 Design decisions
+
+- **Task spec registry** (`fvb.policy.spec`): obs dim, action dim and force-channel slice per
+  task (`gantry`, `arm`), stored in every checkpoint's meta so training/eval/rollout code is
+  task-agnostic. Old checkpoints default to `gantry`.
+- **Arm observation (20):** peg-tip position relative to the episode start (3), F/T-site linear
+  velocity (3), peg-axis tilt (axis x, y: 2), compensated wrench rotated to **world** (6),
+  physics-rate summary of the last interval (max |F|, max |T|, std |F|: 3), previous action (3).
+  Force channels = the 9 wrench + summary channels. World frame because the flange yaw varies
+  with robosuite's init noise; Stage 0 showed mixing frames silently swaps axes.
+- **Arm action (3):** peg-tip target delta in world, clipped ±5 mm/step. A fixed low-level layer
+  turns the tip target into OSC_POSE actions: it servos the peg axis to vertical (a zero rotation
+  delta does not hold orientation, M6) and integrates the xy tip error (the OSC settles ~1 mm off
+  its goal, M6). The policy decides *where the tip goes*, as on the gantry.
+- **Hidden hole on the arm:** the env is built once; per episode the `hole` body is moved in the
+  model (`body_pos`) to N(0, 1.5 mm) per axis, clipped ±4 mm, around the nominal centre. The
+  peg starts 20 mm above the rim over the nominal centre after a settle phase that is not part
+  of the episode.
+- **Arm expert:** the gantry state machine (descend; on |F| > jam threshold with stalled depth
+  retract 3 mm, step ≤ 0.5 mm toward the true hole, descend), acting on tip targets.
+- **Physics randomisation (G2):** `TaskParams` gains `solref_tc` and an optional sampler over
+  timestep ∈ {0.0005, 0.001, 0.002} s and solref time constant log-uniform in [0.002, 0.02] s.
+  The eval grid is timestep {0.0005, 0.001, 0.002} × solref {0.002, 0.005, 0.02}.
+- **HDF5 layout (G3):** `data/demo_<i>/{actions, rewards, dones, obs/<key>}`, one group per
+  episode; obs keys = the named policy-observation groups + §5 control-rate arrays + `ft_raw_hf`
+  reshaped to (T, n_sub, 6); `data.attrs["env_args"]` = JSON task config; `mask/{train,valid}`.
+
+### 11.3 Milestones
+
+| id | what | files | tests / acceptance |
+|---|---|---|---|
+| S1.1 | task-spec registry; train/eval/rollout take the task from data/checkpoint | `policy/spec.py`, `data.py`, `rollout.py`, scripts 10–11 | existing tests green; old gantry checkpoints still load |
+| S1.2 | HDF5 export | `policy/export.py`, `scripts/15_export_hdf5.py` | `test_export.py`: groups, shapes, masks, round-trip equality |
+| S1.3 | arm hidden-hole task + expert + collection | `policy/arm_task.py`, `scripts/16_collect_arm.py` | `test_arm_task.py`: obs hides the hole (identical first obs across offsets), expert succeeds on 3 seeds; 300 episodes, expert ≥ 95 % |
+| S1.4 | arm BC: ACT/MLP × force/no-force, closed-loop eval on 50 unseen seeds | reuse 10/11 via spec | G1 bar |
+| S1.5 | physics randomisation on the gantry: nominal vs randomised training, 3 × 3 eval grid | `task.py`, `scripts/17_physics_sweep.py` | G2 bar |
+| S1.6 | DAgger (only if S1.4 or S1.5 misses its bar) | `scripts/18_dagger.py` | the missed bar |
+| S1.7 | FINDINGS + HTML report with arm videos | `docs/FINDINGS.md`, `docs/stage1/` | G4 |
+
+### 11.4 Status (2026-09-25)
+
+| id | status | deviation from the plan |
+|---|---|---|
+| S1.1 | done | spec also carries `gantry_kp`; checkpoints record `action_mode` |
+| S1.2 | done | — |
+| S1.3 | done | arm collection is `09_collect_expert.py --task arm` (no separate script 16); expert needs a two-speed approach; observed torque is taken about the peg tip; xy integrator frozen in contact |
+| S1.4 | G1 met by the MLP (39/50 vs 4/50), not by ACT-lite (4/50 vs 4/50) | — |
+| S1.5 | G2 met (9/9 cells at 100 %) | added a kp axis and kp randomisation; kp randomisation broke delta-action BC (diagnosed), `action_mode="xy_abs"` partly fixes it |
+| S1.6 | not run | failures are underfitting, not compounding error |
+| S1.7 | done | report in `docs/stage1/` |
+
+Open: why ACT-lite ignores force on the arm; the source of the 8 N lateral force along the arm's
+reach; a lateral action that is both timing-robust (like `xy_abs`) and precise (like `delta`),
+e.g. ACT's temporal ensembling of chunks or a discrete "correct now" head.

@@ -1,0 +1,284 @@
+<title>Peg-in-Hole Stage 1 Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+__STYLE__
+<style>
+.verdicts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-top: 18px; }
+.verdicts > div { background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.verdicts h4 { margin: 0; font: 600 1.15rem/1.1 var(--display); letter-spacing: 0.02em; }
+.verdicts .bar { font-size: 0.82rem; color: var(--muted); }
+.verdicts .res { font-size: 0.9rem; }
+.chip.part { color: #b7791f; }
+:root[data-theme="dark"] .chip.part { color: #e8bb4a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chip.part { color: #e8bb4a; } }
+.heat { border-collapse: collapse; font-size: 0.86rem; }
+.heat td, .heat th { border: 1px solid var(--rule); padding: 6px 9px; text-align: center; min-width: 58px; }
+.heat th { background: var(--sunk); font-weight: 600; }
+.heatwrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-top: 12px; }
+.heatwrap h4 { margin: 0 0 6px; font: 600 1rem var(--display); letter-spacing: 0.02em; }
+.eq { font-family: var(--mono); background: var(--sunk); padding: 10px 14px; border: 1px solid var(--rule); overflow-x: auto; font-size: 0.9rem; }
+pre.code { font: 0.82rem/1.5 var(--mono); background: var(--sunk); border: 1px solid var(--rule); padding: 12px 14px; overflow-x: auto; margin: 12px 0; }
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow">force-vla-basics · Stage 1 completion · PLAN §11 · regenerated __DATE__ @ __SHA__</div>
+  <h1>Peg-in-Hole Stage 1 Report</h1>
+  <p class="lede">Stage 1 set out to take the gantry result (with force a small network finds a hidden hole; without it, it can't) to the Panda arm, to test it against simulator changes, and to export the data. Two of the three goals were met outright and one partly. Getting there took two debugging passes that changed the task design, and those are the main lessons.</p>
+  <div class="facts" id="facts"></div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#goals">Goals and verdicts</a>
+  <a href="#plan">Plan and build</a>
+  <a href="#arm">The arm, on video</a>
+  <a href="#tcp">Lesson 1: where the torque is measured</a>
+  <a href="#armresults">Arm results</a>
+  <a href="#physics">Physics robustness</a>
+  <a href="#timing">Lesson 2: pulses vs positions</a>
+  <a href="#export">HDF5 export</a>
+  <a href="#open">Open</a>
+</nav>
+
+<section id="goals">
+  <div class="eyebrow">PLAN §11.1</div>
+  <h2>Goals and verdicts</h2>
+  <div class="verdicts" id="verdicts"></div>
+</section>
+
+<section id="plan">
+  <div class="eyebrow">PLAN §11.3 and §11.4</div>
+  <h2>What was planned and built</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>id</th><th>milestone</th><th>status</th><th style="text-align:left">notes</th></tr></thead>
+    <tbody>
+      <tr><td>S1.1</td><td style="text-align:left">task-spec registry; training, eval and rollout take the task from the data or checkpoint</td><td class="ok">done</td><td style="text-align:left" class="small">specs <code>gantry</code>, <code>arm</code>, <code>gantry_kp</code>; old checkpoints still load</td></tr>
+      <tr><td>S1.2</td><td style="text-align:left">robomimic-style HDF5 export</td><td class="ok">done</td><td style="text-align:left" class="small">h5py only; round-trip test</td></tr>
+      <tr><td>S1.3</td><td style="text-align:left">arm hidden-hole task, privileged expert, collection</td><td class="ok">done</td><td style="text-align:left" class="small">two-speed approach; torque taken about the tip; anti-windup</td></tr>
+      <tr><td>S1.4</td><td style="text-align:left">arm BC: ACT-lite and MLP × force / no force</td><td class="ok">MLP meets G1</td><td style="text-align:left" class="small">ACT-lite does not use force on the arm</td></tr>
+      <tr><td>S1.5</td><td style="text-align:left">physics randomisation, 3 × 3 solver grid</td><td class="ok">G2 met</td><td style="text-align:left" class="small">+ kp axis and kp randomisation (beyond plan)</td></tr>
+      <tr><td>S1.6</td><td style="text-align:left">DAgger, if a bar is missed</td><td>not run</td><td style="text-align:left" class="small">failures are underfitting, not compounding error</td></tr>
+      <tr><td>S1.7</td><td style="text-align:left">FINDINGS and this report</td><td class="ok">done</td><td style="text-align:left" class="small"></td></tr>
+    </tbody>
+  </table></div>
+  <p class="small muted">Tests: <span id="n-tests"></span> passing, including new ones for the arm task (the hole is not observable; the expert recovers from jams), the export round trip, and the <code>xy_abs</code> action encoding.</p>
+</section>
+
+<section id="arm">
+  <div class="eyebrow">G1 · Panda PegInHole · hidden hole</div>
+  <h2>The arm, on video</h2>
+  <div class="prose"><p>The Panda carries a 19 mm cylindrical peg on its flange above a square hole with 0.5 mm clearance. Each episode the hole moves by a hidden N(0, 1.5 mm) offset, and the peg starts above where the hole <em>would</em> be. The policy outputs where the peg tip should go next; a fixed low-level layer keeps the peg vertical and closes the arm controller's ~1 mm steady-state error. Four controllers run on the same hole: an <b>untrained</b> MLP, the <b>MLP trained without force</b>, the <b>MLP trained with force</b> (the best arm policy), and the privileged <b>expert</b>.</p></div>
+  <div class="panel">
+    <div class="controls"><label>Episode</label><span class="segs" id="seed-segs"></span></div>
+    <figure class="cmp-video"><video id="cmp-video" controls muted loop playsinline preload="metadata"></video>
+      <figcaption>Top left: untrained · top right: trained, no force · bottom left: trained, with force · bottom right: expert. Each tile: 3D close-up (hole walls translucent), a to-scale top-down schematic in mm (grey = walls, green + = hole centre, blue circle = peg and its path), and compensated world-frame force [N] / torque about the tip [N·m].</figcaption></figure>
+    <div class="runs" id="seed-runs"></div>
+    <div class="grid2" style="margin-top:6px">
+      <div id="xy-chart"></div>
+      <div><div id="depth-chart"></div><div id="f-chart"></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="tcp">
+  <div class="eyebrow">debugging pass 1</div>
+  <h2>Lesson 1: where the torque is measured</h2>
+  <div class="prose">
+    <p>The first arm run failed in a telling way: force made no difference (ACT-lite 4/50 with and without). The expert's decision rule needs one thing from the sensor, namely which side of the tip the rim is on. On the gantry the lateral force at the jam carries that (97 %). On the arm it doesn't. At the jams there is a large lateral force along the arm's reach (|Fx| ≈ 8.1 N vs |Fy| ≈ 0.15 N) whose sign is unrelated to the hole. The sensor sits at the flange, 100 mm above the tip, so that force leaks into the torque:</p>
+  </div>
+  <div class="eq">T_y(flange) = −0.100 m · F_x  −  dx_contact · F_z        corr(T_y, −0.1·F_x) = 0.83</div>
+  <div class="prose"><p>The useful term, <em>where on the tip face the rim pushes</em>, is buried. Taking the torque about the tip instead (<code>T_tip = T_site − (p_tip − p_site) × F</code>, the standard tool-centre-point convention) removes the lever arm. Freezing the xy integrator during contact did <em>not</em> remove the 8 N, so it isn't integrator wind-up; its source is still open.</p></div>
+  <div class="grid2">
+    <div class="panel"><div id="cue-chart"></div></div>
+    <div class="panel"><div id="flange-tip-chart"></div></div>
+  </div>
+  <div class="takeaway"><b>Express the wrench at the tool centre point.</b> With the flange torque, the x direction was a coin flip for the network; with the tip torque, the MLP goes from 13/50 to 39/50.</div>
+</section>
+
+<section id="armresults">
+  <div class="eyebrow">G1 · 50 unseen seeds · tip-referenced wrench</div>
+  <h2>Arm results</h2>
+  <div class="table-wrap"><table id="arm-table"></table></div>
+  <div class="grid2">
+    <div class="panel"><div class="controls"><span class="segs" id="arm-train-metric"></span></div><div id="arm-train-chart"></div></div>
+    <div class="panel"><div id="act-plateau-chart"></div></div>
+  </div>
+  <div class="takeaway"><b>G1 is met by the MLP (+70 points from force), not by ACT-lite.</b> ACT-lite settles on the no-force solution: train and validation loss sit at ≈ 0.105 from epoch 50 to 250, whatever the history length (10, 16, 20), learning rate or epoch budget. On the gantry the ranking was the reverse (ACT-lite 50/50, MLP 43/50). The cause isn't isolated.</div>
+</section>
+
+<section id="physics">
+  <div class="eyebrow">G2 · gantry · 50 unseen seeds per cell</div>
+  <h2>Physics robustness</h2>
+  <div class="prose"><p>Stage 0 (M3) warned that timestep and contact stiffness (solref) change peak force about 2× without changing the motion. The policy doesn't care. Every cell of the grid is 100 % for the nominal policy, because it decides from the <em>control-rate compensated</em> wrench, which M3 found nearly solver-invariant (≤ 0.2 N main effects).</p></div>
+  <div class="heatwrap" id="heat"></div>
+  <h3>Beyond the plan: controller stiffness</h3>
+  <div class="prose"><p>M3 and M5 name the controller's stiffness <code>kp</code> as the knob that moves the observable force most. Varying the gantry spring at nominal solver settings finds the policy's real limit: it drops to 84 % at kp 200 and 78 % at kp 3200. Randomising kp in training, the obvious remedy, made it much worse. That is Lesson 2.</p></div>
+  <div class="panel"><div id="kp-chart"></div></div>
+</section>
+
+<section id="timing">
+  <div class="eyebrow">debugging pass 2</div>
+  <h2>Lesson 2: pulses vs positions</h2>
+  <div class="prose">
+    <p>With kp randomised, every policy collapsed to about 10 %. The diagnosis, step by step:</p>
+    <ul class="tight">
+      <li>The cue is intact: the lateral force at the jam predicts the correction direction 93 % / 89 % (97 % / 90 % at nominal kp).</li>
+      <li>The model gets the direction right (80–83 %) but predicts the correction at <b>1 % of its size</b>, in every kp band. An MLP does the same.</li>
+      <li>The expert makes each 0.5 mm correction in <em>one</em> control step at the end of its retract, and how long the retract takes depends on kp (2–10 steps). The L1-optimal prediction for a pulse whose timing is uncertain is zero.</li>
+      <li>Controls: giving the policy log(kp) doesn't help; the same code path with kp pinned to 800 reproduces the nominal data bit-for-bit (val 0.071); correcting at the jam step instead collapses too (the jam step isn't sharp either). The nominal result only worked because at fixed kp the retract always took 3–4 steps.</li>
+    </ul>
+    <p>The fix changes what the policy outputs. With <code>action_mode="xy_abs"</code> the lateral action is a <em>position</em> relative to the episode start (z stays a delta), so a correction is a persistent step rather than a pulse:</p>
+  </div>
+  <div class="grid2">
+    <div class="panel"><div id="labels-chart"></div></div>
+    <div class="panel"><div id="collapse-chart"></div></div>
+  </div>
+  <div class="takeaway"><b>A partial fix.</b> With <code>xy_abs</code>, the kp-randomised policy predicts corrections at full size (validation 0.086 vs 0.188) and closed-loop success rises from ~10 % to 54–92 %, but it costs precision at nominal settings (80–92 % vs 100 % for delta actions). The untested hypothesis: per-step regression noise of ~0.1–0.2 mm on a lateral target, against 0.5 mm clearance. A lateral action that is both timing-robust and precise is the open problem (ACT-style temporal ensembling, or a discrete "correct now" output).</div>
+</section>
+
+<section id="export">
+  <div class="eyebrow">G3</div>
+  <h2>HDF5 export</h2>
+  <div class="prose"><p><code>scripts/15_export_hdf5.py</code> writes the robomimic layout with <code>h5py</code> only. The named observation groups reassemble the policy observation bit-exactly (tested), the physics-rate wrench is kept grouped per control step, and the train/valid masks are the same episode split training uses.</p></div>
+  <pre class="code">data/                         attrs: total, task_spec, env_args (JSON: task params + obs group slices)
+  demo_&lt;i&gt;/                   attrs: num_samples, seed, success, hole_xy_m
+    actions        (T, 3)     policy actions
+    rewards, dones (T,)       1 on the last step (reward only on success)
+    obs/rel_pos, vel, ft_comp[_world], ft_hf_summary, prev_action, [tilt]   policy observation groups
+    obs/s5_ee_pos, s5_ft_comp, s5_contact_wrench, ...                      PLAN §5 control-rate arrays
+    obs/ft_raw_hf  (T, n_sub, 6)                                           physics-rate raw wrench
+mask/train, mask/valid        demo names</pre>
+  <div class="table-wrap"><table id="export-table"></table></div>
+</section>
+
+<section id="open">
+  <div class="eyebrow">PLAN §11.4</div>
+  <h2>Open</h2>
+  <ul class="tight prose">
+    <li>Why ACT-lite ignores force on the arm while an MLP on the same data uses it.</li>
+    <li>The source of the ~8 N lateral force along the arm's reach during rim contact (not integrator wind-up).</li>
+    <li>A lateral action representation that is both timing-robust (like <code>xy_abs</code>) and precise (like deltas).</li>
+    <li>Controller-stiffness robustness: the nominal policy holds 78–84 % at 4× off-nominal kp.</li>
+    <li>LeRobot export (a new dependency, so it needs your approval per PLAN §10.5).</li>
+  </ul>
+</section>
+
+<footer>Reproduce: <code>09_collect_expert.py --task arm</code>, <code>10_train_bc.py</code>, <code>11_eval_bc.py --task arm --untrained</code>, <code>17_physics_sweep.py --with-kp-rand</code>, <code>15_export_hdf5.py</code>, <code>13_policy_videos.py --task arm</code>, then <code>python docs/stage1/build.py</code>. Prose source: <code>docs/FINDINGS.md</code> "Stage 1 completion".</footer>
+</div>
+
+<script id="report-data" type="application/json">__DATA__</script>
+<script>
+(() => {
+__CHARTLIB__
+
+// ---------- facts + verdicts ------------------------------------------------------------------
+const arm = D.arm_tip.policies, n50 = r => `${Math.round(r.success_rate * r.n)}/${r.n}`;
+const pick = (ev, prefix) => ev[Object.keys(ev).find(k => k.startsWith(prefix))];
+const cells = D.sweep.filter(r => r.kp === 800);
+const allNominal = cells.every(r => r.nominal.success_rate === 1);
+document.getElementById("facts").innerHTML = [
+  [n50(pick(arm, "mlp_force")), "arm, MLP + force (tip-referenced wrench)"],
+  [n50(pick(arm, "mlp_noforce")), "same network, force zeroed"],
+  [`${cells.filter(r => r.nominal.success_rate === 1).length}/${cells.length}`, "solver cells at 100 % (gantry)"],
+  [D.export.map(e => e.demos).reduce((a, b) => a + b, 0).toLocaleString(), "expert demos exported to HDF5"],
+].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
+document.getElementById("n-tests").textContent = D.n_tests;
+const V = [
+  ["G1 · Arm transfer", "expert ≥ 95 %; force beats no force by ≥ 30 points", `Expert ${D.arm_expert.n_success}/${D.arm_expert.n}. MLP ${n50(pick(arm, "mlp_force"))} vs ${n50(pick(arm, "mlp_noforce"))}. ACT-lite ${n50(pick(arm, "act_force"))} vs ${n50(pick(arm, "act_noforce"))}.`, "part", "met by the MLP"],
+  ["G2 · Physics robustness", "randomised-physics policy ≥ 90 % in every cell", `Nominal and randomised both 100 % in all ${cells.length} timestep × solref cells. kp extension: 78–84 % at 4× off-nominal.`, allNominal ? "ok" : "bad", allNominal ? "met" : "missed"],
+  ["G3 · Data pipeline", "schema test green; both expert sets export", D.export.map(e => `${e.task_spec}: ${e.demos} demos, ${e.samples.toLocaleString()} samples`).join(" · "), "ok", "met"],
+  ["G4 · Report", "FINDINGS + HTML report with arm videos", "FINDINGS.md \"Stage 1 completion\", PLAN §11.4 status, this page.", "ok", "met"],
+];
+document.getElementById("verdicts").innerHTML = V.map(([h, bar, res, cls, word]) => `<div><h4>${h}</h4><span class="chip ${cls}">${word}</span><span class="bar">Bar: ${bar}</span><span class="res">${res}</span></div>`).join("");
+
+function drawAll() {
+for (const k in groups) delete groups[k];
+
+// ---------- arm videos -------------------------------------------------------------------------
+const pc = n => n.startsWith("untrained") ? "--c-untrained" : n.includes("no force") ? "--c-noforce" : n.includes("with force") ? "--c-force" : "--c-expert";
+const VR = D.videos.runs, seeds = [...new Set(VR.map(r => r.seed))];
+segs(document.getElementById("seed-segs"), seeds.map(s => { const r = VR.find(x => x.seed === s); return [String(s), `seed ${s} · hole (${r.hole_xy_mm.map(v => v.toFixed(1)).join(", ")}) mm`]; }), key => {
+  const s = +key, vid = document.getElementById("cmp-video");
+  if (!vid.src.includes(`seed${s}_`)) vid.src = `media/seed${s}_compare.mp4#t=0.1`;
+  const runs = VR.filter(r => r.seed === s), tr = D.traces[key];
+  document.getElementById("seed-runs").innerHTML = runs.map(r => `<div><b style="color:${css(pc(r.policy))}">${r.policy}</b><span class="chip ${r.reason === "success" ? "ok" : "bad"}">${r.reason}</span> <span class="mono small">${(r.steps / 20).toFixed(2)} s · peak ${r.peak_F_N.toFixed(1)} N</span></div>`).join("");
+  const hole = runs[0].hole_xy_mm, cl = 0.5;
+  const xy = tr.map(p => ({name: p.meta.policy, x: p.trace.map(q => q.pos_mm[0]), y: p.trace.map(q => q.pos_mm[1]), color: pc(p.meta.policy), width: 1.8, end: true}));
+  xy.push({name: "hole centre", x: [hole[0]], y: [hole[1]], color: "--ok", points: true, r: 4});
+  xy.push({name: "start", x: [0], y: [0], color: "--muted", points: true, r: 3});
+  const ext = Math.max(4, ...xy.flatMap(q => q.x.concat(q.y).map(Math.abs))) + 0.8;
+  lineChart(document.getElementById("xy-chart"), {title: "Top-down path of the peg tip (green box = positions that fit the hole)", xlabel: "x [mm]", ylabel: "y [mm]", series: xy, height: 360, equal: true, hover: false,
+    xDomain: [-ext, ext], yDomain: [-ext, ext], rects: [{x0: hole[0] - cl, x1: hole[0] + cl, y0: hole[1] - cl, y1: hole[1] + cl, color: "--ok"}]});
+  lineChart(document.getElementById("depth-chart"), {title: "Insertion depth (success = 25 mm)", xlabel: "time [s]", ylabel: "mm", group: "seed", height: 180,
+    series: tr.map(p => ({name: p.meta.policy, x: p.trace.map(q => q.t), y: p.trace.map(q => q.depth_mm), color: pc(p.meta.policy)}))});
+  lineChart(document.getElementById("f-chart"), {title: "Compensated |F|", xlabel: "time [s]", ylabel: "N", group: "seed", height: 170,
+    series: tr.map(p => ({name: p.meta.policy, x: p.trace.map(q => q.t), y: p.trace.map(q => Math.hypot(q.ft_comp[0], q.ft_comp[1], q.ft_comp[2])), color: pc(p.meta.policy), width: 1.3}))});
+}, String(seeds[0]));
+
+// ---------- lesson 1 -----------------------------------------------------------------------------
+const cue = D.cue;
+barChart(document.getElementById("cue-chart"), {title: "Torque sign at the jam predicts the correction (hole > 0.6 mm away)", unit: "%", rows: [
+  {label: "x · flange torque", value: cue.flange_x * 100, color: "--c-noforce"},
+  {label: "x · tip torque", value: cue.tip_x * 100, color: "--c-force"},
+  {label: "y · flange torque", value: cue.flange_y * 100, color: "--c-noforce"},
+  {label: "y · tip torque", value: cue.tip_y * 100, color: "--c-force"},
+  {label: "chance", value: 50, color: "--c-gt"}]});
+const fl = D.arm_flange.policies, tp = D.arm_tip.policies;
+const pn = [["act_force", "ACT-lite + force"], ["act_noforce", "ACT-lite, no force"], ["mlp_force", "MLP + force"], ["mlp_noforce", "MLP, no force"]];
+barChart(document.getElementById("flange-tip-chart"), {title: "Arm success, flange-referenced → tip-referenced wrench", unit: "%", rows: pn.flatMap(([k, l]) => [
+  {label: l + " · flange", value: pick(fl, k).success_rate * 100, color: "--c-gt"},
+  {label: l + " · tip", value: pick(tp, k).success_rate * 100, color: k.includes("noforce") ? "--c-noforce" : "--c-force"}])});
+
+// ---------- arm results ---------------------------------------------------------------------------
+const lab = n => n === "expert" ? "Expert (privileged)" : n === "untrained" ? "Untrained (random init)" : n.startsWith("act_force") ? "ACT-lite + force" : n.startsWith("act_noforce") ? "ACT-lite, force zeroed" : n.startsWith("mlp_force") ? "MLP + force" : "MLP, force zeroed";
+const hk = n => n.replace(/^(act|mlp)_(force|noforce)_/, "");
+let h = "<thead><tr><th>Policy</th><th>best val L1</th><th>success</th><th>steps (successes)</th><th>mean peak |F| [N]</th><th>retracts / ep</th><th>outcomes</th></tr></thead><tbody>";
+for (const [n, r] of Object.entries(tp)) {
+  const cls = r.success_rate >= 0.7 ? "ok" : r.success_rate < 0.3 ? "bad" : "";
+  const vl = D.arm_train[hk(n)] ? D.arm_train[hk(n)].best_val_l1.toFixed(3) : "–";
+  h += `<tr class="${n.startsWith("mlp_force") ? "hl" : ""}"><td>${lab(n)}</td><td>${vl}</td><td class="${cls}">${n50(r)}</td><td>${fmt(r.mean_steps_success)}</td><td>${fmt(r.mean_peak_F_N)}</td><td>${fmt(r.mean_recoveries)}</td><td class="small">${Object.entries(r.reasons).map(([k, v]) => k + " " + v).join(", ")}</td></tr>`;
+}
+document.getElementById("arm-table").innerHTML = h + "</tbody>";
+const tn = {force: ["ACT-lite + force", "--c-force"], noforce: ["ACT-lite, no force", "--c-noforce"], mlp_force: ["MLP + force", "--c-mlp"], mlp_noforce: ["MLP, no force", "--c-mlpno"]};
+segs(document.getElementById("arm-train-metric"), [["loss", "Loss"], ["mae", "Val error x/y [mm]"]], key => {
+  const series = [];
+  for (const [k, hh] of Object.entries(D.arm_train)) {
+    const [name, color] = tn[k], ep = hh.history.map(r => r.epoch + 1);
+    if (key === "loss") { series.push({name: name + " · val", x: ep, y: hh.history.map(r => r.val_l1), color}); series.push({name: name + " · train", x: ep, y: hh.history.map(r => r.train_l1), color, dash: "4 3", width: 1.2}); }
+    else series.push({name, x: ep, y: hh.history.map(r => (r.val_mae_mm_xyz[0] + r.val_mae_mm_xyz[1]) / 2), color});
+  }
+  lineChart(document.getElementById("arm-train-chart"), {title: "Arm training curves (tip-referenced wrench)", xlabel: "epoch", ylabel: key === "loss" ? "masked L1 (z-scored)" : "mm", series, height: 260, yDomain: key === "loss" ? [0, 0.3] : undefined});
+}, "loss");
+const plateau = Object.entries(D.act_variants).map(([k, hh], i) => ({name: k, x: hh.history.map(r => r.epoch + 1), y: hh.history.map(r => r.val_l1), color: ["--c-force", "--c-fz", "--c-tz", "--c-tx", "--c-ty"][i % 5], width: 1.4}));
+plateau.push({name: "MLP + force (reference)", x: D.arm_train.mlp_force.history.map(r => r.epoch + 1), y: D.arm_train.mlp_force.history.map(r => r.val_l1), color: "--c-mlp", dash: "5 4"});
+lineChart(document.getElementById("act-plateau-chart"), {title: "ACT-lite variants on the arm: validation loss plateaus", xlabel: "epoch", ylabel: "val L1", series: plateau, height: 260, yDomain: [0, 0.2]});
+
+// ---------- physics ----------------------------------------------------------------------------------
+const TS = [0.0005, 0.001, 0.002], SR = [0.002, 0.005, 0.02];
+const heatNames = [["nominal", "Nominal policy"], ["physrand", "Trained on randomised dt + solref"], ["xyabs_physkprand", "dt + solref + kp randomised, xy_abs"]];
+const shade = v => `background: color-mix(in srgb, var(--ok) ${Math.round(v * 70)}%, var(--surface)); color: ${v > 0.6 ? "var(--surface)" : "var(--ink)"}`;
+document.getElementById("heat").innerHTML = heatNames.map(([k, t]) => `<div><h4>${t}</h4><div class="table-wrap"><table class="heat"><thead><tr><th>dt \\ solref</th>${SR.map(s => `<th>${s * 1000} ms</th>`).join("")}</tr></thead><tbody>${TS.map(dt => `<tr><th>${dt * 1000} ms</th>${SR.map(sr => { const c = cells.find(r => r.timestep === dt && r.solref_tc === sr); const v = c[k].success_rate; return `<td style="${shade(v)}">${Math.round(v * 100)}%</td>`; }).join("")}</tr>`).join("")}</tbody></table></div></div>`).join("");
+const kps = D.kp_sweep.slice().sort((a, b) => a.kp - b.kp), kx = kps.map(r => r.kp);
+const kpS = [["expert", "expert (privileged)", "--c-expert", "5 4"], ["nominal", "nominal policy", "--c-force", ""], ["physrand", "dt + solref randomised", "--c-mlp", ""], ["physkprand", "+ kp randomised (delta actions)", "--c-noforce", ""], ["xyabs_physkprand", "+ kp randomised, xy_abs actions", "--c-ty", ""], ["xyabs_physkprand_noforce", "same, force zeroed", "--c-gt", "3 3"]];
+lineChart(document.getElementById("kp-chart"), {title: "Closed-loop success vs gantry spring stiffness (dt 1 ms, solref 5 ms; nominal kp = 800)", xlabel: "kp [N/m]", ylabel: "success rate", yDomain: [0, 1.05], height: 290,
+  series: kpS.map(([k, name, color, dash]) => ({name, x: kx, y: kps.map(r => r[k].success_rate), color, dash, markers: true}))});
+
+// ---------- lesson 2 --------------------------------------------------------------------------------
+const L = D.labels;
+lineChart(document.getElementById("labels-chart"), {title: `Expert x-action labels, one episode (seed ${L.seed}), two representations`, xlabel: "control step", ylabel: "mm", height: 250,
+  series: [{name: "delta: one-step pulses", x: L.delta_x.map((_, i) => i), y: L.delta_x, color: "--c-noforce"}, {name: "xy_abs: persistent steps", x: L.abs_x.map((_, i) => i), y: L.abs_x, color: "--c-force"}]});
+barChart(document.getElementById("collapse-chart"), {title: "Predicted correction size ÷ expert's, at correction steps", unit: "%", rows: [
+  {label: "nominal kp, delta", value: D.collapse.nominal_delta * 100, color: "--c-force"},
+  {label: "kp randomised, delta", value: D.collapse.kprand_delta * 100, color: "--c-noforce"},
+  {label: "kp randomised, xy_abs", value: D.collapse.kprand_xyabs * 100, color: "--c-ty"}]});
+
+// ---------- export ---------------------------------------------------------------------------------------
+document.getElementById("export-table").innerHTML = "<thead><tr><th>file</th><th>task</th><th>demos</th><th>samples</th><th>train / valid</th><th>size</th></tr></thead><tbody>" +
+  D.export.map(e => `<tr><td class="mono">${e.path}</td><td>${e.task_spec}</td><td>${e.demos}</td><td>${e.samples.toLocaleString()}</td><td>${e.train} / ${e.valid}</td><td>${e.size_mb.toFixed(0)} MB</td></tr>`).join("") + "</tbody>";
+}
+drawAll();
+let lastW = window.innerWidth, rt;
+window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { if (Math.abs(window.innerWidth - lastW) > 40) { lastW = window.innerWidth; drawAll(); } }, 200); });
+})();
+</script>

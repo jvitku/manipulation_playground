@@ -1,6 +1,6 @@
 # CLAUDE.md — force-vla-basics
 
-Learning repo for force-aware manipulation. Current scope is **Stage 0 only**: get trustworthy force/torque (F/T) readings from a simulated peg-in-hole task and understand what contaminates them. No VLA, no policy learning yet. The full plan is in `PLAN.md`; work through its milestones in order.
+Learning repo for force-aware manipulation. Stage 0 (trustworthy force/torque readings on simulated peg-in-hole, M0–M6) is done. Current scope is **Stage 1** (`PLAN.md` §11): small force-token policies (behaviour cloning) on the gantry and the Panda `PegInHole`, physics robustness, HDF5 export. No VLA yet. Work through the milestones in order.
 
 ## Hard rules
 

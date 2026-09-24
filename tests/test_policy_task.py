@@ -41,3 +41,22 @@ def test_windows_and_ablation():
     assert np.all(X[..., FORCE_IDX] == 0.0)
     assert M[-1].sum() == 1 and M[0].sum() == 5  # mask past the episode end
     assert len(X) == sum(len(e["obs"]) for e in eps)
+
+
+def test_xy_abs_action_mode_reproduces_the_delta_trajectory():
+    """The expert run through encode/decode in "xy_abs" follows the delta-mode path exactly,
+    and its lateral labels are persistent steps rather than one-step pulses."""
+    paths, labels = {}, {}
+    for mode in ("delta", "xy_abs"):
+        task = GantryTask(TaskParams(action_mode=mode), 3)
+        pos, act, done = [], [], False
+        while not done:
+            a = task.encode(task.expert_action())
+            act.append(a)
+            done, _ = task.step(a)
+            pos.append(task.g.ee_pos().copy())
+        paths[mode], labels[mode] = np.array(pos), np.array(act)
+    assert np.allclose(paths["delta"], paths["xy_abs"], atol=1e-12)
+    d, a = labels["delta"][:, 0], labels["xy_abs"][:, 0]
+    assert (d != 0).sum() < 0.2 * len(d)  # delta: sparse pulses
+    assert np.allclose(np.cumsum(d), a, atol=1e-12)  # xy_abs: their running sum

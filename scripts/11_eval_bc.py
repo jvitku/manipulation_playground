@@ -1,5 +1,9 @@
 #!/usr/bin/env python
-"""Stage 1: closed-loop evaluation of trained BC checkpoints vs the privileged expert."""
+"""Stage 1: closed-loop evaluation of trained BC checkpoints vs the privileged expert.
+
+`--task arm` evaluates on the Panda PegInHole hidden-hole task (one env, reused).
+`--untrained` adds a randomly initialised copy of the first checkpoint as a baseline.
+"""
 
 from __future__ import annotations
 
@@ -10,13 +14,18 @@ from pathlib import Path
 
 import numpy as np
 
-from fvb.policy.rollout import TorchPolicy, evaluate
+from fvb.policy.rollout import TorchPolicy, UntrainedPolicy, evaluate
 from fvb.policy.task import TaskParams
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--task", choices=["gantry", "arm"], default="gantry")
     ap.add_argument("--ckpt", nargs="+", required=True)
+    ap.add_argument("--untrained", action="store_true")
+    ap.add_argument(
+        "--correct-at", choices=["after_retract", "jam"], default="after_retract", help="expert"
+    )
     ap.add_argument("--n", type=int, default=50)
     ap.add_argument("--seed", type=int, default=50000, help="eval seeds are disjoint from data")
     ap.add_argument("--offset-sigma-mm", type=float, default=1.5)
@@ -28,23 +37,43 @@ def main() -> None:
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    p = TaskParams(
-        clearance=args.clearance_mm * 1e-3,
-        offset_sigma=args.offset_sigma_mm * 1e-3,
-        force_noise_N=args.force_noise_N,
-        torque_noise_Nm=args.torque_noise_Nm,
-    )
+    make_task, close = None, lambda: None
+    if args.task == "arm":
+        from fvb.policy.arm_task import ArmTask, ArmTaskParams, ArmWorld
+
+        p = ArmTaskParams(
+            clearance=args.clearance_mm * 1e-3,
+            offset_sigma=args.offset_sigma_mm * 1e-3,
+            correct_at=args.correct_at,
+        )
+        world = ArmWorld(p, seed=args.seed)
+        make_task, close = (lambda p_, s: ArmTask(p_, s, world)), world.close
+    else:
+        p = TaskParams(
+            clearance=args.clearance_mm * 1e-3,
+            offset_sigma=args.offset_sigma_mm * 1e-3,
+            force_noise_N=args.force_noise_N,
+            torque_noise_Nm=args.torque_noise_Nm,
+            correct_at=args.correct_at,
+        )
     seeds = [args.seed + i for i in range(args.n)]
-    results = {"task": asdict(p), "seeds": [seeds[0], seeds[-1]], "policies": {}}
+    results = {"task": asdict(p), "task_spec": args.task, "seeds": [seeds[0], seeds[-1]]}
+    results["policies"] = {}
     print("expert ...")
-    results["policies"]["expert"] = evaluate(None, p, seeds)
+    results["policies"]["expert"] = evaluate(None, p, seeds, make_task)
+    pols = []
+    if args.untrained:
+        pols.append(("untrained", UntrainedPolicy(args.ckpt[0], device=args.device)))
     for ck in args.ckpt:
         pol = TorchPolicy(ck, device=args.device)
         name = (
             f"{pol.meta['model']}_{'force' if pol.use_force else 'noforce'}_{Path(ck).parent.name}"
         )
+        pols.append((name, pol))
+    for name, pol in pols:
         print(name, "...")
-        results["policies"][name] = evaluate(pol, p, seeds)
+        results["policies"][name] = evaluate(pol, p, seeds, make_task)
+    close()
     for name, r in results["policies"].items():
         print(
             f"{name:32s} success {r['success_rate']:.2f}  steps {r['mean_steps_success']:.1f}  "

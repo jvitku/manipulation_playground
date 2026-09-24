@@ -660,3 +660,127 @@ per-level `t*_f*/{train,eval}/`.
 What this means for a force-aware policy: noise robustness comes from two averaging stages
 (driver-rate compensation + temporal context) and from training on noisy data; a policy fit to
 a clean simulator will silently lose its contact detector on a real sensor.
+
+# Stage 1 completion — PLAN §11 (2026-09-25)
+
+Goals and acceptance bars are in PLAN §11.1. Summary: **G1 met with the MLP, not with ACT-lite;
+G2 met as defined, and a controller-stiffness extension exposed a limitation that is not solved;
+G3 met.** Two debugging results changed the task design and are the main lessons.
+
+## S1.1 / S1.2 — task-spec registry and HDF5 export (G3)
+
+`fvb.policy.spec` holds obs/action layout and force channels per task (`gantry`, `arm`,
+`gantry_kp`); checkpoints record `task` and `action_mode`, and rollout applies them, so one
+train/eval path serves every task. Old checkpoints load unchanged (Stage 1 force policy still
+3/3 on a smoke eval). `scripts/15_export_hdf5.py` writes robomimic-layout HDF5 with `h5py` only:
+named observation groups (they reassemble the policy observation bit-exactly — tested), §5
+control-rate arrays as `obs/s5_*`, `ft_raw_hf` grouped to (T, n_sub, 6), and train/valid masks
+equal to the training split. Gantry expert set: 300 demos, 10 807 samples, 24 MB. LeRobot export
+is not done (new dependency, PLAN §10.5).
+
+## S1.3 / S1.4 — the hidden-hole task on the Panda (G1)
+
+**Task** (`fvb.policy.arm_task`): `PegInHole` built once, the `hole` body moved per episode
+(N(0, 1.5 mm), clipped ±4 mm); the policy outputs peg-tip target deltas and a fixed low-level
+layer servos the peg axis vertical and integrates the xy tip error. Observation: 20 channels
+(`fvb.policy.spec.ARM`). OSC kp 150.
+
+**Expert.** The gantry expert copied verbatim fails: at 50 mm/s the first rim contact exceeds the
+60 N abort before the 3 N jam detector can act (6 of 8 probe episodes aborted). The arm's OSC lags ~15 mm
+behind its target in free space (M5), so the contact arrives with the target far below the tip.
+A two-speed approach (50 mm/s down to 5 mm above the rim — its height is the same for every
+episode, so this uses no hidden information — then 10 mm/s) gives **299/300** expert success,
+2.5 jam recoveries per episode, peak |F| ≈ 39 N (at 20 mm/s contact speed: 53 N).
+
+**First result: force did not help.** Closed loop, 50 unseen seeds: ACT-lite 4/50 with force and
+4/50 without, MLP 13/50 vs 3/50, expert 50/50. Validation loss was the same with and without
+force for ACT-lite (0.102 vs 0.104).
+
+**Root cause: the torque was referenced to the flange.** At the arm's jams the compensated wrench
+carries |Fx| = 8.1 N against |Fy| = 0.15 N, a lateral force along the arm's reach that carries no
+information about the hole (its sign agrees with the correction direction 53 % of the time). Via
+the 100 mm peg it enters the flange torque: `Ty = −0.1·Fx − dx·Fz`, and corr(Ty, −0.1·Fx) = 0.83.
+The useful term — where on the tip face the rim pushes — is buried. Measured on the expert data,
+the sign of the torque at the jam predicts the expert's next correction:
+
+| hole distance > 0.6 mm | flange torque | torque about the peg tip |
+|---|---|---|
+| x (via Ty) | 0.54 | **0.78** |
+| y (via Tx) | 0.96 | 0.97 (1.00 on a 40-episode probe) |
+
+Freezing the xy integrator during contact (anti-windup, now on) did **not** remove the 8 N, so it
+is not integrator wind-up; its source (probably OSC coupling along the reach) is open. The fix is
+the TCP convention: the observation now carries the wrench with its torque taken about the peg
+tip, `T_tip = T_site − (p_tip − p_site) × F`.
+
+**Result with the tip-referenced wrench** (`outputs/s1_arm/eval/eval.json`):
+
+| policy | val L1 | success | mean peak |F| | retracts / ep |
+|---|---|---|---|---|
+| expert (privileged) | — | 50/50 | 37.1 N | 2.8 |
+| MLP + force | 0.057 | **39/50** | 40.0 N | 5.5 |
+| MLP, force zeroed | 0.113 | 4/50 | 36.1 N | 2.1 |
+| ACT-lite + force | 0.104 | 4/50 | 38.3 N | 10.1 |
+| ACT-lite, force zeroed | 0.103 | 4/50 | 40.8 N | 9.9 |
+| untrained (random init) | — | 0/50 | 67.0 N | 0 (48 force aborts) |
+
+G1's bar (expert ≥ 95 %, force beats no-force by ≥ 30 points) is met by the **MLP (+70 points)**
+and not by ACT-lite, which plateaus at the no-force solution: train and val L1 ≈ 0.105 from
+epoch 50 to 250, unchanged with a 16- or 20-step history, lr 1e-4 or 250 epochs, and z-scores
+are moderate (99.9th percentile ≤ 13). On the gantry the ranking was the reverse (ACT 50/50,
+MLP 43/50). Cause not isolated.
+
+## S1.5 — robustness to simulator parameters (G2)
+
+`scripts/17_physics_sweep.py`, 50 unseen seeds per cell (`outputs/s1_phys/`).
+
+**Timestep × solref (the G2 grid): met.** The nominal Stage 1 policy (trained at dt 1 ms,
+solref 5 ms) succeeds **50/50 in all 9 cells** of dt {0.5, 1, 2} ms × solref {2, 5, 20} ms, and
+so does the policy trained on randomised dt + solref. M3's warning — solver settings move the
+peak force 2× — does not bite here because this policy decides from the *control-rate
+compensated* wrench, whose solver main effects M3 measured at ≤ 0.2 N; the solver-sensitive
+spikes live in the physics-rate summary channels.
+
+**Controller stiffness (extension): a real limitation.** M3/M5 name kp as the knob that moves the
+control-rate force most. Varying the gantry spring kp at nominal solver settings:
+
+| kp [N/m] | 200 | 400 | 800 | 1600 | 3200 |
+|---|---|---|---|---|---|
+| nominal policy | 84 % | 98 % | 100 % | 100 % | 78 % |
+| dt + solref randomised | 80 % | 100 % | 100 % | 96 % | 98 % |
+| + kp randomised (delta actions) | 10 % | 8 % | 10 % | 10 % | 12 % |
+| + kp randomised, `xy_abs` actions | 58 % | 92 % | 58 % | 84 % | 66 % |
+| same, force zeroed | 12 % | 8 % | 14 % | 12 % | 6 % |
+
+**Why kp randomisation broke imitation (diagnosed).** The expert makes each lateral correction in
+*one* control step at the end of its retract, and the retract length depends on kp (2–10 steps
+after the jam). The trained model predicts the correction with the right sign (80–83 %) but at
+**1 %** of its size, in every kp band — the L1 median of a pulse whose timing it cannot pin down
+is zero. Checks: the cue itself is intact (lateral force at the jam predicts the direction 93 % /
+89 % vs 97 % / 90 % nominal); an MLP collapses the same way (0–4 % of the size); giving the
+policy log(kp) as an observation does not help (val 0.189); the same code path with kp pinned to
+800 reproduces the nominal dataset bit-for-bit (val 0.071); moving the expert's correction to
+the jam step itself (`correct_at="jam"`) collapses too, even at nominal kp (5/50) — the jam step
+is not sharp either. The nominal Stage 1 result worked only because at fixed kp the retract
+always took 3–4 steps.
+
+**Partial fix: represent the lateral action as a position.** `action_mode="xy_abs"` outputs the
+lateral target relative to the episode start (z stays a delta), so a correction becomes a
+persistent step instead of a pulse (tested: identical trajectory, labels = running sum of the
+deltas). The kp-randomised model then predicts corrections at 98–100 % of their size (val 0.086),
+and closed-loop success rises from ~10 % to 54–92 %. It costs precision at nominal settings:
+the nominal-trained `xy_abs` policy gets 80–92 % where the delta policy gets 100 %, failing by
+timeout with extra retracts. Hypothesis (untested): the lateral target now carries per-step
+regression noise of ~0.1–0.2 mm against a 0.5 mm clearance, where a zero delta held exactly. On
+the arm, `xy_abs` made ACT-lite use force (20/50 vs 6/50 without) but dropped the MLP to 13/50
+with many force aborts.
+
+**S1.6 DAgger was not run.** The failures above are a fitting/representation problem (training
+loss plateaus as high as validation), not compounding error, which is what DAgger addresses.
+
+What this means for a force-aware policy: (1) express the wrench at the tool centre point — a
+flange-referenced torque mixes an uninformative lateral force into the one signal that says
+where the hole is; (2) an expert whose decisive action is a one-step pulse, timed by hidden
+dynamics, cannot be imitated by L1 regression however good the observation is — make decisions
+persistent (positions, not deltas) or make their timing observable; (3) solver randomisation is
+not controller randomisation: a policy can be solver-robust and still fail at 4× the stiffness.

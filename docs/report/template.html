@@ -750,16 +750,17 @@ if (D.eval_sigma3) {
 }
 
 // ---------- untrained vs trained -------------------------------------------------------------
-const V = D.videos, pcol = {"untrained": "--c-untrained", "trained, no force": "--c-noforce", "trained, with force": "--c-force", "expert (privileged)": "--c-expert"};
+const V = D.videos;
+const pc = n => n.startsWith("untrained") ? "--c-untrained" : n.includes("no force") ? "--c-noforce" : n.includes("with force") ? "--c-force" : "--c-expert";
 if (V) {
   const seeds = [...new Set(V.runs.map(r => r.seed))];
   segs(document.getElementById("seed-segs"), seeds.map(s => { const r = V.runs.find(x => x.seed === s); return [String(s), `seed ${s} · hole (${r.hole_xy_mm.map(v => v.toFixed(1)).join(", ")}) mm`]; }), key => {
     const s = +key, vid = document.getElementById("cmp-video");
     if (!vid.src.includes(`seed${s}_`)) vid.src = `media/seed${s}_compare.mp4#t=0.1`;
     const runs = V.runs.filter(r => r.seed === s), tr = D.traces[key];
-    document.getElementById("seed-runs").innerHTML = runs.map(r => `<div><b style="color:${css(pcol[r.policy])}">${r.policy}</b><span class="chip ${r.reason === "success" ? "ok" : "bad"}">${r.reason}</span> <span class="mono small">${(r.steps / 20).toFixed(2)} s · peak ${r.peak_F_N.toFixed(1)} N</span></div>`).join("");
+    document.getElementById("seed-runs").innerHTML = runs.map(r => `<div><b style="color:${css(pc(r.policy))}">${r.policy}</b><span class="chip ${r.reason === "success" ? "ok" : "bad"}">${r.reason}</span> <span class="mono small">${(r.steps / 20).toFixed(2)} s · peak ${r.peak_F_N.toFixed(1)} N</span></div>`).join("");
     const hole = runs[0].hole_xy_mm, cl = 0.5;
-    const xy = tr.map(p => ({name: p.meta.policy, x: p.trace.map(q => q.pos_mm[0]), y: p.trace.map(q => q.pos_mm[1]), color: pcol[p.meta.policy], width: 1.8, end: true}));
+    const xy = tr.map(p => ({name: p.meta.policy, x: p.trace.map(q => q.pos_mm[0]), y: p.trace.map(q => q.pos_mm[1]), color: pc(p.meta.policy), width: 1.8, end: true}));
     xy.push({name: "hole centre", x: [hole[0]], y: [hole[1]], color: "--ok", points: true, r: 4});
     xy.push({name: "start", x: [0], y: [0], color: "--muted", points: true, r: 3});
     const ext = Math.max(4, ...xy.flatMap(s => s.x.concat(s.y).map(Math.abs))) + 0.8;
@@ -767,9 +768,9 @@ if (V) {
       xDomain: [-ext, ext], yDomain: [-ext, ext], rects: [{x0: hole[0] - cl, x1: hole[0] + cl, y0: hole[1] - cl, y1: hole[1] + cl, color: "--ok"}]});
     groups.seed = [];
     lineChart(document.getElementById("depth-chart"), {title: "Insertion depth (success = 30 mm)", xlabel: "time [s]", ylabel: "mm", group: "seed", height: 180,
-      series: tr.map(p => ({name: p.meta.policy, x: p.trace.map(q => q.t), y: p.trace.map(q => q.depth_mm), color: pcol[p.meta.policy]}))});
+      series: tr.map(p => ({name: p.meta.policy, x: p.trace.map(q => q.t), y: p.trace.map(q => q.depth_mm), color: pc(p.meta.policy)}))});
     lineChart(document.getElementById("fz-chart"), {title: "Compensated |F|", xlabel: "time [s]", ylabel: "N", group: "seed", height: 170,
-      series: tr.map(p => ({name: p.meta.policy, x: p.trace.map(q => q.t), y: p.trace.map(q => Math.hypot(q.ft_comp[0], q.ft_comp[1], q.ft_comp[2])), color: pcol[p.meta.policy], width: 1.3}))});
+      series: tr.map(p => ({name: p.meta.policy, x: p.trace.map(q => q.t), y: p.trace.map(q => Math.hypot(q.ft_comp[0], q.ft_comp[1], q.ft_comp[2])), color: pc(p.meta.policy), width: 1.3}))});
   }, String(seeds[0]));
 }
 

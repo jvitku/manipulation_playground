@@ -3,7 +3,7 @@ RUN     := $(COMPOSE) run --rm -T -u $(shell id -u):$(shell id -g) dev
 RUNT    := $(COMPOSE) run --rm -T -u $(shell id -u):$(shell id -g) train
 ARGS    ?=
 
-.PHONY: build build-train shell test lint fmt run m0 m1 m2 m3 m4 m5 m6 all s1 report
+.PHONY: build build-train shell test lint fmt run m0 m1 m2 m3 m4 m5 m6 all s1 report report-s1
 
 build:
 	$(COMPOSE) build dev
@@ -67,3 +67,7 @@ report:
 	$(RUNT) python scripts/13_policy_videos.py --seeds 50003 50008 50022
 	$(RUN) python scripts/14_report_data.py
 	$(RUN) python docs/report/build.py
+
+# Stage 1 completion report (docs/stage1/index.html): needs the PLAN §11 runs, see README
+report-s1:
+	$(RUN) python docs/stage1/build.py

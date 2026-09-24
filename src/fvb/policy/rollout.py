@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from collections import deque
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 
 from fvb.policy.data import Norm, apply_ablation
-from fvb.policy.task import ACT_DIM, OBS_DIM, GantryTask, TaskParams
+from fvb.policy.spec import get_spec
+from fvb.policy.task import GantryTask, TaskParams
 
 
 class TorchPolicy:
@@ -24,8 +26,15 @@ class TorchPolicy:
         self.meta = ck["meta"]
         self.H, self.K = self.meta["H"], self.meta["K"]
         self.use_force = bool(self.meta["use_force"])
+        # task settings the policy was trained with; rollout applies them to the task params
+        self.task_overrides = {"action_mode": self.meta.get("action_mode", "delta")}
+        if self.meta.get("task") == "gantry_kp":
+            self.task_overrides["obs_kp"] = True
         self.norm = Norm.from_json(ck["norm"])
-        self.model = build_model(self.meta["model"], OBS_DIM, ACT_DIM, self.H, self.K).to(device)
+        self.spec = get_spec(self.meta.get("task"))
+        self.model = build_model(
+            self.meta["model"], self.spec.obs_dim, self.spec.act_dim, self.H, self.K
+        ).to(device)
         self.model.load_state_dict(ck["state_dict"])
         self.model.eval()
         self.device = device
@@ -36,7 +45,8 @@ class TorchPolicy:
         self.buf.clear()
 
     def act(self, obs: np.ndarray, exec_mode: str = "first") -> np.ndarray:
-        o = (apply_ablation(obs, self.use_force) - self.norm.obs_mean) / self.norm.obs_std
+        o = apply_ablation(obs, self.use_force, self.spec.force_idx)
+        o = (o - self.norm.obs_mean) / self.norm.obs_std
         if not self.buf:
             for _ in range(self.H - 1):
                 self.buf.append(o)
@@ -50,22 +60,39 @@ class TorchPolicy:
         return chunk[0] if exec_mode == "first" else chunk
 
 
-def rollout(policy, p: TaskParams, seed: int, log=None) -> dict:
-    task = GantryTask(p, seed)
+class UntrainedPolicy(TorchPolicy):
+    """Same architecture + normalisation as a trained checkpoint, freshly initialised weights."""
+
+    def __init__(self, ckpt_path: str | Path, init_seed: int = 0, device: str = "cpu"):
+        super().__init__(ckpt_path, device=device)
+        from fvb.policy.models import build_model
+
+        self.torch.manual_seed(init_seed)
+        sp = self.spec
+        self.model = build_model(self.meta["model"], sp.obs_dim, sp.act_dim, self.H, self.K)
+        self.model.to(device).eval()
+
+
+def rollout(policy, p: TaskParams, seed: int, log=None, make_task=None) -> dict:
+    """One closed-loop episode. ``make_task(p, seed)`` builds the task (default: gantry); a task
+    exposes observe / expert_action / step / depth / force_norm / hole_xy / k."""
+    if policy is not None and getattr(policy, "task_overrides", None):
+        p = replace(p, **policy.task_overrides)
+    task = (make_task or GantryTask)(p, seed)
     if hasattr(policy, "reset"):
         policy.reset()
     done, reason, peak, n_jams, retracting = False, None, 0.0, 0, False
     while not done:
         obs = task.observe()
-        a = policy.act(obs) if policy is not None else task.expert_action()
-        f = np.linalg.norm(task.g.ft_comp_last()[:3])
+        a = policy.act(obs) if policy is not None else task.encode(task.expert_action())
+        f = task.force_norm()
         if a[2] > 1e-4 and f > 1.0 and not retracting:
             n_jams += 1
             retracting = True
         if a[2] < 0:
             retracting = False
         done, reason = task.step(a, log)
-        peak = max(peak, float(np.linalg.norm(task.g.ft_comp_last()[:3])))
+        peak = max(peak, task.force_norm())
     return {
         "seed": seed,
         "success": reason == "success",
@@ -78,8 +105,12 @@ def rollout(policy, p: TaskParams, seed: int, log=None) -> dict:
     }
 
 
-def evaluate(policy, p: TaskParams, seeds: list[int]) -> dict:
-    rows = [rollout(policy, p, s) for s in seeds]
+def evaluate(policy, p, seeds: list[int], make_task=None) -> dict:
+    rows = [rollout(policy, p, s, make_task=make_task) for s in seeds]
+    return summarize(rows)
+
+
+def summarize(rows: list[dict]) -> dict:
     ok = np.array([r["success"] for r in rows])
     steps = np.array([r["steps"] for r in rows])
     return {

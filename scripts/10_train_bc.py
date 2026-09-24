@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from fvb.policy.data import compute_norm, load_episodes, make_windows, split_episodes
-from fvb.policy.task import ACT_DIM, OBS_DIM
+from fvb.policy.spec import spec_of_dataset
 
 
 def main() -> None:
@@ -47,18 +47,23 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "config.json").write_text(json.dumps(vars(args), indent=2))
 
-    eps = load_episodes(args.data)
+    spec = spec_of_dataset(args.data)
+    data_cfg_path = Path(args.data) / "config.json"
+    data_cfg = json.loads(data_cfg_path.read_text()) if data_cfg_path.exists() else {}
+    action_mode = data_cfg.get("task", {}).get("action_mode", "delta")
+    fi = spec.force_idx
+    eps = load_episodes(args.data, spec)
     train_eps, val_eps = split_episodes(eps, args.val_frac, args.seed)
     use_force = bool(args.force)
-    norm = compute_norm(train_eps, use_force)
-    Xtr, Ytr, Mtr = make_windows(train_eps, args.H, args.K, use_force, norm)
-    Xva, Yva, Mva = make_windows(val_eps, args.H, args.K, use_force, norm)
+    norm = compute_norm(train_eps, use_force, fi)
+    Xtr, Ytr, Mtr = make_windows(train_eps, args.H, args.K, use_force, norm, fi)
+    Xva, Yva, Mva = make_windows(val_eps, args.H, args.K, use_force, norm, fi)
     print(
         f"device={device} episodes train/val={len(train_eps)}/{len(val_eps)} "
-        f"windows train/val={len(Xtr)}/{len(Xva)} use_force={use_force}"
+        f"windows train/val={len(Xtr)}/{len(Xva)} use_force={use_force} task={spec.name}"
     )
 
-    model = build_model(args.model, OBS_DIM, ACT_DIM, args.H, args.K).to(device)
+    model = build_model(args.model, spec.obs_dim, spec.act_dim, args.H, args.K).to(device)
     print(f"model={args.model} params={n_params(model):,}")
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
     steps_per_epoch = int(np.ceil(len(Xtr) / args.batch))
@@ -75,8 +80,10 @@ def main() -> None:
         "H": args.H,
         "K": args.K,
         "use_force": use_force,
-        "obs_dim": OBS_DIM,
-        "act_dim": ACT_DIM,
+        "task": spec.name,
+        "action_mode": action_mode,
+        "obs_dim": spec.obs_dim,
+        "act_dim": spec.act_dim,
         "data": args.data,
         "seed": args.seed,
     }

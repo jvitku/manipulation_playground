@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from fvb.policy.task import ACT_DIM, FORCE_IDX, OBS_DIM
+from fvb.policy.spec import GANTRY, TaskSpec
 
 
 @dataclass
@@ -29,12 +29,12 @@ class Norm:
         return cls(**{k: np.asarray(v, dtype=np.float32) for k, v in d.items()})
 
 
-def load_episodes(data_dir: str | Path) -> list[dict]:
+def load_episodes(data_dir: str | Path, spec: TaskSpec = GANTRY) -> list[dict]:
     eps = []
     for f in sorted(glob.glob(str(Path(data_dir) / "ep*_policy.npz"))):
         z = np.load(f)
         obs, act = z["obs"].astype(np.float32), z["action"].astype(np.float32)
-        assert obs.shape[1] == OBS_DIM and act.shape[1] == ACT_DIM, (obs.shape, act.shape)
+        assert obs.shape[1] == spec.obs_dim and act.shape[1] == spec.act_dim, (obs.shape, spec)
         eps.append({"obs": obs, "action": act, "success": bool(z["success"]), "path": f})
     if not eps:
         raise FileNotFoundError(f"no ep*_policy.npz in {data_dir}")
@@ -50,28 +50,30 @@ def split_episodes(eps: list[dict], val_frac: float, seed: int) -> tuple[list, l
     return train, val
 
 
-def apply_ablation(obs: np.ndarray, use_force: bool) -> np.ndarray:
+def apply_ablation(obs: np.ndarray, use_force: bool, force_idx: slice = GANTRY.force_idx):
     if use_force:
         return obs
     o = obs.copy()
-    o[..., FORCE_IDX] = 0.0
+    o[..., force_idx] = 0.0
     return o
 
 
-def compute_norm(train: list[dict], use_force: bool) -> Norm:
-    obs = np.concatenate([apply_ablation(e["obs"], use_force) for e in train])
+def compute_norm(train: list[dict], use_force: bool, force_idx: slice = GANTRY.force_idx) -> Norm:
+    obs = np.concatenate([apply_ablation(e["obs"], use_force, force_idx) for e in train])
     act = np.concatenate([e["action"] for e in train])
     return Norm(
         obs.mean(0), np.maximum(obs.std(0), 1e-6), act.mean(0), np.maximum(act.std(0), 1e-6)
     )
 
 
-def make_windows(eps: list[dict], H: int, K: int, use_force: bool, norm: Norm):
+def make_windows(
+    eps: list[dict], H: int, K: int, use_force: bool, norm: Norm, force_idx=GANTRY.force_idx
+):
     """Returns X (N,H,OBS), Y (N,K,ACT), M (N,K) validity mask. Start is padded by repeating
     the first observation; the action target past the episode end is masked out."""
     X, Y, M = [], [], []
     for e in eps:
-        obs = (apply_ablation(e["obs"], use_force) - norm.obs_mean) / norm.obs_std
+        obs = (apply_ablation(e["obs"], use_force, force_idx) - norm.obs_mean) / norm.obs_std
         act = (e["action"] - norm.act_mean) / norm.act_std
         T = len(obs)
         pad = np.repeat(obs[:1], H - 1, axis=0)

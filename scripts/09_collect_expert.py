@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Stage 1: collect privileged-expert episodes on the hidden-hole gantry task.
+"""Stage 1: collect privileged-expert episodes on the hidden-hole task (gantry or arm).
 
 Writes PLAN §5 episodes (+ the per-step policy observation as `obs` alongside, and the expert
 delta actions as `action`) to --out. The hole offset is stored in the .json config for analysis
@@ -20,22 +20,56 @@ from fvb.logging.episode import EpisodeLogger
 from fvb.policy.task import GantryTask, TaskParams
 
 
-def run_episode(seed: int, p: TaskParams, out: Path, i: int) -> dict:
-    task = GantryTask(p, seed)
+def task_factory(name: str, args):
+    """(params, make_task(seed), close) for --task. The arm env is built once and reused."""
+    if name == "gantry":
+        p = TaskParams(
+            clearance=args.clearance_mm * 1e-3,
+            offset_sigma=args.offset_sigma_mm * 1e-3,
+            force_noise_N=args.force_noise_N,
+            torque_noise_Nm=args.torque_noise_Nm,
+            phys_rand=args.phys_rand,
+            kp_rand=args.kp_rand,
+            kp_range=tuple(args.kp_range),
+            obs_kp=args.obs_kp,
+            action_mode=args.action_mode,
+            correct_at=args.correct_at,
+        )
+        return p, (lambda seed: GantryTask(p, seed)), (lambda: None)
+    from fvb.policy.arm_task import ArmTask, ArmTaskParams, ArmWorld
+
+    p = ArmTaskParams(
+        clearance=args.clearance_mm * 1e-3,
+        offset_sigma=args.offset_sigma_mm * 1e-3,
+        correct_at=args.correct_at,
+        action_mode=args.action_mode,
+    )
+    world = ArmWorld(p, seed=args.seed)
+    return p, (lambda seed: ArmTask(p, seed, world)), world.close
+
+
+def run_episode(seed: int, p, make_task, out: Path, i: int) -> dict:
+    task = make_task(seed)
     log = EpisodeLogger(
-        config={"task": asdict(p), "hole_xy": task.hole_xy.tolist(), "expert": True}, seed=seed
+        config={
+            "task": asdict(p),
+            "hole_xy": task.hole_xy.tolist(),
+            "phys": getattr(task, "phys", None),
+            "expert": True,
+        },
+        seed=seed,
     )
     obs_rows, act_rows = [], []
     peak, n_jams, done, reason = 0.0, 0, False, None
     while not done:
         o = task.observe()
-        a = task.expert_action()
+        a = task.encode(task.expert_action())
         if task._phase == "retract" and a[2] > 0 and len(act_rows) and act_rows[-1][2] <= 0:
             n_jams += 1
         obs_rows.append(o)
         act_rows.append(a.astype(np.float32))
         done, reason = task.step(a, log)
-        peak = max(peak, float(np.linalg.norm(task.g.ft_comp_last()[:3])))
+        peak = max(peak, task.force_norm())
     log.success = reason == "success"
     arrs = log.arrays()
     # the §5 `action` key holds the absolute target (Gantry.log_row); store the policy-facing
@@ -55,12 +89,14 @@ def run_episode(seed: int, p: TaskParams, out: Path, i: int) -> dict:
         "n_jams": n_jams,
         "peak_F_N": peak,
         "hole_xy_mm": (task.hole_xy * 1e3).tolist(),
+        "phys": getattr(task, "phys", None),
         "path": str(path),
     }
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--task", choices=["gantry", "arm"], default="gantry")
     ap.add_argument("--n", type=int, default=300)
     ap.add_argument("--seed", type=int, default=1000)
     ap.add_argument("--out", default="data/expert_trackA")
@@ -68,18 +104,22 @@ def main() -> None:
     ap.add_argument("--clearance-mm", type=float, default=0.5)
     ap.add_argument("--force-noise-N", type=float, default=0.0)
     ap.add_argument("--torque-noise-Nm", type=float, default=0.0)
+    ap.add_argument("--phys-rand", action="store_true", help="gantry: randomise dt + solref")
+    ap.add_argument("--kp-rand", action="store_true", help="gantry: randomise the spring kp")
+    ap.add_argument("--kp-range", type=float, nargs=2, default=[200.0, 3200.0], help="N/m")
+    ap.add_argument("--obs-kp", action="store_true", help="gantry: kp in the observation")
+    ap.add_argument("--correct-at", choices=["after_retract", "jam"], default="after_retract")
+    ap.add_argument("--action-mode", choices=["delta", "xy_abs"], default="delta")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    p = TaskParams(
-        clearance=args.clearance_mm * 1e-3,
-        offset_sigma=args.offset_sigma_mm * 1e-3,
-        force_noise_N=args.force_noise_N,
-        torque_noise_Nm=args.torque_noise_Nm,
-    )
-    (out / "config.json").write_text(json.dumps({**vars(args), "task": asdict(p)}, indent=2))
+    p, make_task, close = task_factory(args.task, args)
+    spec_name = "gantry_kp" if args.task == "gantry" and args.obs_kp else args.task
+    cfg = {**vars(args), "task_spec": spec_name, "task": asdict(p)}
+    (out / "config.json").write_text(json.dumps(cfg, indent=2))
     t0 = time.perf_counter()
-    rows = [run_episode(args.seed + i, p, out, i) for i in range(args.n)]
+    rows = [run_episode(args.seed + i, p, make_task, out, i) for i in range(args.n)]
+    close()
     ok = sum(r["success"] for r in rows)
     jams = np.array([r["n_jams"] for r in rows])
     summary = {

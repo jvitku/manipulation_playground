@@ -32,6 +32,13 @@ the ACT-lite topology, training curves and untrained-vs-trained policy videos. O
 browser (media is in `docs/report/media/`). Regenerate with `make report` after `make all` and
 `make s1` (and `scripts/12_noise_sweep.py` for the noise chart).
 
+### Stage 1 completion (PLAN §11)
+
+`docs/stage1/index.html` is the Peg-in-Hole Stage 1 Report: the hidden-hole task on the Panda
+(`09_collect_expert.py --task arm`, `11_eval_bc.py --task arm`), physics/stiffness robustness
+(`17_physics_sweep.py`), robomimic-style HDF5 export (`15_export_hdf5.py`), arm videos
+(`13_policy_videos.py --task arm`). Rebuild the page with `make report-s1` once those outputs exist.
+
 Everything runs inside Docker (`make shell` for a prompt, `make run S=scripts/xx.py ARGS="..."`
 for one script). Without `make`: `docker compose -f docker/compose.yaml run --rm -T -u $(id -u):$(id -g) dev <cmd>`.
 
