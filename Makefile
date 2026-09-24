@@ -3,7 +3,7 @@ RUN     := $(COMPOSE) run --rm -T -u $(shell id -u):$(shell id -g) dev
 RUNT    := $(COMPOSE) run --rm -T -u $(shell id -u):$(shell id -g) train
 ARGS    ?=
 
-.PHONY: build build-train shell test lint fmt run m0 m1 m2 m3 m4 m5 m6 all s1
+.PHONY: build build-train shell test lint fmt run m0 m1 m2 m3 m4 m5 m6 all s1 report
 
 build:
 	$(COMPOSE) build dev
@@ -61,3 +61,9 @@ s1:
 	$(RUNT) python scripts/10_train_bc.py --data data/expert_trackA --out outputs/s1/force --force 1
 	$(RUNT) python scripts/10_train_bc.py --data data/expert_trackA --out outputs/s1/noforce --force 0
 	$(RUN) python scripts/11_eval_bc.py --ckpt outputs/s1/force/best.pt outputs/s1/noforce/best.pt --n 50 --out outputs/s1/eval
+
+# HTML report (docs/report/index.html): needs outputs from `make all` and `make s1` (+ noise sweep)
+report:
+	$(RUNT) python scripts/13_policy_videos.py --seeds 50003 50008 50022
+	$(RUN) python scripts/14_report_data.py
+	$(RUN) python docs/report/build.py

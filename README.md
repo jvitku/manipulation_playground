@@ -25,6 +25,13 @@ make build-train   # Stage 0 image + PyTorch (CUDA 12.4 wheels)
 make s1            # 300 expert episodes -> train ACT-lite with/without force -> closed-loop eval
 ```
 
+### Report
+
+`docs/report/index.html` is the Peg-in-Hole Force Report: robot videos, speed/force/torque charts,
+the ACT-lite topology, training curves and untrained-vs-trained policy videos. Open it in a
+browser (media is in `docs/report/media/`). Regenerate with `make report` after `make all` and
+`make s1` (and `scripts/12_noise_sweep.py` for the noise chart).
+
 Everything runs inside Docker (`make shell` for a prompt, `make run S=scripts/xx.py ARGS="..."`
 for one script). Without `make`: `docker compose -f docker/compose.yaml run --rm -T -u $(id -u):$(id -g) dev <cmd>`.
 

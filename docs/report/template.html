@@ -1,0 +1,790 @@
+<title>Peg-in-Hole Force Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #f2f4f1;
+  --surface: #ffffff;
+  --sunk: #e8ebe6;
+  --ink: #1a1f22;
+  --muted: #5a6468;
+  --rule: #d5dad3;
+  --accent: #0d6a72;
+  --accent-soft: #d6ebec;
+  --ok: #2c7d4f;
+  --bad: #b93a2c;
+  --c-fz: #1f67c9;
+  --c-tx: #d0561c;
+  --c-ty: #2b9245;
+  --c-tz: #8a4fc2;
+  --c-f: #1a1f22;
+  --c-hf: #d9a21b;
+  --c-gt: #8d9599;
+  --c-untrained: #9a8f86;
+  --c-noforce: #d0561c;
+  --c-force: #1f67c9;
+  --c-expert: #1a1f22;
+  --c-mlp: #7ea9df;
+  --c-mlpno: #f0a47a;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #121618; --surface: #1a1f22; --sunk: #0d1012; --ink: #e5e9e6; --muted: #98a2a5;
+    --rule: #2d3538; --accent: #55b6bd; --accent-soft: #1b3437; --ok: #57b77f; --bad: #e0725f;
+    --c-fz: #5f9cf0; --c-tx: #f08a55; --c-ty: #5cc279; --c-tz: #b58ae6; --c-f: #e5e9e6;
+    --c-hf: #e8bb4a; --c-gt: #7b8589; --c-untrained: #a39a92; --c-noforce: #f08a55;
+    --c-force: #5f9cf0; --c-expert: #e5e9e6; --c-mlp: #3f6fae; --c-mlpno: #a8603a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #121618; --surface: #1a1f22; --sunk: #0d1012; --ink: #e5e9e6; --muted: #98a2a5;
+  --rule: #2d3538; --accent: #55b6bd; --accent-soft: #1b3437; --ok: #57b77f; --bad: #e0725f;
+  --c-fz: #5f9cf0; --c-tx: #f08a55; --c-ty: #5cc279; --c-tz: #b58ae6; --c-f: #e5e9e6;
+  --c-hf: #e8bb4a; --c-gt: #7b8589; --c-untrained: #a39a92; --c-noforce: #f08a55;
+  --c-force: #5f9cf0; --c-expert: #e5e9e6; --c-mlp: #3f6fae; --c-mlpno: #a8603a;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--ground); color: var(--ink); font: 15.5px/1.6 var(--body);
+  padding-inline: 20px; padding-block: 0 64px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; }
+.prose { max-width: 68ch; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; line-height: 1.08; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2.6rem, 6vw, 4.2rem); letter-spacing: -0.01em; font-weight: 700; }
+h2 { font-size: 2.1rem; margin-bottom: 0.4rem; }
+h3 { font-size: 1.35rem; margin: 1.8rem 0 0.4rem; }
+p { margin: 0.6rem 0; }
+a { color: var(--accent); }
+code, .mono { font-family: var(--mono); font-size: 0.88em; }
+.eyebrow { font: 500 0.74rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.muted { color: var(--muted); }
+.small { font-size: 0.86rem; }
+
+header.top { padding-block: 44px 28px; border-bottom: 1px solid var(--rule); }
+header.top .lede { font-size: 1.12rem; max-width: 62ch; margin-top: 14px; color: var(--muted); }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-top: 26px; }
+.facts div { background: var(--surface); padding: 14px 16px; }
+.facts b { display: block; font: 600 1.7rem/1.1 var(--display); font-variant-numeric: tabular-nums; }
+.facts span { font-size: 0.82rem; color: var(--muted); }
+
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 18px; padding-block: 14px; border-bottom: 1px solid var(--rule); font-size: 0.88rem; position: sticky; top: env(safe-area-inset-top, 0px); background: var(--ground); z-index: 5; }
+nav.toc a { color: var(--muted); text-decoration: none; }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); }
+
+section { padding-block: 44px 8px; border-bottom: 1px solid var(--rule); scroll-margin-top: 50px; }
+.stage-mark { display: inline-block; font: 500 0.72rem/1 var(--mono); letter-spacing: 0.08em; padding: 4px 7px; border: 1px solid var(--accent); color: var(--accent); margin-left: 10px; vertical-align: 0.5em; }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-top: 18px; }
+.grid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 18px; }
+figure { margin: 0; }
+figure video, figure img { width: 100%; max-width: 100%; display: block; background: var(--sunk); border: 1px solid var(--rule); }
+figcaption { font-size: 0.84rem; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+figcaption b { color: var(--ink); font-weight: 600; }
+
+.panel { background: var(--surface); border: 1px solid var(--rule); padding: 16px 18px; margin-top: 18px; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 8px; }
+.controls label { font-size: 0.85rem; color: var(--muted); }
+select, button.seg { font: 500 0.86rem var(--body); color: var(--ink); background: var(--surface); border: 1px solid var(--rule); padding: 6px 10px; }
+select:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.segs { display: inline-flex; flex-wrap: wrap; }
+button.seg { cursor: pointer; margin-left: -1px; }
+button.seg[aria-pressed="true"] { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+
+.chart { width: 100%; position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .ax text { fill: var(--muted); font: 11px var(--mono); }
+.chart .ax line, .chart .ax path { stroke: var(--rule); }
+.chart .lab { fill: var(--muted); font: 11.5px var(--body); }
+.chart .ttl { fill: var(--ink); font: 600 12.5px var(--body); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.8rem; color: var(--muted); margin: 2px 0 4px; }
+.legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--rule); padding: 5px 8px; font: 11.5px/1.45 var(--mono); color: var(--ink); white-space: nowrap; z-index: 3; box-shadow: 0 2px 10px rgba(0,0,0,0.12); }
+.tip[hidden] { display: none; }
+
+.table-wrap { overflow-x: auto; margin-top: 14px; }
+table { border-collapse: collapse; font-size: 0.88rem; min-width: 100%; }
+th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--rule); font-variant-numeric: tabular-nums; white-space: nowrap; }
+th { font: 600 0.78rem var(--body); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+th:first-child, td:first-child { text-align: left; }
+td.ok { color: var(--ok); font-weight: 600; }
+td.bad { color: var(--bad); font-weight: 600; }
+tr.hl td { background: var(--accent-soft); }
+
+.takeaway { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; margin: 16px 0; max-width: 68ch; }
+.takeaway b { font-family: var(--display); font-size: 1.05rem; letter-spacing: 0.02em; }
+ul.tight { padding-left: 1.2em; margin: 0.4rem 0; }
+ul.tight li { margin: 0.3rem 0; }
+
+.diagram { overflow-x: auto; margin-top: 16px; background: var(--surface); border: 1px solid var(--rule); padding: 12px; }
+.diagram svg { display: block; min-width: 820px; width: 100%; height: auto; }
+.diagram .box { fill: var(--surface); stroke: var(--ink); stroke-width: 1.2; }
+.diagram .box.acc { fill: var(--accent-soft); stroke: var(--accent); }
+.diagram .box.force { fill: var(--accent-soft); stroke: var(--c-fz); stroke-dasharray: 4 3; }
+.diagram .box.sunk { fill: var(--sunk); stroke: var(--rule); }
+.diagram text { fill: var(--ink); font: 12px var(--body); }
+.diagram text.m { font: 10.5px var(--mono); fill: var(--muted); }
+.diagram text.h { font: 600 13px var(--body); }
+.diagram .arr { stroke: var(--muted); stroke-width: 1.3; fill: none; marker-end: url(#arrow); }
+.diagram .arrhead { fill: var(--muted); }
+
+.principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0; margin-top: 16px; border-top: 1px solid var(--rule); }
+.principles div { padding: 14px 18px 14px 0; border-bottom: 1px solid var(--rule); }
+.principles h4 { margin: 0 0 4px; font: 600 1.02rem var(--display); letter-spacing: 0.02em; }
+.principles p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+
+.cmp-video { max-width: 1000px; }
+.chip { display: inline-block; font: 500 0.72rem/1 var(--mono); padding: 3px 6px; border: 1px solid currentColor; }
+.chip.ok { color: var(--ok); } .chip.bad { color: var(--bad); }
+.runs { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; margin-top: 10px; font-size: 0.85rem; }
+.runs div { border: 1px solid var(--rule); background: var(--surface); padding: 8px 10px; }
+.runs b { display: block; font-weight: 600; }
+footer { padding-block: 30px; font-size: 0.84rem; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow">force-vla-basics · MuJoCo 3.3.0 + robosuite 1.5.2 · regenerated __DATE__ @ __SHA__</div>
+  <h1>Peg-in-Hole Force Report</h1>
+  <p class="lede">What a simulated wrist force/torque sensor actually measures during peg-in-hole and contact tasks, what contaminates it, and whether a small network can use it. Stage 0 is the sensing work (M0–M6); Stage 1 trains a policy on it. Every number, plot and video below came from a fresh run of the repo on this machine.</p>
+  <div class="facts" id="facts"></div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#robots">The robots</a>
+  <a href="#signals">Speeds, forces, torques</a>
+  <a href="#contamination">Contamination</a>
+  <a href="#solver">Solver sensitivity</a>
+  <a href="#stiffness">Stiffness</a>
+  <a href="#summary">Stage 0 verdict</a>
+  <a href="#network">Network</a>
+  <a href="#training">Training</a>
+  <a href="#untrained-vs-trained">Untrained vs trained</a>
+  <a href="#noise">Noise floor</a>
+  <a href="#next">What's left</a>
+</nav>
+
+<!-- ============================================================ ROBOTS -->
+<section id="robots">
+  <div class="eyebrow">Stage 0 · M1, M4, M6</div>
+  <h2>The robots doing the task</h2>
+  <div class="prose">
+    <p>Stage 0 uses two setups. <b>Track A</b> is a bare MuJoCo 3-axis gantry: a 0.1 kg, 20 mm square peg on position-actuator springs (<code>kp</code> 800 N/m) above a chamferless square hole with 0.5 mm clearance per side. It isolates the physics of the sensor. <b>Track B</b> is robosuite's Panda under its operational-space controller (OSC), running the same measurements on a real arm model: <code>Wipe</code>, <code>NutAssemblyRound</code>, and a custom single-arm <code>PegInHole</code> env built for this repo.</p>
+  </div>
+  <div class="grid2">
+    <figure><video src="media/m1_offset_0mm.mp4#t=0.1" controls muted loop playsinline preload="metadata"></video>
+      <figcaption><b>Track A, aligned (0 mm).</b> The peg drops through the 0.5 mm clearance, touches no wall, and bottoms out at 40 mm depth.</figcaption></figure>
+    <figure><video src="media/m1_offset_4mm.mp4#t=0.1" controls muted loop playsinline preload="metadata"></video>
+      <figcaption><b>Track A, 4 mm offset.</b> The peg lands on the rim and jams. The spring keeps winding up while the target keeps descending: steady −44.9 N.</figcaption></figure>
+  </div>
+  <div class="grid2">
+    <figure><video src="media/m4_press_slide.mp4#t=0.1" controls muted loop playsinline preload="metadata"></video>
+      <figcaption><b>Panda on Wipe, press and slide.</b> Descends until compensated |F| &gt; 1 N, holds 10 mm below the contact height, slides along +y.</figcaption></figure>
+    <figure><video src="media/m6_nut.mp4#t=0.1" controls muted loop playsinline preload="metadata"></video>
+      <figcaption><b>NutAssemblyRound, scripted.</b> Grasp → lift → transport → lower onto the peg → release (7/8 succeed).</figcaption></figure>
+    <figure><video src="media/m6_pih_kp150_4mm.mp4#t=0.1" controls muted loop playsinline preload="metadata"></video>
+      <figcaption><b>Custom PegInHole, kp 150, 4 mm offset.</b> Peg welded to the flange lands on the rim; the controller holds a 2 mm push.</figcaption></figure>
+  </div>
+</section>
+
+<!-- ============================================================ SIGNALS -->
+<section id="signals">
+  <div class="eyebrow">Stage 0 · recorded episodes (PLAN §5 schema)</div>
+  <h2>Speeds, forces and torques</h2>
+  <div class="prose">
+    <p>Pick an episode. All charts share the time axis; hover one to read every channel at that instant. The force panel shows the key artifact of this whole stage: the <span style="color:var(--c-hf)">physics-rate peak</span> inside each 50 ms control interval versus the <span style="color:var(--c-f)">control-rate reading</span> a 20 Hz policy would see.</p>
+  </div>
+  <div class="panel">
+    <div class="controls"><label for="ep-select">Episode</label><select id="ep-select"></select></div>
+    <div id="ep-charts"></div>
+  </div>
+  <div class="takeaway"><b>Read the gap between yellow and black.</b> A contact impact is a 1–5 ms spike that falls between two 20 Hz samples. On the Panda the physics-rate peak is 1.7–2× the control-rate one, and up to 5.5× in the nut task. A policy at control rate sees the quasi-static wind-up, not the impact.</div>
+</section>
+
+<!-- ============================================================ CONTAMINATION -->
+<section id="contamination">
+  <div class="eyebrow">Stage 0 · M2</div>
+  <h2>Gravity and inertia in the reading</h2>
+  <div class="prose">
+    <p>The simulated sensor is exactly <code>m·Rᵀ(a − g)</code> plus contact. There is no noise, no bias, no sensor dynamics. Mass and centre of mass are identified by least squares from static poses (0.1 kg → <span class="mono" id="m2-mass"></span> kg). What decides whether compensation works is <em>where the acceleration comes from</em>. Residual RMS in free space, as % of m·g (log scale):</p>
+  </div>
+  <div class="panel"><div id="m2-chart"></div></div>
+  <div class="grid2">
+    <figure><img src="img/m2_sine_2_comp.png" alt="2 Hz sine motion: raw vs compensated force" loading="lazy">
+      <figcaption><b>2 Hz sine, 10 mm.</b> Finite-differencing the 20 Hz velocity is phase-lagged by one sample and makes things <em>worse</em>. Differencing at the 1 kHz physics rate and averaging per control step leaves 0.2 %.</figcaption></figure>
+    <figure><img src="img/m2_tilt_raw.png" alt="tilt experiment raw force" loading="lazy">
+      <figcaption><b>Tilt 0→90°.</b> The load's 0.981 N weight rotates from Fz into Fx. With the identified load it's removed to 0.006 N RMS.</figcaption></figure>
+  </div>
+</section>
+
+<!-- ============================================================ SOLVER -->
+<section id="solver">
+  <div class="eyebrow">Stage 0 · M3 · 864-run factorial</div>
+  <h2>Which sim knobs move the force</h2>
+  <div class="prose">
+    <p>A full factorial over timestep, integrator, cone, solref, noslip, stiffness and approach speed, all running the same 0.3 mm-offset insertion. Bars show each parameter's main effect: the mean range in the metric when only that parameter varies.</p>
+  </div>
+  <div class="panel">
+    <div class="controls"><span class="segs" id="m3-metric"></span></div>
+    <div id="m3-chart"></div>
+  </div>
+  <div class="grid2">
+    <figure><img src="img/m3_timestep_x_solref.png" alt="heatmap of physics-rate peak force by timestep and solref" loading="lazy">
+      <figcaption><b>Peak |F| at physics rate, timestep × solref.</b> Steady force is 12.9 N in every cell. MuJoCo clamps solref ≥ 2·dt, so the 94–99 N stiff impact exists only at dt ≤ 1 ms.</figcaption></figure>
+    <figure><img src="img/m3_kp_x_speed.png" alt="heatmap of peak force by kp and approach speed" loading="lazy">
+      <figcaption><b>Stiffness × approach speed.</b> Speed sets the spike, kp sets the plateau. Low kp does not protect against the impact.</figcaption></figure>
+  </div>
+  <div class="takeaway"><b>solref and timestep move peak force by 16–25 N while moving the trajectory by &lt; 0.05 mm.</b> A policy trained on force from one solver config learns that config's artifacts. Chosen default for data: dt 1 ms, implicitfast, elliptic, solref (0.005, 1).</div>
+</section>
+
+<!-- ============================================================ STIFFNESS -->
+<section id="stiffness">
+  <div class="eyebrow">Stage 0 · M5 · Panda OSC</div>
+  <h2>Controller stiffness vs contact force</h2>
+  <div class="prose"><p>robosuite's OSC <code>kp</code> is an acceleration gain, so the tool's stiffness is Λ·kp (Λ = task-space inertia, ≈ 10.5 kg here). This is the same 10 mm press and slide at four gains, damping ratio ζ = 1.</p></div>
+  <div class="panel"><div id="m5-chart"></div></div>
+  <div class="grid2">
+    <figure><img src="img/m5_variable_kp.png" alt="variable kp switch on contact" loading="lazy">
+      <figcaption><b>Switch to low stiffness on contact.</b> 1000 → 50 at zero latency: −58 % observable peak, −94 % steady force, but the ~117 N physics-rate impact is untouched. One 50 ms step of latency doubles the peak.</figcaption></figure>
+    <figure><img src="img/m5_stiffness_tradeoff.png" alt="stiffness trade-off" loading="lazy">
+      <figcaption><b>The trade-off.</b> Raising kp from 50 to 1000 halves the free-space lag and cuts settling time 3×, while raising steady contact force 20× and the onset peak 4×.</figcaption></figure>
+  </div>
+</section>
+
+<!-- ============================================================ SUMMARY -->
+<section id="summary">
+  <div class="eyebrow">Stage 0 · closing</div>
+  <h2>Stage 0 verdict</h2>
+  <div class="grid2">
+    <div class="prose">
+      <h3>What the sensor is</h3>
+      <ul class="tight">
+        <li>The wrench the <em>parent</em> body applies to the <em>child</em> subtree, in the site frame. A hanging peg reads +m·g; under vertical acceleration it reads <code>m(g + a_z)</code>.</li>
+        <li>robosuite's <code>ee_force</code> is exactly that raw sensordata. Its site's z axis points <em>down</em>, and the site is rotated 90° about z from the grip site (<code>robot0_eef_quat</code>). Using the grip-site frame swaps Fx and Fy.</li>
+        <li><code>robots[0].torques</code> is <code>None</code> in 1.5.2; the applied torques are <code>sim.data.ctrl[arm idx]</code>.</li>
+      </ul>
+      <h3>Preprocessing for a learner</h3>
+      <ul class="tight">
+        <li>Compensate at driver/physics rate, then average per control step. Re-identify the load after a grasp.</li>
+        <li>Keep the physics-rate buffer and summarise it per step (max |F|, impulse). Take contact labels from it, never from a control-rate contact query.</li>
+        <li>No low-pass before the peak features. The spikes are the signal.</li>
+        <li>Normalise by a fixed physical scale (50 N, 1 N·m). Log kp, ζ, dt and solref with every episode.</li>
+      </ul>
+    </div>
+    <div class="prose">
+      <h3>Traps found on the way</h3>
+      <ul class="tight">
+        <li><code>mj_objectAcceleration</code> returns <em>proper</em> acceleration (+9.81 ẑ at rest).</li>
+        <li><code>mj_contactForce</code> returns the force on geom2. Flip the sign when your body is geom1.</li>
+        <li>robosuite objects carry <code>margin="0.001"</code>, a 1 mm collision skin that eats sub-mm clearance.</li>
+        <li>robosuite seeds from <code>env.rng</code>; <code>np.random.seed</code> does nothing.</li>
+        <li>A zero OSC rotation delta does not hold orientation (7–18° tilt in contact), and the OSC settles ~1.1 mm off its goal.</li>
+        <li>With 2 mm placement noise on a 0.5 mm clearance only 1/50 scripted inserts succeed, so the datasets use 0.5 mm.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ NETWORK -->
+<section id="network">
+  <div class="eyebrow">Stage 1 · Tier 1 behaviour cloning</div>
+  <h2>The task and the network <span class="stage-mark">BEYOND PLAN §7</span></h2>
+  <div class="prose">
+    <p>The Track A gantry, with the hole moved to a random, <b>hidden</b> (x, y) each episode: N(0, 1.5 mm) per axis, clipped at ±4 mm, against 0.5 mm clearance. The peg always starts over the origin. Position alone cannot tell the policy which way the hole is. The only directional cue is the <b>torque at a jam</b>: at a 3 N jam the tip is 60 mm below the sensor, so an off-centre rim contact produces ~0.018 N·m of Tx/Ty whose sign points toward the hole.</p>
+  </div>
+
+  <h3>ACT-lite topology</h3>
+  <div class="diagram" role="img" aria-label="ACT-lite network topology">
+  <svg viewBox="0 0 1060 400" xmlns="http://www.w3.org/2000/svg">
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+    <!-- observation vector -->
+    <text class="h" x="14" y="22">Observation, one step (18)</text>
+    <rect class="box sunk" x="14" y="34" width="170" height="30"/><text x="24" y="54">rel. position   3</text>
+    <rect class="box sunk" x="14" y="68" width="170" height="30"/><text x="24" y="88">velocity   3</text>
+    <rect class="box force" x="14" y="102" width="170" height="30"/><text x="24" y="122">ft_comp  Fx..Tz   6</text>
+    <rect class="box force" x="14" y="136" width="170" height="30"/><text x="24" y="156">1 kHz summary   3</text>
+    <rect class="box sunk" x="14" y="170" width="170" height="30"/><text x="24" y="190">previous action   3</text>
+    <text class="m" x="14" y="222">dashed = force channels (9 of 18),</text>
+    <text class="m" x="14" y="236">zeroed in the no-force ablation</text>
+    <text class="m" x="14" y="256">summary: max|F|, min Fz, max|T|</text>
+    <text class="m" x="14" y="270">over the 50 physics steps</text>
+    <!-- history -->
+    <path class="arr" d="M190,118 L228,118"/>
+    <rect class="box" x="232" y="60" width="120" height="116"/>
+    <text class="h" x="244" y="84">History H = 10</text>
+    <text x="244" y="106">10 × 18</text>
+    <text class="m" x="244" y="126">last 0.5 s at 20 Hz</text>
+    <text class="m" x="244" y="142">z-scored per channel</text>
+    <text class="m" x="244" y="158">(train-set stats)</text>
+    <!-- embed -->
+    <path class="arr" d="M352,118 L388,118"/>
+    <rect class="box acc" x="392" y="60" width="130" height="116"/>
+    <text class="h" x="404" y="84">Embed</text>
+    <text x="404" y="106">Linear 18 → 128</text>
+    <text class="m" x="404" y="126">+ learned position</text>
+    <text class="m" x="404" y="142">  embedding 10 × 128</text>
+    <text class="m" x="404" y="158">LayerNorm</text>
+    <!-- encoder -->
+    <path class="arr" d="M522,118 L558,118"/>
+    <rect class="box acc" x="562" y="46" width="170" height="144"/>
+    <text class="h" x="574" y="70">Transformer encoder ×3</text>
+    <text x="574" y="92">self-attention over time</text>
+    <text class="m" x="574" y="112">d_model 128, 4 heads</text>
+    <text class="m" x="574" y="128">feed-forward 256, ReLU</text>
+    <text class="m" x="574" y="144">pre-norm, dropout 0.1</text>
+    <text class="m" x="574" y="170">→ memory 10 × 128</text>
+    <!-- queries -->
+    <rect class="box sunk" x="592" y="232" width="140" height="56"/>
+    <text class="h" x="604" y="254">5 learned queries</text>
+    <text class="m" x="604" y="274">5 × 128, one per future step</text>
+    <!-- decoder -->
+    <path class="arr" d="M732,118 L772,118"/>
+    <path class="arr" d="M732,260 L800,260 L800,196"/>
+    <rect class="box acc" x="776" y="46" width="160" height="144"/>
+    <text class="h" x="788" y="70">Transformer decoder ×2</text>
+    <text x="788" y="92">queries self-attend,</text>
+    <text x="788" y="110">then cross-attend</text>
+    <text x="788" y="128">to the memory</text>
+    <text class="m" x="788" y="150">same width / heads</text>
+    <text class="m" x="788" y="170">→ 5 × 128</text>
+    <!-- head -->
+    <path class="arr" d="M936,118 L966,118"/>
+    <rect class="box" x="970" y="60" width="80" height="116"/>
+    <text class="h" x="980" y="84">Head</text>
+    <text x="980" y="106">128 → 3</text>
+    <text class="m" x="980" y="126">chunk K=5</text>
+    <text class="m" x="980" y="142">(Δx,Δy,Δz)</text>
+    <text class="m" x="980" y="158">per step</text>
+    <!-- execution loop -->
+    <path class="arr" d="M1010,176 L1010,330 L870,330"/>
+    <rect class="box" x="600" y="310" width="266" height="46"/>
+    <text x="612" y="330">de-normalise → execute step 1 only,</text>
+    <text class="m" x="612" y="348">clip ±5 mm, move gantry target, re-plan</text>
+    <path class="arr" d="M600,333 L110,333 L110,292"/>
+    <text class="m" x="250" y="326">receding horizon: new observation every 50 ms</text>
+    <text class="m" x="14" y="380">ACT-lite ≈ 0.8 M parameters. MLP baseline: flatten 10×18 = 180 → 256 → GELU → 256 → GELU → 15 (K×3), 116 k parameters.</text>
+  </svg>
+  </div>
+  <p class="small muted">"ACT-lite" is ACT (Action Chunking with Transformers) without images and without the CVAE. The expert is deterministic, so a latent to model demonstration style is unnecessary.</p>
+</section>
+
+<!-- ============================================================ TRAINING -->
+<section id="training">
+  <div class="eyebrow">Stage 1 · how it learns</div>
+  <h2>Training principles and curves</h2>
+  <div class="principles">
+    <div><h4>Privileged teacher</h4><p>A scripted expert reads the true hole position: descend at 50 mm/s; if |F| &gt; 3 N and depth stalls, retract 3 mm, step ≤ 0.5 mm toward the hole, descend again. It succeeds 300/300, with ~2.4 jam recoveries per episode.</p></div>
+    <div><h4>Student sees only sensors</h4><p>The policy gets the 18-dim observation, never the hole position. To imitate the teacher it has to infer the correction direction from the torque sign at the jam.</p></div>
+    <div><h4>Behaviour cloning</h4><p>Supervised regression from an (H = 10)-step observation window to the expert's next K = 5 actions. 300 episodes, 270/30 train/val split by episode, ~9.8 k / 1.0 k windows.</p></div>
+    <div><h4>Action chunking</h4><p>Predicting 5 future steps forces the network to commit to a multi-step manoeuvre (retract → shift → descend) instead of a one-step average. Only the first action is executed; it re-plans every step.</p></div>
+    <div><h4>Loss and optimiser</h4><p>Masked L1 on z-scored chunks (steps past the episode end are masked). AdamW, lr 3e-4, weight decay 1e-4, cosine schedule, gradient clip 1.0, batch 256, 40 epochs. The checkpoint with the best validation loss is kept.</p></div>
+    <div><h4>Ablation by zeroing</h4><p>The no-force variants train on identical data with the 9 force channels set to zero. Same architecture, same seed. The only difference is the information.</p></div>
+    <div><h4>Closed-loop evaluation</h4><p>50 fresh episodes on seeds disjoint from training, run in the simulator. Validation loss barely separates the models; closed-loop success separates them 10×.</p></div>
+    <div><h4>Cost</h4><p>In this re-run on an RTX 3080: 12 s to train ACT-lite, 1 s for the MLP. Collecting the 300 expert episodes and evaluating a policy on 50 episodes take under a minute each.</p></div>
+  </div>
+  <div class="panel">
+    <div class="controls"><span class="segs" id="train-metric"></span></div>
+    <div id="train-chart"></div>
+    <p class="small muted" id="train-meta"></p>
+  </div>
+  <h3>Closed-loop results, 50 unseen episodes</h3>
+  <div class="table-wrap"><table id="eval-table"></table></div>
+  <div class="grid2">
+    <div class="panel"><div id="eval-offset-chart"></div></div>
+    <div class="panel"><div id="eval-sigma3"></div></div>
+  </div>
+  <div class="takeaway"><b>With force <span id="tk-f"></span>. Same network with the force channels zeroed: <span id="tk-nf"></span>.</b> <span id="tk-near"></span> Without a direction signal the policy still learns to retract at a jam (from the stalled velocity and its own previous action), but it can't tell which way to move, so it retracts about <span id="tk-rt"></span> times per episode.</div>
+  <p class="small muted">This is a fresh re-run, and GPU training isn't bit-deterministic, so a few counts differ from <code>docs/FINDINGS.md</code>: no-force 7/50 (was 5/50), MLP + force 43/50 (was 45/50), ACT-lite at σ = 3 mm 49/50 (was 50/50), MLP at σ = 3 mm 31/50 (was 28/50). The conclusions don't change.</p>
+</section>
+
+<!-- ============================================================ UNTRAINED VS TRAINED -->
+<section id="untrained-vs-trained">
+  <div class="eyebrow">Stage 1 · same hidden hole, four controllers</div>
+  <h2>Untrained vs trained network</h2>
+  <div class="prose"><p>Each video is one episode with the same hidden hole, run by four controllers side by side: <b>untrained</b> ACT-lite (random weights, same normalisation), <b>trained without force</b>, <b>trained with force</b>, and the privileged <b>expert</b>. Each tile shows a 3D close-up (hole walls translucent), a to-scale top-down schematic in mm (grey = hole walls, green + = hole centre, blue = peg and its path), and a live strip of compensated force [N] and torque [N·m]. Playback is real time at 20 fps; each tile holds its final frame after its episode ends.</p></div>
+  <div class="panel">
+    <div class="controls"><label>Episode</label><span class="segs" id="seed-segs"></span></div>
+    <figure class="cmp-video"><video id="cmp-video" controls muted loop playsinline preload="metadata"></video>
+      <figcaption>Top left: untrained · top right: trained, no force · bottom left: trained, with force · bottom right: expert.</figcaption></figure>
+    <div class="runs" id="seed-runs"></div>
+    <div class="grid2" style="margin-top:6px">
+      <div><div id="xy-chart"></div></div>
+      <div><div id="depth-chart"></div><div id="fz-chart"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ NOISE -->
+<section id="noise">
+  <div class="eyebrow">Stage 1b · sensor-noise floor</div>
+  <h2>How much sensor noise the policy tolerates</h2>
+  <div class="prose"><p>Gaussian noise is added to the raw sensor at every 1 kHz physics step, before compensation. Force noise is 20× the torque value, in N. At each level: 300 noisy expert episodes → train → evaluate at that noise. The noise-free Stage 1 policy is also evaluated at every level.</p></div>
+  <div class="panel"><div id="noise-chart"></div></div>
+  <div class="takeaway"><b>Training on noise is what buys robustness.</b> The policy trained at each level holds up to σ = 0.02 N·m, the size of the signal itself: compensation averages 50 samples per step (σ/√50) and the network integrates 10 steps. The noise-free policy drops to 68 % at 0.01 and 4 % at 0.02 N·m, and fails the opposite way: it stops retracting (0.7 retracts per episode), because its jam detector was fit to clean max-|F| summaries that noise inflates. At σ = 0.05 N·m (2.8× the signal) even the noise-trained policy falls to 38 % and dithers.</div>
+  <p class="small muted">Re-run vs <code>docs/FINDINGS.md</code>: noise-free policy at 0.01 N·m 68 % (was 82 %); noise-trained at 0.05 N·m 38 % (was 40 %). Every other cell matches.</p>
+</section>
+
+<!-- ============================================================ NEXT -->
+<section id="next">
+  <div class="eyebrow">Plan status</div>
+  <h2>What's left</h2>
+  <div class="grid2">
+    <div class="prose">
+      <h3>Done</h3>
+      <ul class="tight">
+        <li>PLAN.md Stage 0: M0–M6 plus the stretch <code>PegInHole</code> env, 14 tests green, all artifacts reproduced for this report.</li>
+        <li>Stage 1 Tier 1 BC (ACT-lite vs MLP, force vs no force) and the Stage 1b noise sweep, both started ahead of the plan.</li>
+      </ul>
+    </div>
+    <div class="prose">
+      <h3>Open</h3>
+      <ul class="tight">
+        <li>The same BC experiment on the arm <code>PegInHole</code>, where the policy must also close the ~1 mm OSC error and hold orientation itself.</li>
+        <li>Harder variants: timestep/solref randomisation; DAgger if success drops.</li>
+        <li>Rotational-inertia terms in compensation (2 N·m torque spikes when the gripper re-orients).</li>
+        <li>Converter from the §5 episodes to LeRobot / robomimic HDF5 (PLAN §9).</li>
+        <li>Stages 2–4: force-fusion policies, then SmolVLA / openpi LoRA on LIBERO.</li>
+        <li>Docs drift: CLAUDE.md still says "Stage 0 only"; PLAN.md has no Stage 1 section.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>Reproduce: <code>make build-train && make test && make all && make s1</code>, then <code>scripts/13_policy_videos.py</code> and <code>scripts/14_report_data.py</code> in the train image. Source of truth for the prose: <code>docs/FINDINGS.md</code>.</footer>
+</div>
+
+<script id="report-data" type="application/json">__DATA__</script>
+<script>
+(() => {
+const D = JSON.parse(document.getElementById("report-data").textContent);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs = {}, parent) => {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+};
+const fmt = v => {
+  if (v === null || v === undefined || !isFinite(v)) return "–";
+  const a = Math.abs(v);
+  if (a === 0) return "0";
+  if (a >= 100) return v.toFixed(0);
+  if (a >= 10) return v.toFixed(1);
+  if (a >= 1) return v.toFixed(2);
+  if (a >= 0.01) return v.toFixed(3);
+  return v.toExponential(1);
+};
+function niceTicks(lo, hi, n = 5) {
+  const span = hi - lo || 1;
+  const step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= n) || mag * 10;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+
+// ---------- generic line / scatter chart --------------------------------------------------
+// opts: {title, xlabel, ylabel, series:[{name, x, y, color, dash, width, points}], height,
+//        ylog, xDomain, yDomain, group, equal, rects:[{x0,x1,y0,y1,color}]}
+const groups = {};
+function lineChart(host, o) {
+  host.innerHTML = "";
+  const box = document.createElement("div"); box.className = "chart"; host.appendChild(box);
+  if (o.series.length > 1 || o.legend) {
+    const lg = document.createElement("div"); lg.className = "legend";
+    o.series.filter(s => !s.nolegend).forEach(s => {
+      const c = s.color.startsWith("--") ? css(s.color) : s.color;
+      lg.insertAdjacentHTML("beforeend", `<span><i style="background:${c}${s.dash ? ";height:2px;background:repeating-linear-gradient(90deg," + c + " 0 4px,transparent 4px 7px)" : ""}"></i>${s.name}</span>`);
+    });
+    box.appendChild(lg);
+  }
+  const W = Math.max(320, Math.round(host.clientWidth || 900)), H = o.height || 230, m = {l: 58, r: 14, t: o.title ? 22 : 8, b: 38};
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.title || o.ylabel});
+  box.appendChild(svg);
+  const all = o.series.flatMap(s => s.x.map((x, i) => [x, s.y[i]])).filter(p => p[1] !== null && isFinite(p[1]));
+  let [x0, x1] = o.xDomain || [Math.min(...all.map(p => p[0])), Math.max(...all.map(p => p[0]))];
+  let [y0, y1] = o.yDomain || [Math.min(...all.map(p => p[1])), Math.max(...all.map(p => p[1]))];
+  if (!o.yDomain && !o.ylog) { const pad = (y1 - y0) * 0.06 || 1; y0 = Math.min(y0, 0) === 0 && y0 >= 0 ? 0 : y0 - pad; y1 += pad; }
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  if (o.equal) { // equal aspect for xy paths
+    const sx = pw / (x1 - x0), sy = ph / (y1 - y0), s = Math.min(sx, sy);
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    x0 = cx - pw / s / 2; x1 = cx + pw / s / 2; y0 = cy - ph / s / 2; y1 = cy + ph / s / 2;
+  }
+  const ly = v => Math.log10(Math.max(v, 1e-12));
+  const X = v => m.l + (v - x0) / (x1 - x0) * pw;
+  const Y = o.ylog ? v => m.t + ph - (ly(v) - ly(y0)) / (ly(y1) - ly(y0)) * ph
+                   : v => m.t + ph - (v - y0) / (y1 - y0) * ph;
+  const ax = el("g", {class: "ax"}, svg);
+  const yt = o.ylog ? (() => { const t = []; for (let e = Math.ceil(ly(y0)); e <= Math.floor(ly(y1)); e++) t.push(Math.pow(10, e)); return t; })() : niceTicks(y0, y1, Math.max(3, Math.round(ph / 45)));
+  yt.forEach(v => { el("line", {x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), "stroke-opacity": 0.7}, ax);
+    const t = el("text", {x: m.l - 6, y: Y(v) + 4, "text-anchor": "end"}, ax); t.textContent = o.ylog ? (v >= 1 ? v : v.toString()) : fmt(v); });
+  niceTicks(x0, x1, Math.round(pw / 90)).forEach(v => { el("line", {x1: X(v), x2: X(v), y1: m.t + ph, y2: m.t + ph + 4}, ax);
+    const t = el("text", {x: X(v), y: m.t + ph + 16, "text-anchor": "middle"}, ax); t.textContent = fmt(v); });
+  el("line", {x1: m.l, x2: W - m.r, y1: m.t + ph, y2: m.t + ph}, ax);
+  if (!o.ylog && y0 < 0 && y1 > 0) el("line", {x1: m.l, x2: W - m.r, y1: Y(0), y2: Y(0), "stroke-width": 1.4}, ax);
+  const xl = el("text", {class: "lab", x: m.l + pw / 2, y: H - 4, "text-anchor": "middle"}, svg); xl.textContent = o.xlabel || "";
+  const yl = el("text", {class: "lab", x: 12, y: m.t + ph / 2, transform: `rotate(-90 12 ${m.t + ph / 2})`, "text-anchor": "middle"}, svg); yl.textContent = o.ylabel || "";
+  if (o.title) { const t = el("text", {class: "ttl", x: m.l, y: 14}, svg); t.textContent = o.title; }
+  const clipId = "c" + Math.random().toString(36).slice(2);
+  const cp = el("clipPath", {id: clipId}, el("defs", {}, svg)); el("rect", {x: m.l, y: m.t, width: pw, height: ph}, cp);
+  const plot = el("g", {"clip-path": `url(#${clipId})`}, svg);
+  (o.rects || []).forEach(r => el("rect", {x: X(r.x0), y: Y(r.y1), width: X(r.x1) - X(r.x0), height: Y(r.y0) - Y(r.y1), fill: "none", stroke: css(r.color), "stroke-width": r.width || 1.5, "stroke-dasharray": r.dash || ""}, plot));
+  o.series.forEach(s => {
+    const c = s.color.startsWith("--") ? css(s.color) : s.color;
+    let d = "", pen = false;
+    s.x.forEach((x, i) => { const y = s.y[i];
+      if (y === null || !isFinite(y) || (o.ylog && y <= 0)) { pen = false; return; }
+      d += (pen ? "L" : "M") + X(x).toFixed(1) + "," + Y(y).toFixed(1); pen = true; });
+    if (!s.points) el("path", {d, fill: "none", stroke: c, "stroke-width": s.width || 1.6, "stroke-dasharray": s.dash || "", "stroke-linejoin": "round"}, plot);
+    if (s.points || s.markers) s.x.forEach((x, i) => { if (s.y[i] !== null && isFinite(s.y[i])) el("circle", {cx: X(x), cy: Y(s.y[i]), r: s.r || 3.5, fill: c, stroke: css("--surface"), "stroke-width": 1}, plot); });
+    if (s.end) { const i = s.x.length - 1; el("circle", {cx: X(s.x[i]), cy: Y(s.y[i]), r: 4.5, fill: c, stroke: css("--surface"), "stroke-width": 1.5}, plot); }
+  });
+  // hover
+  if (o.hover === false) return;
+  const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; box.appendChild(tip);
+  const cross = el("line", {y1: m.t, y2: m.t + ph, stroke: css("--muted"), "stroke-dasharray": "3 3", visibility: "hidden"}, svg);
+  const show = xv => {
+    if (xv === null) { tip.hidden = true; cross.setAttribute("visibility", "hidden"); return; }
+    cross.setAttribute("x1", X(xv)); cross.setAttribute("x2", X(xv)); cross.setAttribute("visibility", "visible");
+    let rows = `<b>${o.xlabel ? o.xlabel.split(" [")[0] : "x"} ${fmt(xv)}</b>`;
+    o.series.forEach(s => { if (s.nolegend) return; let bi = 0, bd = Infinity;
+      s.x.forEach((x, i) => { const dd = Math.abs(x - xv); if (dd < bd) { bd = dd; bi = i; } });
+      const c = s.color.startsWith("--") ? css(s.color) : s.color;
+      rows += `<br><span style="color:${c}">■</span> ${s.name}: ${fmt(s.y[bi])}`; });
+    tip.innerHTML = rows; tip.hidden = false;
+    const bw = box.clientWidth, px = X(xv) / W * bw;
+    tip.style.left = (px > bw * 0.6 ? px - tip.offsetWidth - 12 : px + 12) + "px";
+    tip.style.top = (m.t / H * svg.clientHeight + 30) + "px";
+  };
+  const api = {show};
+  if (o.group) (groups[o.group] = groups[o.group] || []).push(api);
+  const fan = xv => (o.group ? groups[o.group] : [api]).forEach(a => a.show(xv));
+  svg.addEventListener("pointermove", e => {
+    const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) / r.width * W;
+    if (px < m.l || px > W - m.r) return fan(null);
+    fan(x0 + (px - m.l) / pw * (x1 - x0));
+  });
+  svg.addEventListener("pointerleave", () => fan(null));
+}
+
+// ---------- horizontal bars ---------------------------------------------------------------
+function barChart(host, o) { // o: {rows:[{label, value, color}], unit, title}
+  host.innerHTML = "";
+  const W = Math.max(320, Math.round(host.clientWidth || 900)), rowH = 30, m = {l: W < 560 ? 130 : 170, r: 70, t: o.title ? 26 : 6, b: 8};
+  const H = m.t + m.b + rowH * o.rows.length;
+  const box = document.createElement("div"); box.className = "chart"; host.appendChild(box);
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.title || ""}, box);
+  if (o.title) { const t = el("text", {class: "ttl", x: m.l, y: 16}, svg); t.textContent = o.title; }
+  const mx = Math.max(...o.rows.map(r => r.value), 1e-9), pw = W - m.l - m.r;
+  o.rows.forEach((r, i) => {
+    const y = m.t + i * rowH;
+    const lb = el("text", {class: "lab", x: m.l - 10, y: y + rowH / 2 + 4, "text-anchor": "end"}, svg); lb.textContent = r.label;
+    el("rect", {x: m.l, y: y + 6, width: Math.max(1, r.value / mx * pw), height: rowH - 12, fill: css(r.color || "--accent")}, svg);
+    const v = el("text", {x: m.l + r.value / mx * pw + 6, y: y + rowH / 2 + 4, class: "lab"}, svg); v.textContent = fmt(r.value) + (o.unit ? " " + o.unit : "");
+  });
+}
+
+const segState = {};
+function segs(host, items, onPick, initial) {
+  host.innerHTML = "";
+  initial = segState[host.id] ?? initial;
+  items.forEach(([key, label]) => {
+    const b = document.createElement("button"); b.className = "seg"; b.type = "button"; b.textContent = label;
+    b.setAttribute("aria-pressed", key === initial); b.id = host.id + "-" + key;
+    b.onclick = () => { host.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); segState[host.id] = key; onPick(key); };
+    host.appendChild(b);
+  });
+  onPick(initial);
+}
+
+// ---------- facts --------------------------------------------------------------------------
+const ev = D.eval && D.eval.policies;
+const evName = k => ev && Object.keys(ev).find(n => n.startsWith(k));
+const sr = k => ev && evName(k) ? Math.round(ev[evName(k)].success_rate * ev[evName(k)].n) + "/" + ev[evName(k)].n : "–";
+const facts = [
+  [D.m3_ranking ? "864" : "–", "solver-sweep runs (M3)"],
+  ["1 kHz vs 20 Hz", "physics vs control rate: where every spike hides"],
+  [sr("act_force"), "ACT-lite success with force"],
+  [sr("act_noforce"), "same network, force channels zeroed"],
+];
+document.getElementById("facts").innerHTML = facts.map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
+
+const sel = document.getElementById("ep-select");
+D.episodes.forEach((e, i) => sel.insertAdjacentHTML("beforeend", `<option value="${i}">${e.label}</option>`));
+function drawAll() {
+for (const k in groups) delete groups[k];
+// ---------- episode explorer --------------------------------------------------------------
+function drawEpisode(i) {
+  const e = D.episodes[i], host = document.getElementById("ep-charts"); host.innerHTML = "";
+  groups.ep = [];
+  const t = e.t_s, mk = () => { const d = document.createElement("div"); host.appendChild(d); return d; };
+  lineChart(mk(), {title: "End-effector speed", ylabel: "mm/s", xlabel: "time [s]", group: "ep", height: 170,
+    series: [{name: "|v| (world)", x: t, y: e.speed_mmps, color: "--c-f"}, {name: "vz (world)", x: t, y: e.vz_mmps, color: "--c-fz"}]});
+  lineChart(mk(), {title: "Force magnitude", ylabel: "N", xlabel: "time [s]", group: "ep", height: 210,
+    series: [{name: "physics-rate max per 50 ms (raw)", x: t, y: e.fmag_hfmax_N, color: "--c-hf", width: 1.4},
+             {name: "control-rate |F| (compensated)", x: t, y: e.fmag_comp_N, color: "--c-f", width: 1.8},
+             {name: "ground-truth contact |F|", x: t, y: e.contact_N, color: "--c-gt", dash: "4 3"}]});
+  const c = e.comp_N_Nm;
+  lineChart(mk(), {title: "Compensated torque (sensor frame)", ylabel: "N·m", xlabel: "time [s]", group: "ep", height: 190,
+    series: [{name: "Tx", x: t, y: c.map(r => r[3]), color: "--c-tx"}, {name: "Ty", x: t, y: c.map(r => r[4]), color: "--c-ty"}, {name: "Tz", x: t, y: c.map(r => r[5]), color: "--c-tz"}]});
+  if (e.joint_torque_Nm) {
+    const jt = e.joint_torque_Nm, palette = ["--c-fz", "--c-tx", "--c-ty", "--c-tz", "--c-hf", "--c-gt", "--c-f"];
+    lineChart(mk(), {title: "Panda joint torques (applied, sim.data.ctrl): change from the first sample", ylabel: "N·m", xlabel: "time [s]", group: "ep", height: 200,
+      series: jt[0].map((_, j) => ({name: "j" + (j + 1), x: t, y: jt.map(r => r[j] - jt[0][j]), color: palette[j], width: 1.2}))});
+  }
+}
+sel.onchange = () => drawEpisode(+sel.value);
+drawEpisode(+sel.value);
+
+// ---------- M2 compensation chart ----------------------------------------------------------
+if (D.m2_report) {
+  const fs = D.m2_report.free_space, mg = D.m2_report.m_g_N;
+  document.getElementById("m2-mass").textContent = D.m2_report.identification.mass_est_kg.toFixed(5);
+  const motions = ["descent_150", "sine_2", "sine_5"].filter(k => fs[k]);
+  const variants = [["raw_minus_mg_rms_N", "no compensation", "--c-gt"], ["comp_gravity_only_rms_N", "gravity only", "--c-hf"],
+    ["comp_gravity_fd_accel_rms_N", "+ accel differenced at 20 Hz", "--c-tx"], ["comp_hf_fd_averaged_rms_N", "+ accel differenced at 1 kHz, averaged", "--c-fz"]];
+  const host = document.getElementById("m2-chart");
+  host.innerHTML = "";
+  const W = Math.max(320, Math.round(host.clientWidth || 900)), H = 260, m = {l: 60, r: 10, t: 30, b: 36}, pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const box = document.createElement("div"); box.className = "chart"; host.appendChild(box);
+  box.insertAdjacentHTML("afterbegin", `<div class="legend">${variants.map(v => `<span><i style="background:${css(v[2])}"></i>${v[1]}</span>`).join("")}</div>`);
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "compensation residual by motion"}, box);
+  const lo = -2, hi = 2.2, Y = v => m.t + ph - (Math.log10(Math.max(v, 1e-2)) - lo) / (hi - lo) * ph;
+  const ax = el("g", {class: "ax"}, svg);
+  [0.01, 0.1, 1, 10, 100].forEach(v => { el("line", {x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v)}, ax); const t = el("text", {x: m.l - 6, y: Y(v) + 4, "text-anchor": "end"}, ax); t.textContent = v + " %"; });
+  const gw = pw / motions.length, bw = gw * 0.8 / variants.length;
+  motions.forEach((k, gi) => {
+    const lab = el("text", {class: "lab", x: m.l + gi * gw + gw / 2, y: H - 10, "text-anchor": "middle"}, svg);
+    lab.textContent = {descent_150: "descent 150 mm/s", sine_2: "sine 2 Hz, 10 mm", sine_5: "sine 5 Hz, 10 mm"}[k];
+    variants.forEach(([key, , col], vi) => {
+      const pct = fs[k][key] / mg * 100, x = m.l + gi * gw + gw * 0.1 + vi * bw;
+      el("rect", {x, y: Y(pct), width: bw - 3, height: m.t + ph - Y(pct), fill: css(col)}, svg);
+      const t = el("text", {x: x + (bw - 3) / 2, y: Y(pct) - 4, "text-anchor": "middle", class: "lab"}, svg); t.textContent = fmt(pct);
+    });
+  });
+}
+
+// ---------- M3 ranking ---------------------------------------------------------------------
+if (D.m3_ranking) {
+  const eff = D.m3_ranking.effects;
+  const metrics = [["peak_F_hf_N", "Peak |F|, physics rate", "N"], ["peak_F_c_N", "Peak |F|, control rate", "N"],
+                   ["z_traj_rms_mm", "Change in motion (z RMS)", "mm"], ["max_penetration_mm", "Max penetration", "mm"]];
+  const names = {speed_mmps: "approach speed", kp: "stiffness kp", solref_tc: "solref time const.", timestep: "timestep", cone: "friction cone", noslip_iterations: "noslip iterations", integrator: "integrator"};
+  segs(document.getElementById("m3-metric"), metrics.map(m => [m[0], m[1]]), key => {
+    const [, title, unit] = metrics.find(m => m[0] === key);
+    const rows = Object.keys(eff).map(p => ({label: names[p] || p, value: eff[p][key], color: ["solref_tc", "timestep"].includes(p) ? "--c-hf" : "--accent"})).sort((a, b) => b.value - a.value);
+    barChart(document.getElementById("m3-chart"), {rows, unit, title: title + ": main effect (yellow = solver knobs)"});
+  }, "peak_F_hf_N");
+}
+
+// ---------- M5 --------------------------------------------------------------------------------
+if (D.m5_fixed) {
+  const rows = D.m5_fixed.filter(r => r.damping_ratio === 1).sort((a, b) => a.kp - b.kp);
+  const kp = rows.map(r => r.kp);
+  lineChart(document.getElementById("m5-chart"), {title: "Contact force vs OSC kp (ζ = 1)", xlabel: "OSC kp [1/s²]", ylabel: "N", height: 250,
+    series: [{name: "onset peak, physics rate", x: kp, y: rows.map(r => r.peak_F_physics_N), color: "--c-hf", markers: true},
+             {name: "onset peak, control rate", x: kp, y: rows.map(r => r.peak_F_control_N), color: "--c-f", markers: true},
+             {name: "steady press force", x: kp, y: rows.map(r => r.steady_F_N), color: "--c-fz", markers: true},
+             {name: "free-space descent lag [mm]", x: kp, y: rows.map(r => r.descent_lag_mean_mm), color: "--c-ty", dash: "5 4", markers: true}]});
+}
+
+// ---------- training curves -------------------------------------------------------------------
+const trainNames = {force: ["ACT-lite + force", "--c-force"], noforce: ["ACT-lite, no force", "--c-noforce"], mlp_force: ["MLP + force", "--c-mlp"], mlp_noforce: ["MLP, no force", "--c-mlpno"]};
+if (D.training && Object.keys(D.training).length) {
+  segs(document.getElementById("train-metric"), [["loss", "Loss (train dashed, val solid)"], ["mae", "Val error, next step [mm]"], ["lr", "Learning rate"]], key => {
+    const series = [];
+    for (const [k, h] of Object.entries(D.training)) {
+      const [name, color] = trainNames[k] || [k, "--accent"], ep = h.history.map(r => r.epoch + 1);
+      if (key === "loss") {
+        series.push({name: name + " · val", x: ep, y: h.history.map(r => r.val_l1), color});
+        series.push({name: name + " · train", x: ep, y: h.history.map(r => r.train_l1), color, dash: "4 3", width: 1.2});
+      } else if (key === "mae") {
+        series.push({name: name + " · |Δx|,|Δy| mean", x: ep, y: h.history.map(r => (r.val_mae_mm_xyz[0] + r.val_mae_mm_xyz[1]) / 2), color});
+        series.push({name: name + " · |Δz|", x: ep, y: h.history.map(r => r.val_mae_mm_xyz[2]), color, dash: "4 3", width: 1.2});
+      } else if (k === "force") series.push({name: "cosine schedule, AdamW (all runs)", x: ep, y: h.history.map(r => r.lr), color: "--accent"});
+    }
+    lineChart(document.getElementById("train-chart"), {xlabel: "epoch", ylabel: key === "loss" ? "masked L1 (z-scored)" : key === "mae" ? "mm" : "lr", series, height: 280,
+      yDomain: key === "loss" ? [0, Math.max(...series.map(s => Math.max(...s.y.slice(1))))] : undefined});
+  }, "loss");
+  const meta = Object.entries(D.training).map(([k, h]) => `${(trainNames[k] || [k])[0]}: ${h.params.toLocaleString()} params, ${h.wall_s.toFixed(0)} s on ${h.device}`).join(" · ");
+  document.getElementById("train-meta").textContent = meta;
+}
+
+// ---------- eval table + charts --------------------------------------------------------------
+const label = n => n === "expert" ? "Expert (privileged)" : n.startsWith("act_force") ? "ACT-lite + force" : n.startsWith("act_noforce") ? "ACT-lite, force zeroed" : n.startsWith("mlp_force") ? "MLP + force" : n.startsWith("mlp_noforce") ? "MLP, force zeroed" : n;
+const colorOf = n => n === "expert" ? "--c-expert" : n.startsWith("act_force") ? "--c-force" : n.startsWith("act_noforce") ? "--c-noforce" : n.startsWith("mlp_force") ? "--c-mlp" : "--c-mlpno";
+const valL1 = n => { const k = n.replace(/^(act|mlp)_(force|noforce)_/, ""); return D.training[k] ? D.training[k].best_val_l1.toFixed(3) : "–"; };
+if (ev) {
+  let h = "<thead><tr><th>Policy</th><th>best val L1</th><th>success</th><th>steps (successes)</th><th>mean peak |F| [N]</th><th>retracts / episode</th><th>outcomes</th></tr></thead><tbody>";
+  for (const [n, r] of Object.entries(ev)) {
+    const cls = r.success_rate >= 0.9 ? "ok" : r.success_rate < 0.5 ? "bad" : "";
+    h += `<tr class="${n.startsWith("act_force") ? "hl" : ""}"><td>${label(n)}</td><td>${n === "expert" ? "–" : valL1(n)}</td><td class="${cls}">${Math.round(r.success_rate * r.n)}/${r.n}</td><td>${fmt(r.mean_steps_success)}</td><td>${fmt(r.mean_peak_F_N)}</td><td>${fmt(r.mean_recoveries)}</td><td class="small">${Object.entries(r.reasons).map(([k, v]) => k + " " + v).join(", ")}</td></tr>`;
+  }
+  document.getElementById("eval-table").innerHTML = h + "</tbody>";
+  const nf = ev[evName("act_noforce")], ok = nf.episodes.filter(e => e.success);
+  const near = ok.filter(e => Math.hypot(...e.hole_xy_mm) < 0.6).length;
+  document.getElementById("tk-f").textContent = sr("act_force");
+  document.getElementById("tk-nf").textContent = sr("act_noforce");
+  document.getElementById("tk-rt").textContent = Math.round(nf.mean_recoveries);
+  document.getElementById("tk-near").textContent = `Of the ${ok.length} no-force successes, ${near} have the hole within 0.6 mm of the start, close enough to drop in; the rest found the opening by chance while dithering.`;
+  const bins = [0, 0.5, 1, 2, 3, 6], mids = [0.25, 0.75, 1.5, 2.5, 4];
+  const series = Object.entries(ev).map(([n, r]) => {
+    const y = bins.slice(0, -1).map((a, i) => { const s = r.episodes.filter(e => { const d = Math.hypot(...e.hole_xy_mm); return d >= a && d < bins[i + 1]; }); return s.length ? s.filter(e => e.success).length / s.length : null; });
+    return {name: label(n), x: mids, y, color: colorOf(n), markers: true, dash: n === "expert" ? "5 4" : ""};
+  });
+  lineChart(document.getElementById("eval-offset-chart"), {title: "Success vs hidden-hole distance (σ = 1.5 mm)", xlabel: "|hole offset| [mm] (clearance 0.5 mm)", ylabel: "success rate", yDomain: [0, 1.05], series, height: 250});
+}
+if (D.eval_sigma3) {
+  const rows = Object.entries(D.eval_sigma3.policies).map(([n, r]) => ({label: label(n), value: r.success_rate * 100, color: colorOf(n)}));
+  barChart(document.getElementById("eval-sigma3"), {rows, unit: "%", title: "Out of distribution: hole σ = 3 mm (2× training)"});
+}
+
+// ---------- untrained vs trained -------------------------------------------------------------
+const V = D.videos, pcol = {"untrained": "--c-untrained", "trained, no force": "--c-noforce", "trained, with force": "--c-force", "expert (privileged)": "--c-expert"};
+if (V) {
+  const seeds = [...new Set(V.runs.map(r => r.seed))];
+  segs(document.getElementById("seed-segs"), seeds.map(s => { const r = V.runs.find(x => x.seed === s); return [String(s), `seed ${s} · hole (${r.hole_xy_mm.map(v => v.toFixed(1)).join(", ")}) mm`]; }), key => {
+    const s = +key, vid = document.getElementById("cmp-video");
+    if (!vid.src.includes(`seed${s}_`)) vid.src = `media/seed${s}_compare.mp4#t=0.1`;
+    const runs = V.runs.filter(r => r.seed === s), tr = D.traces[key];
+    document.getElementById("seed-runs").innerHTML = runs.map(r => `<div><b style="color:${css(pcol[r.policy])}">${r.policy}</b><span class="chip ${r.reason === "success" ? "ok" : "bad"}">${r.reason}</span> <span class="mono small">${(r.steps / 20).toFixed(2)} s · peak ${r.peak_F_N.toFixed(1)} N</span></div>`).join("");
+    const hole = runs[0].hole_xy_mm, cl = 0.5;
+    const xy = tr.map(p => ({name: p.meta.policy, x: p.trace.map(q => q.pos_mm[0]), y: p.trace.map(q => q.pos_mm[1]), color: pcol[p.meta.policy], width: 1.8, end: true}));
+    xy.push({name: "hole centre", x: [hole[0]], y: [hole[1]], color: "--ok", points: true, r: 4});
+    xy.push({name: "start", x: [0], y: [0], color: "--muted", points: true, r: 3});
+    const ext = Math.max(4, ...xy.flatMap(s => s.x.concat(s.y).map(Math.abs))) + 0.8;
+    lineChart(document.getElementById("xy-chart"), {title: "Top-down path of the peg (green box = positions that fit the hole)", xlabel: "x [mm]", ylabel: "y [mm]", series: xy, height: 360, equal: true, hover: false,
+      xDomain: [-ext, ext], yDomain: [-ext, ext], rects: [{x0: hole[0] - cl, x1: hole[0] + cl, y0: hole[1] - cl, y1: hole[1] + cl, color: "--ok"}]});
+    groups.seed = [];
+    lineChart(document.getElementById("depth-chart"), {title: "Insertion depth (success = 30 mm)", xlabel: "time [s]", ylabel: "mm", group: "seed", height: 180,
+      series: tr.map(p => ({name: p.meta.policy, x: p.trace.map(q => q.t), y: p.trace.map(q => q.depth_mm), color: pcol[p.meta.policy]}))});
+    lineChart(document.getElementById("fz-chart"), {title: "Compensated |F|", xlabel: "time [s]", ylabel: "N", group: "seed", height: 170,
+      series: tr.map(p => ({name: p.meta.policy, x: p.trace.map(q => q.t), y: p.trace.map(q => Math.hypot(q.ft_comp[0], q.ft_comp[1], q.ft_comp[2])), color: pcol[p.meta.policy], width: 1.3}))});
+  }, String(seeds[0]));
+}
+
+// ---------- noise sweep ------------------------------------------------------------------------
+if (D.noise_sweep) {
+  const r = D.noise_sweep, x = r.map(q => Math.max(q.torque_noise_Nm, 1e-3));
+  lineChart(document.getElementById("noise-chart"), {title: "Closed-loop success vs torque noise σ per 1 kHz sample (0 plotted at 0.001)", xlabel: "torque noise σ [N·m] (force σ = 20× in N)", ylabel: "success rate", yDomain: [0, 1.05], height: 260,
+    series: [{name: "expert (privileged)", x, y: r.map(q => q.expert), color: "--c-expert", dash: "5 4", markers: true},
+             {name: "ACT-lite + force, trained at this noise", x, y: r.map(q => q.trained_at_noise), color: "--c-force", markers: true},
+             {name: "ACT-lite + force, trained noise-free", x, y: r.map(q => q.trained_clean), color: "--c-noforce", markers: true},
+             {name: "torque signal at a 3 N jam (0.018 N·m)", x: [0.018, 0.018], y: [0, 1.05], color: "--bad", dash: "2 3", width: 1}]});
+}
+}
+drawAll();
+let lastW = window.innerWidth, rt;
+window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { if (Math.abs(window.innerWidth - lastW) > 40) { lastW = window.innerWidth; drawAll(); } }, 200); });
+})();
+</script>
