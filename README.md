@@ -1,8 +1,28 @@
-# force-vla-basics — Stage 0
+# force-vla-basics
 
-Trustworthy force/torque readings from simulated peg-in-hole-style tasks (MuJoCo 3.3.0 +
-robosuite 1.5.2), and an understanding of what contaminates them. The plan is `PLAN.md`;
-the results are `docs/FINDINGS.md` (M0–M6 + Stage 0 summary).
+Force-aware manipulation in simulation (MuJoCo 3.3.0 + robosuite 1.5.2). **Stage 0:** trustworthy
+force/torque readings from peg-in-hole-style tasks and what contaminates them. **Stage 1:** small
+behaviour-cloning policies that use the wrist force/torque to find a hidden hole, on a gantry and
+on a Panda arm. The plan is `PLAN.md`; the results are `docs/FINDINGS.md`.
+
+## Examples
+
+**Panda arm, hidden hole (Stage 1).** Four controllers on the same hidden hole, 0.5 mm clearance:
+an untrained network, the network trained without force, the network trained with the wrist
+force/torque, and the privileged expert. Only the force-trained policy and the expert insert the
+peg (39/50 vs 4/50 without force over 50 unseen episodes). Each tile: 3D close-up, a to-scale
+top-down schematic in mm, and the compensated force / torque about the peg tip.
+
+![Panda arm: untrained vs trained with and without force](docs/img/arm_untrained_vs_trained.png)
+
+**Gantry, hidden hole (Stage 1).** The same comparison on the 3-axis gantry: the untrained
+network drives into the rim (60 N abort), the no-force network dithers until timeout, the
+force-trained ACT-lite policy inserts as fast as the expert (50/50 vs 7/50 without force).
+
+![Gantry: untrained vs trained with and without force](docs/img/gantry_untrained_vs_trained.png)
+
+Full interactive reports (open locally in a browser): `docs/report/index.html` (Stage 0 +
+first Stage 1 experiment) and `docs/stage1/index.html` (Stage 1 completion).
 
 ## Quickstart
 
