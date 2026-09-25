@@ -24,7 +24,7 @@ import mujoco
 import numpy as np
 
 from fvb.ft.frames import site_to_world
-from fvb.policy.rollout import TorchPolicy, UntrainedPolicy
+from fvb.policy.rollout import load_policy
 from fvb.policy.task import GantryTask, TaskParams
 from fvb.viz.plots import write_mp4
 
@@ -331,11 +331,11 @@ def main() -> None:
         p = ArmTaskParams(offset_sigma=args.offset_sigma_mm * 1e-3)
         world = ArmWorld(p, seed=0)
         make_task, t_max, close = (lambda p_, s: ArmTask(p_, s, world)), 10.0, world.close
-    force = TorchPolicy(args.ckpt_force)
+    force = load_policy(args.ckpt_force)
     model = force.meta["model"].upper().replace("ACT", "ACT-lite")
     policies = [
-        (f"untrained {model}", UntrainedPolicy(args.ckpt_force, args.init_seed)),
-        ("trained, no force", TorchPolicy(args.ckpt_noforce)),
+        (f"untrained {model}", load_policy(args.ckpt_force, untrained_seed=args.init_seed)),
+        ("trained, no force", load_policy(args.ckpt_noforce)),
         (f"trained, with force ({model})", force),
         ("expert (privileged)", None),
     ]

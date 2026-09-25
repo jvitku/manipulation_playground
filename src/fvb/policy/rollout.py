@@ -73,6 +73,20 @@ class UntrainedPolicy(TorchPolicy):
         self.model.to(device).eval()
 
 
+def load_policy(path: str | Path, device: str = "cpu", untrained_seed: int | None = None):
+    """BC (TorchPolicy) or TD3 (TD3Policy) checkpoint; ``untrained_seed`` -> random weights."""
+    import torch
+
+    meta = torch.load(path, map_location="cpu", weights_only=False).get("meta", {})
+    if meta.get("algo") == "td3":
+        from fvb.policy.td3 import TD3Policy
+
+        return TD3Policy(str(path), device, untrained_seed)
+    if untrained_seed is not None:
+        return UntrainedPolicy(path, untrained_seed, device)
+    return TorchPolicy(path, device)
+
+
 def rollout(policy, p: TaskParams, seed: int, log=None, make_task=None) -> dict:
     """One closed-loop episode. ``make_task(p, seed)`` builds the task (default: gantry); a task
     exposes observe / expert_action / step / depth / force_norm / hole_xy / k."""

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from fvb.policy.rollout import TorchPolicy, UntrainedPolicy, evaluate
+from fvb.policy.rollout import evaluate, load_policy
 from fvb.policy.task import TaskParams
 
 
@@ -63,9 +63,9 @@ def main() -> None:
     results["policies"]["expert"] = evaluate(None, p, seeds, make_task)
     pols = []
     if args.untrained:
-        pols.append(("untrained", UntrainedPolicy(args.ckpt[0], device=args.device)))
+        pols.append(("untrained", load_policy(args.ckpt[0], args.device, untrained_seed=0)))
     for ck in args.ckpt:
-        pol = TorchPolicy(ck, device=args.device)
+        pol = load_policy(ck, args.device)
         name = (
             f"{pol.meta['model']}_{'force' if pol.use_force else 'noforce'}_{Path(ck).parent.name}"
         )

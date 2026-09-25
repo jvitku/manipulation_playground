@@ -1,0 +1,207 @@
+<title>Peg-in-Hole TD3 Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+__STYLE__
+<style>
+.eq { font-family: var(--mono); background: var(--sunk); padding: 10px 14px; border: 1px solid var(--rule); overflow-x: auto; font-size: 0.88rem; line-height: 1.6; }
+pre.code { font: 0.82rem/1.5 var(--mono); background: var(--sunk); border: 1px solid var(--rule); padding: 12px 14px; overflow-x: auto; margin: 12px 0; }
+.kv td:first-child { color: var(--muted); }
+.kv td { text-align: left; }
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow">force-vla-basics · Stage 1 · reinforcement learning · regenerated __DATE__ @ __SHA__</div>
+  <h1>Peg-in-Hole TD3 Report</h1>
+  <p class="lede">The same Panda hidden-hole insertion as the behaviour-cloning experiments, learned from reward alone with TD3. Two agents, identical except that one sees the wrist force/torque and the other has those channels zeroed.</p>
+  <div class="facts" id="facts"></div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#setup">Task and agent</a>
+  <a href="#curves">Training curves</a>
+  <a href="#losses">Losses and Q</a>
+  <a href="#results">Final comparison</a>
+  <a href="#video">On video</a>
+  <a href="#discussion">What it means</a>
+</nav>
+
+<section id="setup">
+  <div class="eyebrow">what is learned, from what</div>
+  <h2>Task and agent</h2>
+  <div class="prose">
+    <p><b>Task.</b> Robosuite Panda, a 19 mm cylindrical peg on the flange, and a square hole with 0.5 mm clearance per side. Each episode the hole moves by a hidden offset (N(0, 1.5 mm) per axis, clipped at ±4 mm) and the peg starts 20 mm above where the hole would be without it. Success means 25 mm deep within 200 steps (10 s at 20 Hz); |F| &gt; 60 N aborts the episode. It's exactly the task in the BC report, the same low-level layer included: it keeps the peg vertical and closes the arm's ~1 mm steady-state error.</p>
+    <p><b>Observation.</b> The last 4 steps of the 20-channel arm observation, stacked (80 numbers): tip position relative to the start (3), velocity (3), peg tilt (2), compensated wrench in world axes with torque about the tip (6), physics-rate summary max |F|, max |T|, std |F| (3), and previous action (3). Everything is z-scored with fixed statistics from the expert dataset. The <b>no-F/T agent</b> gets the 9 force/torque channels set to zero in every frame, in both actor and critic.</p>
+    <p><b>Action.</b> 3 numbers in [−1, 1] → peg-tip target move of ±1 mm in x and y and ±3 mm in z per step.</p>
+  </div>
+  <h3>Reward (per step, × 0.1)</h3>
+  <div class="eq">r = Δdepth [mm]                                       progress into the hole
+  + (0.99·Φ(s′) − Φ(s)),  Φ = −2 · |tip − hole|ₓᵧ [mm]    potential-based pull toward the true hole
+  − 0.1                                                  time cost
+  − 0.05 · max(0, |F| − 20 N)                            contact-force penalty
+  + 50 on success,  − 20 on a force abort</div>
+  <p class="small muted prose">The reward is privileged, since it knows where the hole is; the policy never observes it. Potential-based shaping doesn't change the optimal policy (Ng et al., 1999), so both agents face the same problem. Only the no-F/T agent lacks any sensor that says which way the hole is.</p>
+
+  <h3>TD3 and the networks</h3>
+  <div class="grid2">
+    <div class="prose">
+      <p>TD3 (Fujimoto et al., 2018) is an off-policy actor-critic for continuous actions. It learns a deterministic actor with three fixes over DDPG:</p>
+      <ul class="tight">
+        <li><b>Clipped double-Q:</b> two critics; the target uses the smaller one, which curbs overestimation.</li>
+        <li><b>Delayed policy updates:</b> the actor and the target networks update every 2nd critic step.</li>
+        <li><b>Target-policy smoothing:</b> clipped noise on the target action, so the critic can't exploit sharp Q peaks.</li>
+      </ul>
+      <p>Exploration: 5,000 uniform-random steps, then Gaussian noise (σ = 0.2) on the actor's output. Evaluation uses the actor without noise.</p>
+    </div>
+    <div>
+<pre class="code">actor   π(o):   80 → 256 → ReLU → 256 → ReLU → 3 → tanh
+critic  Q1(o,a): 83 → 256 → ReLU → 256 → ReLU → 1
+critic  Q2(o,a): 83 → 256 → ReLU → 256 → ReLU → 1
+targets π′, Q1′, Q2′: Polyak copies (τ = 0.005)
+
+critic loss  Σᵢ (Qᵢ(o,a) − y)²
+  y = r + γ(1 − terminal) · min(Q1′, Q2′)(o′, clip(π′(o′) + ε))
+  ε ~ clip(N(0, 0.2), ±0.5)
+actor loss  −Q1(o, π(o))            (every 2nd update)</pre>
+      <div class="table-wrap"><table class="kv" id="hp"></table></div>
+    </div>
+  </div>
+</section>
+
+<section id="curves">
+  <div class="eyebrow">rolling mean over 100 training episodes · 20 held-out seeds for evaluation</div>
+  <h2>Training curves</h2>
+  <div class="prose"><p>Blue is the F/T agent and orange the no-F/T agent; line styles tell the random seeds apart. Training episodes include exploration noise. The evaluation curve runs the deterministic actor every 10k steps on 20 fixed hole positions it never trains on.</p></div>
+  <div class="panel"><div id="eval-chart"></div></div>
+  <div class="grid2">
+    <div class="panel"><div id="ret-chart"></div></div>
+    <div class="panel"><div id="succ-chart"></div></div>
+  </div>
+  <div class="grid2">
+    <div class="panel"><div id="abort-chart"></div></div>
+    <div class="panel"><div id="force-chart"></div></div>
+  </div>
+</section>
+
+<section id="losses">
+  <div class="eyebrow">mean per 1,000 updates</div>
+  <h2>Losses and Q</h2>
+  <div class="grid2">
+    <div class="panel"><div id="critic-chart"></div></div>
+    <div class="panel"><div id="actor-chart"></div></div>
+  </div>
+  <p class="small muted prose">The actor loss is −Q(o, π(o)), so a falling actor loss means the critic rates the actor's actions higher. The critic loss is the TD error of both heads.</p>
+</section>
+
+<section id="results">
+  <div class="eyebrow">best checkpoint per run · 50 unseen hole positions (the BC evaluation seeds)</div>
+  <h2>Final comparison</h2>
+  <div class="table-wrap"><table id="final-table"></table></div>
+  <div class="grid2">
+    <div class="panel"><div id="final-bars"></div></div>
+    <div class="panel"><div id="offset-chart"></div></div>
+  </div>
+</section>
+
+<section id="video">
+  <div class="eyebrow">same hidden hole, four controllers</div>
+  <h2>On video</h2>
+  <div class="panel">
+    <div class="controls"><label>Episode</label><span class="segs" id="seed-segs"></span></div>
+    <figure class="cmp-video"><video id="cmp-video" controls muted loop playsinline preload="metadata"></video>
+      <figcaption>Top left: untrained TD3 actor · top right: TD3 without F/T · bottom left: TD3 with F/T · bottom right: expert. Each tile: 3D close-up, a to-scale top-down schematic in mm, and compensated force [N] / torque about the tip [N·m].</figcaption></figure>
+    <div class="runs" id="seed-runs"></div>
+  </div>
+</section>
+
+<section id="discussion">
+  <div class="eyebrow">reading the results</div>
+  <h2>What it means</h2>
+  <div class="prose" id="interim"><p><b>Interim.</b> Seeds 2–4 of each condition are still training, so the final comparison isn't in yet. What the first two seeds per condition show:</p>
+  <ul class="tight">
+    <li><b>F/T seed 1 learned the task:</b> 48/50 on unseen holes, including 25 of 26 holes more than 2 mm away, in a median of 37 steps. That's about 3× faster than the scripted expert.</li>
+    <li><b>No-F/T seed 1 learned a partial blind search:</b> 18/50, mostly on holes 1–2 mm away, with many timeouts.</li>
+    <li><b>Both seed-0 runs fell into the same trap:</b> they dive fast and bank depth reward before a force abort (peak 78–86 N).</li>
+    <li>With seed-to-seed spread this large, the F/T vs no-F/T difference needs the extra seeds before it's a conclusion.</li>
+  </ul></div>
+  <!--DISCUSSION-->
+</section>
+
+<footer>Reproduce: <code>scripts/18_train_td3.py --use-force {1,0} --seed {0,1} --steps 150000</code>, then <code>13_policy_videos.py --task arm</code> on the best checkpoints and <code>python docs/td3/build.py</code>. Code: <code>src/fvb/policy/td3.py</code>, <code>src/fvb/policy/rl_env.py</code>.</footer>
+</div>
+
+<script id="report-data" type="application/json">__DATA__</script>
+<script>
+(() => {
+__CHARTLIB__
+
+const R = D.runs, col = r => r.use_force ? "--c-force" : "--c-noforce", dash = r => ["", "5 4", "2 3", "8 3 2 3", "1 3"][r.seed % 5];
+const nm = r => `${r.use_force ? "F/T" : "no F/T"} · seed ${r.seed}`;
+const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+const grp = f => R.filter(r => r.use_force === f);
+const fs = f => grp(f).filter(r => r.final).map(r => r.final.success_rate);
+const done = R.filter(r => r.final), live = R.filter(r => !r.final);
+const pct = v => Math.round(v * 100) + " %";
+document.getElementById("facts").innerHTML = [
+  [pct(mean(fs(true))), `TD3 with F/T (mean of ${fs(true).length} finished seeds, 50 unseen holes)`],
+  [pct(mean(fs(false))), "TD3, F/T zeroed"],
+  [pct(D.bc[Object.keys(D.bc).find(k => k.startsWith("mlp_force"))].success_rate), "BC MLP with F/T, for reference"],
+  [(D.config.args.steps / 1000) + "k", "environment steps per run"],
+].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
+const td = D.config.td3, a = D.config.args;
+document.getElementById("hp").innerHTML = "<tbody>" + [
+  ["γ / τ", `${td.gamma} / ${td.tau}`], ["learning rates (actor, critic)", `${td.actor_lr}, ${td.critic_lr} (Adam)`],
+  ["batch / replay buffer", `${td.batch} / ${Math.min(a.buffer, a.steps).toLocaleString()}`], ["policy delay", td.policy_delay],
+  ["target noise / clip", `${td.target_noise} / ${td.noise_clip}`], ["exploration", `${a.start_steps} random steps, then σ = ${a.expl_noise}`],
+  ["updates", "1 per environment step"], ["frame stack", `${a.history} × 20`],
+].map(([k, v]) => `<tr><td>${k}</td><td class="mono">${v}</td></tr>`).join("") + "</tbody>";
+
+function drawAll() {
+for (const k in groups) delete groups[k];
+const S = (key, f) => R.map(r => ({name: nm(r), x: r.train.t.map(t => t / 1000), y: f ? r.train[key].map(f) : r.train[key], color: col(r), dash: dash(r), width: 1.6}));
+lineChart(document.getElementById("eval-chart"), {title: "Evaluation success (deterministic actor, 20 held-out holes)", xlabel: "environment steps [k]", ylabel: "success rate", yDomain: [0, 1.05], height: 270,
+  series: R.map(r => ({name: nm(r), x: r.evals.map(e => e.t / 1000), y: r.evals.map(e => e.success_rate), color: col(r), dash: dash(r), markers: true}))});
+lineChart(document.getElementById("ret-chart"), {title: "Training episode return", xlabel: "environment steps [k]", ylabel: "return", group: "tr", height: 230, series: S("return")});
+lineChart(document.getElementById("succ-chart"), {title: "Training episodes ending in success", xlabel: "environment steps [k]", ylabel: "fraction", group: "tr", height: 230, yDomain: [0, 1.05], series: S("success")});
+lineChart(document.getElementById("abort-chart"), {title: "Training episodes ending in a 60 N force abort", xlabel: "environment steps [k]", ylabel: "fraction", group: "tr", height: 230, yDomain: [0, 1.05], series: S("abort")});
+lineChart(document.getElementById("force-chart"), {title: "Peak |F| per training episode", xlabel: "environment steps [k]", ylabel: "N", group: "tr", height: 230, series: S("peak_F")});
+const L = (key) => R.map(r => ({name: nm(r), x: r.loss.t.map(t => t / 1000), y: r.loss[key], color: col(r), dash: dash(r), width: 1.4}));
+lineChart(document.getElementById("critic-chart"), {title: "Critic loss (TD error, both heads)", xlabel: "environment steps [k]", ylabel: "MSE", group: "loss", height: 240, ylog: true, series: L("critic").map(s => ({...s, y: s.y.map(v => v === null ? null : Math.max(v, 1e-4))})),
+  yDomain: [Math.max(1e-4, Math.min(...R.flatMap(r => r.loss.critic.filter(v => v > 0)))), Math.max(...R.flatMap(r => r.loss.critic))]});
+lineChart(document.getElementById("actor-chart"), {title: "Actor loss = −Q(o, π(o))", xlabel: "environment steps [k]", ylabel: "−Q", group: "loss", height: 240, series: L("actor")});
+
+// final comparison
+const bcRow = (k, label) => { const b = D.bc[Object.keys(D.bc).find(x => x.startsWith(k))]; return b ? `<tr class="muted"><td>${label}</td><td>—</td><td>${Math.round(b.success_rate * b.n)}/${b.n}</td><td colspan="3">reference (BC report)</td><td>${b.mean_peak_F_N.toFixed(1)}</td></tr>` : ""; };
+let h = "<thead><tr><th>policy</th><th>best checkpoint</th><th>success</th><th>force aborts</th><th>timeouts</th><th>steps (successes)</th><th>mean peak |F| [N]</th></tr></thead><tbody>";
+for (const r of done) { const f = r.final, n = f.episodes.length;
+  h += `<tr class="${r.use_force ? "hl" : ""}"><td>TD3 ${nm(r)}</td><td>${(f.best_t / 1000).toFixed(0)}k steps</td><td class="${f.success_rate >= 0.7 ? "ok" : f.success_rate < 0.3 ? "bad" : ""}">${Math.round(f.success_rate * n)}/${n}</td><td>${f.reasons.force_abort || 0}</td><td>${f.reasons.timeout || 0}</td><td>${fmt(f.mean_steps_success)}</td><td>${fmt(f.mean_peak_F_N)}</td></tr>`; }
+h += bcRow("expert", "Expert (privileged)") + bcRow("mlp_force", "BC MLP + F/T") + bcRow("mlp_noforce", "BC MLP, F/T zeroed") + "</tbody>";
+document.getElementById("final-table").innerHTML = h;
+if (live.length) document.getElementById("final-table").insertAdjacentHTML("afterend", `<p class="small muted">Still training: ${live.map(r => `${nm(r)} (${Math.round(r.train.t[r.train.t.length - 1] / 1000)}k steps)`).join(", ")}. Their curves are shown up to their latest checkpoint.</p>`);
+barChart(document.getElementById("final-bars"), {title: "Success on 50 unseen holes", unit: "%", rows: [
+  ...done.map(r => ({label: "TD3 " + nm(r), value: r.final.success_rate * 100, color: col(r)})),
+  {label: "BC MLP + F/T", value: D.bc[Object.keys(D.bc).find(x => x.startsWith("mlp_force"))].success_rate * 100, color: "--c-mlp"},
+  {label: "BC MLP, F/T zeroed", value: D.bc[Object.keys(D.bc).find(x => x.startsWith("mlp_noforce"))].success_rate * 100, color: "--c-mlpno"}]});
+const bins = [0, 0.5, 1, 2, 3, 6], mids = [0.25, 0.75, 1.5, 2.5, 4];
+lineChart(document.getElementById("offset-chart"), {title: "Success vs hidden-hole distance (clearance 0.5 mm)", xlabel: "|hole offset| [mm]", ylabel: "success rate", yDomain: [0, 1.05], height: 250,
+  series: [true, false].map(f => { const eps = grp(f).filter(r => r.final).flatMap(r => r.final.episodes);
+    return {name: f ? "TD3 with F/T (finished seeds)" : "TD3 no F/T (finished seeds)", x: mids, markers: true, color: f ? "--c-force" : "--c-noforce",
+      y: bins.slice(0, -1).map((lo, i) => { const s = eps.filter(e => { const d = Math.hypot(...e.hole_xy_mm); return d >= lo && d < bins[i + 1]; }); return s.length ? s.filter(e => e.success).length / s.length : null; })}; })});
+
+// video
+if (D.videos) {
+  const pc = n => n.startsWith("untrained") ? "--c-untrained" : n.includes("no force") ? "--c-noforce" : n.includes("with force") ? "--c-force" : "--c-expert";
+  const VR = D.videos.runs, seeds = [...new Set(VR.map(r => r.seed))];
+  segs(document.getElementById("seed-segs"), seeds.map(s => { const r = VR.find(x => x.seed === s); return [String(s), `seed ${s} · hole (${r.hole_xy_mm.map(v => v.toFixed(1)).join(", ")}) mm`]; }), key => {
+    const vid = document.getElementById("cmp-video");
+    if (!vid.src.includes(`seed${key}_`)) vid.src = `media/seed${key}_compare.mp4#t=0.1`;
+    document.getElementById("seed-runs").innerHTML = VR.filter(r => r.seed === +key).map(r => `<div><b style="color:${css(pc(r.policy))}">${r.policy}</b><span class="chip ${r.reason === "success" ? "ok" : "bad"}">${r.reason}</span> <span class="mono small">${(r.steps / 20).toFixed(2)} s · peak ${r.peak_F_N.toFixed(1)} N</span></div>`).join("");
+  }, String(seeds[0]));
+} else document.getElementById("video").hidden = true;
+}
+drawAll();
+let lastW = window.innerWidth, rt;
+window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { if (Math.abs(window.innerWidth - lastW) > 40) { lastW = window.innerWidth; drawAll(); } }, 200); });
+})();
+</script>

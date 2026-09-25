@@ -24,6 +24,31 @@ force-trained ACT-lite policy inserts as fast as the expert (50/50 vs 7/50 witho
 Full interactive reports (open locally in a browser): `docs/report/index.html` (Stage 0 +
 first Stage 1 experiment) and `docs/stage1/index.html` (Stage 1 completion).
 
+## Reinforcement learning: TD3 with vs without force/torque (in progress)
+
+The same Panda hidden-hole insertion learned from reward alone with TD3
+(`src/fvb/policy/td3.py`, `scripts/18_train_td3.py`). The two agents are identical except that
+one has the 9 wrist force/torque channels zeroed.
+- **Networks:** actor and twin critics are 256×256 ReLU MLPs.
+- **Observation:** the last 4 steps of the 20-channel arm observation.
+- **Action:** a peg-tip move of ±1 mm (x, y) and ±3 mm (z) per step.
+- **Reward:** depth progress, potential-based shaping toward the true hole (the reward sees the
+  hole; the policy never does), a time cost, a force penalty, +50 for success and −20 for a
+  60 N abort.
+- **Budget:** 150k environment steps per run, 5 seeds per condition.
+
+![TD3 training reward and evaluation success, with vs without force/torque](docs/img/td3_training_reward.png)
+
+Interim result (6 of 10 runs still training): **seed-to-seed variance dominates, so there is no
+force/torque verdict yet.**
+- One F/T seed learned the task: 48/50 unseen holes, in a median of 37 steps, about 3× faster
+  than the scripted expert.
+- One no-F/T seed jumped to 85 % evaluation success late in training.
+- The other runs are stuck. Several fell into a "dive fast, bank depth reward, hit the 60 N
+  abort" local optimum; that's the deep dips in the reward curve.
+
+Regenerate the plot with `python scripts/19_plot_td3.py`; the full report is `docs/td3/index.html`.
+
 ## Quickstart
 
 ```bash
