@@ -118,17 +118,22 @@ actor loss  −Q1(o, π(o))            (every 2nd update)</pre>
 <section id="discussion">
   <div class="eyebrow">reading the results</div>
   <h2>What it means</h2>
-  <div class="prose" id="interim"><p><b>Interim.</b> Seeds 2–4 of each condition are still training, so the final comparison isn't in yet. What the first two seeds per condition show:</p>
-  <ul class="tight">
-    <li><b>F/T seed 1 learned the task:</b> 48/50 on unseen holes, including 25 of 26 holes more than 2 mm away, in a median of 37 steps. That's about 3× faster than the scripted expert.</li>
-    <li><b>No-F/T seed 1 learned a partial blind search:</b> 18/50, mostly on holes 1–2 mm away, with many timeouts.</li>
-    <li><b>Both seed-0 runs fell into the same trap:</b> they dive fast and bank depth reward before a force abort (peak 78–86 N).</li>
-    <li>With seed-to-seed spread this large, the F/T vs no-F/T difference needs the extra seeds before it's a conclusion.</li>
-  </ul></div>
+  <div class="prose">
+    <p><b>Force/torque makes the solution learnable; TD3 rarely finds it.</b> One of five F/T seeds solves the task (49/50 unseen holes, every hole more than 1 mm away, in a median of 31 steps, about 3.7× faster than the scripted expert). No seed without F/T gets beyond chance: at most 9 % of holes more than 1 mm away. The mean is 25.6 % vs 8.8 %, but that gap comes almost entirely from the one seed that succeeded.</p>
+    <p><b>Where the other runs get stuck.</b> Two local optima show up in the curves:</p>
+    <ul class="tight">
+      <li><b>Dive and abort:</b> descend fast, bank depth reward, then hit the 60 N limit. This produces the deep dips in training return and the high force-abort fraction.</li>
+      <li><b>Hover:</b> stay above the rim until timeout (0 N peak force). This is safe but earns nothing.</li>
+    </ul>
+    <p>The seed that escaped learned what the expert does, faster: touch the rim, read the lateral force and torque, shift, and drop in, all within about 4 mm of the start.</p>
+    <p><b>Compared with behaviour cloning.</b> Imitating the scripted expert is far more reliable at the same task: MLP + F/T 39/50 vs 4/50 without, every time it's trained. RL's advantage is speed: the successful TD3 policy inserts in ~31 steps vs the expert's ~114, because nothing forces it to copy the expert's slow 10 mm/s approach.</p>
+    <p><b>A reward-hacking episode, and the fix.</b> The first batch of these runs reported up to 96–100 % "success". Their paths went 130–150 mm sideways. The success check only tested depth below the hole's top face, and the walls stand on the table, so lowering the peg onto the table beside the hole block counted as inserted. TD3 found this in both conditions; the behaviour-cloning expert never leaves the hole, so it never triggered it. Success now also requires the tip to be over the opening, with regression tests on both tasks. The behaviour-cloning results re-evaluated identically, and every number on this page comes from the corrected re-run.</p>
+    <p><b>Next steps, if TD3 is pursued:</b> more seeds or a longer budget; demonstrations in the replay buffer (TD3 + BC) to escape the local optima; and a critic that also sees the hole position (asymmetric actor-critic), which keeps the policy unprivileged.</p>
+  </div>
   <!--DISCUSSION-->
 </section>
 
-<footer>Reproduce: <code>scripts/18_train_td3.py --use-force {1,0} --seed {0,1} --steps 150000</code>, then <code>13_policy_videos.py --task arm</code> on the best checkpoints and <code>python docs/td3/build.py</code>. Code: <code>src/fvb/policy/td3.py</code>, <code>src/fvb/policy/rl_env.py</code>.</footer>
+<footer>Reproduce: <code>scripts/18_train_td3.py --use-force {1,0} --seed {0..4} --steps 150000</code>, then <code>13_policy_videos.py --task arm</code> on the best checkpoints and <code>python docs/td3/build.py</code>. Code: <code>src/fvb/policy/td3.py</code>, <code>src/fvb/policy/rl_env.py</code>.</footer>
 </div>
 
 <script id="report-data" type="application/json">__DATA__</script>

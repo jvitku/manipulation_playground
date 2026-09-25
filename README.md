@@ -24,7 +24,7 @@ force-trained ACT-lite policy inserts as fast as the expert (50/50 vs 7/50 witho
 Full interactive reports (open locally in a browser): `docs/report/index.html` (Stage 0 +
 first Stage 1 experiment) and `docs/stage1/index.html` (Stage 1 completion).
 
-## Reinforcement learning: TD3 with vs without force/torque (in progress)
+## Reinforcement learning: TD3 with vs without force/torque
 
 The same Panda hidden-hole insertion learned from reward alone with TD3
 (`src/fvb/policy/td3.py`, `scripts/18_train_td3.py`). The two agents are identical except that
@@ -39,16 +39,26 @@ one has the 9 wrist force/torque channels zeroed.
 
 ![TD3 training reward and evaluation success, with vs without force/torque](docs/img/td3_training_reward.png)
 
-**Correction (being re-run).** The first 10 runs exploited a bug in the success check. It only
-tested depth below the hole's top face; the hole's walls stand on the table, so lowering the
-peg onto the table *beside* the hole block counted as "inserted". TD3 found this in both
-conditions: its "successes" moved the peg 130–150 mm sideways. The plot above comes from those
-invalid runs and is kept only to show the learning dynamics. The check now also requires the
-tip to be over the hole opening (regression tests in `tests/test_arm_task.py` and
-`tests/test_policy_task.py`); the TD3 runs are being repeated and the behaviour-cloning numbers
-re-verified.
+**Final result (best checkpoint per run, 50 unseen holes):**
 
-Regenerate the plot with `python scripts/19_plot_td3.py`; the full report is `docs/td3/index.html`.
+| seed | 0 | 1 | 2 | 3 | 4 | mean |
+|---|---|---|---|---|---|---|
+| with F/T | 9/50 | 6/50 | 0/50 | **49/50** | 0/50 | 25.6 % |
+| without F/T | 4/50 | 9/50 | 1/50 | 0/50 | 8/50 | 8.8 % |
+
+- **One F/T seed solves the task:** every hole more than 1 mm away is inserted, in a median of
+  31 steps (the scripted expert needs ~114).
+- **No agent without F/T gets beyond chance:** at most 9 % of holes more than 1 mm away.
+- **The other runs are stuck in local optima:** diving fast into the 60 N abort, or hovering
+  until timeout.
+- **Verdict:** force/torque is what makes the solution learnable, but at this budget TD3 finds
+  it in only 1 of 5 seeds. Behaviour cloning from the expert is far more reliable (MLP + F/T
+  39/50 vs 4/50 without).
+
+An earlier batch of these runs exploited a bug in the success check: depth alone counted a peg
+lowered onto the table beside the hole block. It's fixed and covered by regression tests; the
+numbers above are from the corrected re-run. Regenerate the plot with
+`python scripts/19_plot_td3.py`; the full report is `docs/td3/index.html`.
 
 ## Quickstart
 
