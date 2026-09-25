@@ -60,3 +60,16 @@ def test_xy_abs_action_mode_reproduces_the_delta_trajectory():
     d, a = labels["delta"][:, 0], labels["xy_abs"][:, 0]
     assert (d != 0).sum() < 0.2 * len(d)  # delta: sparse pulses
     assert np.allclose(np.cumsum(d), a, atol=1e-12)  # xy_abs: their running sum
+
+
+def test_gantry_lowering_beside_the_hole_is_not_success():
+    task = GantryTask(TaskParams(), 3)
+    reason = None
+    for _ in range(16):  # 80 mm sideways: block half-width 50.5 mm + peg half-width 10 mm
+        done, reason = task.step(np.array([0.005, 0.0, 0.0]))
+    for _ in range(40):
+        done, reason = task.step(np.array([0.0, 0.0, -0.003]))
+        if done:
+            break
+    assert task.depth() >= 0.030  # it did get 'deep'...
+    assert reason != "success"  # ...but not into the hole

@@ -49,3 +49,20 @@ def test_hole_moves_with_the_offset(world):
     task = ArmTask(p, 5, world, hole_offset=np.array([0.003, -0.002]))
     c = task.env.hole_center_world[:2] - world.hole_pos0[:2]
     assert np.allclose(c, [0.003, -0.002], atol=1e-12)
+
+
+def test_lowering_beside_the_hole_block_is_not_success(world):
+    """Regression (found by TD3): the walls stand on the table, so a tip lowered onto the table
+    next to the block is 'deep'. That must not count as an insertion."""
+    p = ArmTaskParams()
+    task = ArmTask(p, 2, world, hole_offset=np.array([0.0, 0.0]))
+    reason = None
+    for _ in range(14):  # 70 mm sideways, clear of the 50 mm half-width block
+        done, reason = task.step(np.array([0.005, 0.0, 0.0]))
+        assert not done
+    for _ in range(40):
+        done, reason = task.step(np.array([0.0, 0.0, -0.002]))
+        if done:
+            break
+    assert task.depth() >= p.success_depth  # it did get 'deep'...
+    assert reason != "success"  # ...but not into the hole

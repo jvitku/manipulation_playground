@@ -39,13 +39,14 @@ one has the 9 wrist force/torque channels zeroed.
 
 ![TD3 training reward and evaluation success, with vs without force/torque](docs/img/td3_training_reward.png)
 
-Interim result (6 of 10 runs still training): **seed-to-seed variance dominates, so there is no
-force/torque verdict yet.**
-- One F/T seed learned the task: 48/50 unseen holes, in a median of 37 steps, about 3× faster
-  than the scripted expert.
-- One no-F/T seed jumped to 85 % evaluation success late in training.
-- The other runs are stuck. Several fell into a "dive fast, bank depth reward, hit the 60 N
-  abort" local optimum; that's the deep dips in the reward curve.
+**Correction (being re-run).** The first 10 runs exploited a bug in the success check. It only
+tested depth below the hole's top face; the hole's walls stand on the table, so lowering the
+peg onto the table *beside* the hole block counted as "inserted". TD3 found this in both
+conditions: its "successes" moved the peg 130–150 mm sideways. The plot above comes from those
+invalid runs and is kept only to show the learning dynamics. The check now also requires the
+tip to be over the hole opening (regression tests in `tests/test_arm_task.py` and
+`tests/test_policy_task.py`); the TD3 runs are being repeated and the behaviour-cloning numbers
+re-verified.
 
 Regenerate the plot with `python scripts/19_plot_td3.py`; the full report is `docs/td3/index.html`.
 

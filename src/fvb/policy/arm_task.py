@@ -161,6 +161,13 @@ class ArmTask:
     def depth(self) -> float:
         return float(self.env.insertion_depth())
 
+    def over_opening(self) -> bool:
+        """Tip centre within the hole's square opening. Depth alone is not enough: the walls
+        stand on the table, so a peg lowered onto the table *beside* the hole block is also
+        'deep' (TD3 found this)."""
+        e = np.abs(self.env.peg_tip_pos()[:2] - self.env.hole_center_world[:2])
+        return bool(np.all(e < self.env.hole_half_opening))
+
     def force_norm(self) -> float:
         return float(np.linalg.norm(self.rig.ft_comp_last()[:3]))
 
@@ -197,7 +204,7 @@ class ArmTask:
         self.rig.step(self.low_level(self.target), log)
         self.prev_action = delta.astype(np.float32)
         self.k += 1
-        if self.depth() >= self.p.success_depth:
+        if self.depth() >= self.p.success_depth and self.over_opening():
             return True, "success"
         if self.force_norm() > self.p.force_abort_N:
             return True, "force_abort"

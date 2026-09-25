@@ -140,6 +140,12 @@ class GantryTask:
     def depth(self) -> float:
         return insertion_depth(self.scene, self.g.q[2])
 
+    def over_opening(self) -> bool:
+        """Peg centre within the hole's square opening: a peg lowered onto the floor beside the
+        hole block is also 'deep', so depth alone does not mean inserted."""
+        e = np.abs(self.g.ee_pos()[:2] - self.hole_xy)
+        return bool(np.all(e < self.scene.peg_half + self.scene.clearance))
+
     def force_norm(self) -> float:
         return float(np.linalg.norm(self.g.ft_comp_last()[:3]))
 
@@ -172,7 +178,7 @@ class GantryTask:
         self.prev_action = delta.astype(np.float32)
         self.k += 1
         f = np.linalg.norm(self.g.ft_comp_last()[:3])
-        if self.depth() >= SUCCESS_DEPTH:
+        if self.depth() >= SUCCESS_DEPTH and self.over_opening():
             return True, "success"
         if f > FORCE_ABORT_N:
             return True, "force_abort"
