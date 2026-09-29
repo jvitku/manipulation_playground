@@ -24,7 +24,11 @@ def rolling(x, w: int) -> np.ndarray:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--runs", default="outputs/s1_td3")
+    ap.add_argument("--runs", nargs="+", default=["outputs/s1_td3"], help="one or more run dirs")
+    ap.add_argument(
+        "--title",
+        default="TD3 on the Panda hidden-hole insertion: with vs without wrist force/torque",
+    )
     ap.add_argument("--out", default="docs/img/td3_training_reward.png")
     ap.add_argument("--window", type=int, default=100, help="episodes in the rolling mean")
     args = ap.parse_args()
@@ -35,7 +39,8 @@ def main() -> None:
     import matplotlib.pyplot as plt
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 6.4), sharex=True, height_ratios=[3, 2])
-    for d in sorted(glob.glob(str(Path(args.runs) / "*_s*"))):
+    dirs = sorted(d for r in args.runs for d in glob.glob(str(Path(r) / "*_s*")))
+    for d in dirs:
         pf = Path(d) / "progress.json"
         if not pf.exists():
             continue
@@ -46,7 +51,7 @@ def main() -> None:
         label = f"{'F/T' if force else 'no F/T'}, seed {seed}"
         t = np.array([e["t"] for e in prog["episodes"]]) / 1e3
         r = rolling([e["return"] for e in prog["episodes"]], args.window)
-        ax1.plot(t, r, color=color, lw=1.3, alpha=0.85, label=label)
+        ax1.plot(t, r, color=color, lw=1.1, alpha=0.75, label=label)
         ev = prog["evals"]
         ax2.plot(
             [e["t"] / 1e3 for e in ev],
@@ -58,9 +63,9 @@ def main() -> None:
             alpha=0.85,
         )
     ax1.set_ylabel(f"training episode return\n(rolling mean, {args.window} episodes)")
-    ax1.set_title("TD3 on the Panda hidden-hole insertion: with vs without wrist force/torque")
+    ax1.set_title(args.title)
     ax1.grid(alpha=0.3)
-    ax1.legend(fontsize=7, ncol=2, loc="upper left")
+    ax1.legend(fontsize=6, ncol=4, loc="lower right")
     ax2.set_ylabel("eval success\n(20 held-out holes)")
     ax2.set_xlabel("environment steps [k]")
     ax2.set_ylim(-0.03, 1.03)

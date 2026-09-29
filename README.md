@@ -55,6 +55,29 @@ one has the 9 wrist force/torque channels zeroed.
   it in only 1 of 5 seeds. Behaviour cloning from the expert is far more reliable (MLP + F/T
   39/50 vs 4/50 without).
 
+### With demonstrations (TD3+BC), 10 seeds per condition
+
+PLAN §12 set out to make TD3 reliable enough to settle the question: goal G5 was ≥ 80 % success
+for at least 4 of 5 force/torque seeds. What helped: 100 expert episodes in the replay buffer
+plus a behaviour-cloning term in the actor loss that decays from 2.5 to a floor of 1.0, never to
+zero. With that recipe:
+
+![TD3+BC with vs without force/torque, 10 seeds each](docs/img/td3_bc_r4.png)
+
+| condition | success on 50 unseen holes, per seed | seeds ≥ 80 % | mean |
+|---|---|---|---|
+| with F/T | 45, 7, 44, 6, 44, 50, 35, 25, 50, 5 | 5 / 10 | 62.2 % |
+| without F/T | 10, 6, 9, 5, 5, 11, 5, 8, 9, 6 | 0 / 10 | 14.8 % |
+
+- **Force/torque decides it.** Without it, no agent inserts more than 11/50, and only 7 % of the
+  holes more than 1 mm off-centre (58 % with F/T). Permutation test on the per-seed means:
+  one-sided p = 0.0014.
+- **G5 is not met:** only half the F/T seeds become reliable. The failures collapse early into
+  diving at the rim, or into hovering until timeout.
+- **Tried and reverted:** a stronger BC term (same 5/10), an asymmetric critic that sees the
+  hole (no gain), a speed limit near the rim (3/10), lateral actions as positions (≤ 19/50),
+  and offline pretraining on the demos (probe). The full log is `docs/progress/journal.jsonl`.
+
 An earlier batch of these runs exploited a bug in the success check: depth alone counted a peg
 lowered onto the table beside the hole block. It's fixed and covered by regression tests; the
 numbers above are from the corrected re-run. Regenerate the plot with
