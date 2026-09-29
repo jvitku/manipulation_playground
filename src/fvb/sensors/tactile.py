@@ -52,7 +52,10 @@ class TactileConfig:
     solref: str = "0.01 1"
     solimp: str = "0.9 0.95 0.001"
     force_limit: float = 70.0  # N, Franka Hand continuous grasp force
-    kp: float = 1000.0  # finger position gain (robosuite default)
+    # finger position gain. robosuite's 1000 gives ~12 N on a 24 mm part (the target is fully
+    # closed); a held bolt then pivoted about the closing axis at the first chamfer contact (V4).
+    # 4000 gives ~45 N, inside the Franka Hand's 70 N continuous force.
+    kp: float = 4000.0
     protrude: float = 0.0015  # m, pad moved inwards past the finger mesh hull
 
 

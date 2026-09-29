@@ -29,7 +29,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from fvb.envs.fasteners import DEFAULT_BOLT
-from fvb.envs.sort_bolts_nuts import BIN_SIZE, BIN_WALL_H, BUCKET_H
+from fvb.envs.sort_bolts_nuts import BIN_SIZE, BIN_WALL_H, BUCKET_H, BUCKET_R
 
 POS_SCALE, ROT_SCALE = 0.05, 0.5  # OSC output_max: action 1.0 = 5 cm / 0.5 rad target offset
 DOWN = np.array([0.0, 0.0, -1.0])
@@ -143,7 +143,6 @@ class SortExpert:
     def _go(self, phase: str) -> None:
         self.phase = phase
         self.t_phase = 0
-        self.depth_hist: list[float] = []
         self.log.append((self.step_i, phase, self.part))
 
     # -- task logic ----------------------------------------
@@ -151,8 +150,15 @@ class SortExpert:
         env = self.env
         pad = self.pad_point()
         best, best_d = None, np.inf
-        for i, p in enumerate(env.parts):
+        for i, p in enumerate(env.parts):  # nearest pickable part
             if i in self.skipped or p.status in ("vanished", "in_bucket", "dropped", "seated"):
+                continue
+            # parts that left the tray (on the table, by the fixture) are not picked up again
+            if not env._in_bin(i):
+                continue
+            # a nut still sliding inside the bucket is sorted, not a part to pick (V4 seeds 4, 7)
+            rel = env.part_pose(i)[0] - env.bucket_floor
+            if np.hypot(rel[0], rel[1]) < BUCKET_R and rel[2] < BUCKET_H:
                 continue
             dist = np.linalg.norm(env.part_pose(i)[0] - pad)
             if dist < best_d:
@@ -197,13 +203,13 @@ class SortExpert:
         cands = []  # (point, R)
         if kind == "bolt":
             u = _horizontal(axis)
-            point = pos + axis * (-0.018 + self.grasp_noise[i]) + [0, 0, 0.004]
-            c0 = np.cross([0, 0, 1.0], u)
+            # by the hex head (pads on two flats): with the hand horizontal over the hole the
+            # palm spans +-32 mm around the grasp point, so a shank grasp put it on the fixture
+            point = pos + axis * (0.005 + self.grasp_noise[i]) + [0, 0, 0.004]
+            c0 = self._yaw_sign(np.cross([0, 0, 1.0], u), R_now)
             for deg in (0, 25, -25, 50, -50):
                 rot = Rotation.from_rotvec(u * math.radians(deg)).as_matrix()
                 c = rot @ c0
-                if c @ R_now[:, 0] < 0:
-                    c = -c
                 cands.append((point, frame(c, rot @ DOWN)))
         else:
             point = pos + [0, 0, 0.004]
@@ -215,10 +221,7 @@ class SortExpert:
             else:  # on its edge: pads on the two faces
                 dirs = [axis]
             for c in dirs:
-                c = _horizontal(c)
-                if c @ R_now[:, 0] < 0:
-                    c = -c
-                cands.append((point, frame(c, DOWN)))
+                cands.append((point, frame(self._yaw_sign(_horizontal(c), R_now), DOWN)))
         # never drive the fingertips into the tray floor
         min_z = env.bin_floor[2] + FLOOR_T + FINGER_BELOW_PAD + 0.002
         cands = [(np.r_[p[:2], max(p[2], min_z)], R) for p, R in cands]
@@ -228,6 +231,19 @@ class SortExpert:
                 return p, R
         _, p, R = max(scored, key=lambda t: t[0])
         return p, R
+
+    def _yaw_sign(self, c: np.ndarray, R_now: np.ndarray) -> np.ndarray:
+        """Pick c or -c (the grasp is symmetric) so joint 7 stays away from its +-2.9 rad limit.
+        For a downward hand a world yaw of +d turns joint 7 by about -d."""
+        q7 = float(self.env.robots[0]._joint_positions[6])
+        best, best_q = c, np.inf
+        for cc in (c, -c):
+            x = R_now[:, 0]
+            d = math.atan2(x[0] * cc[1] - x[1] * cc[0], x @ cc)
+            q_new = abs(q7 - d)
+            if q_new < best_q:
+                best, best_q = cc, q_new
+        return best
 
     def _held(self, i: int) -> bool:
         return np.linalg.norm(self.env.part_pose(i)[0] - self.pad_point()) < 0.045
@@ -279,10 +295,12 @@ class SortExpert:
                 self.plan = self._grasp_plan(i)
             target, Rg = self.plan
             a, ep, er = self.track(target, Rg, gain=0.7)
-            if ep < 0.03:  # last 3 cm slowly (~2 cm/s): steel on steel at 0.2 m/s is > 80 N
-                a[:3] = np.clip(a[:3], -0.15, 0.15)
+            # moderate speed down into the tray, the last 3 cm slowly (~2 cm/s): steel on steel
+            # at 0.2 m/s is > 80 N before the touch check can react
+            cap = 0.08 if ep < 0.03 else 0.4
+            a[:3] = np.clip(a[:3], -cap, cap)
             # touched something (a leaning part, the floor): stop pushing and grasp here
-            touched = self.t_phase > 3 and np.linalg.norm(env.f_ext_hat()[:3]) > 25.0
+            touched = self.t_phase > 3 and np.linalg.norm(env.f_ext_hat()[:3]) > 15.0
             if ep < 0.004 or touched or self.t_phase > 80:
                 self._go("close")
             return a
@@ -327,7 +345,7 @@ class SortExpert:
             u_hand = R.T @ u_world
             H = np.column_stack([u_hand, [0, 0, 1.0], np.cross(u_hand, [0, 0, 1.0])])
             best = None
-            for deg in (0, 45, -45, 90, -90):
+            for deg in (0, 45, -45):  # +-90 put the elbow over bucket A
                 t = math.radians(deg)
                 approach = np.array([math.cos(t), math.sin(t), 0.0])
                 W = np.column_stack([[0, 0, 1.0], approach, np.cross([0, 0, 1.0], approach)])
@@ -350,65 +368,62 @@ class SortExpert:
             if ang < 0.05 or self.t_phase > 150:
                 self._go("to_hole")
             return a
-        if self.phase in ("to_hole", "insert", "spiral"):
+        if self.phase in ("to_hole", "hover"):
             if not self._held(i):
                 return self._fail_grasp()
-            goal_xy = self.hole_est[:2].copy()
-            if self.phase == "spiral":
-                k = self.t_phase
-                r = min(0.0004 * k / 3, 0.004)
-                goal_xy += r * np.array([math.cos(0.45 * k), math.sin(0.45 * k)])
+            goal_xy = self.hole_est[:2]
             top = self.hole_est[2]
+            lat_err = goal_xy - tip[:2]
+            lat = float(np.linalg.norm(lat_err))
             if self.phase == "to_hole":
-                tip_goal = np.r_[goal_xy, top + 0.012]
-            else:
-                # rate-limited descent: never command more than 4 mm below the current tip, so a
-                # stalled tip rests on the top face with a few N instead of the OSC's full stiffness
-                tip_goal = np.r_[goal_xy, max(top - 0.022, tip[2] - 0.004)]
-            # move the hand by the tip error (the bolt may sit anywhere in the fingers); an
-            # integral term removes the OSC's steady lateral offset under the bolt's weight
-            err = tip_goal - tip
-            self.i_err = np.clip(self.i_err + 0.3 * err[:2], -0.01, 0.01)
-            pad_goal = self.pad_point() + err + np.r_[self.i_err, 0.0]
-            a, _, _ = self.track(
-                pad_goal, self.R_insert, gain=1.0 if self.phase == "to_hole" else 0.5
-            )
-            lat = np.linalg.norm(tip[:2] - goal_xy)
-            if self.phase == "to_hole":
-                if (lat < 0.001 and abs(tip[2] - tip_goal[2]) < 0.003) or self.t_phase > 200:
-                    self._go("insert")
+                # travel high (tip 10 cm above the fixture): a low transit hit bucket A and the
+                # fixture with the arm
+                tip_goal = np.r_[goal_xy, top + 0.10]
+                pad_goal = self.pad_point() + (tip_goal - tip)
+                a, _, _ = self.track(pad_goal, self.R_insert)
+                if lat < 0.01 and abs(tip[2] - tip_goal[2]) < 0.01 or self.t_phase > 200:
+                    self.i_err = np.zeros(2)
+                    self.ok_steps = 0
+                    self._go("hover")
                 return a
-            depth = env.hole_top[2] - tip[2]
-            self.depth_hist.append(depth)
-            if depth > 0.015:  # the fingers stop ~19 mm deep; the bolt drops the rest
+            # hover: settle the upright bolt 4 mm above the hole, then drop it in. Pushing it in
+            # against the chamfer made the bolt pivot in the grasp (tilt 3 -> 54 deg) and the
+            # arm dragged along the fixture. Low gain + an integral that only acts near the goal
+            # (it wound up to 10 mm during the transit and overshot +-5 mm).
+            if lat < 0.003:
+                self.i_err = np.clip(self.i_err + 0.1 * lat_err, -0.006, 0.006)
+            z_goal = max(top + 0.004, tip[2] - 0.005) if lat < 0.003 else tip[2]
+            tip_goal = np.r_[goal_xy, z_goal]
+            pad_goal = self.pad_point() + (tip_goal - tip) + np.r_[self.i_err, 0.0]
+            a, _, _ = self.track(pad_goal, self.R_insert, gain=0.3)
+            tilt = math.degrees(math.acos(np.clip(u_world[2], -1, 1)))
+            h = tip[2] - top
+            good = lat < 0.0007 and 0.002 < h < 0.007 and tilt < 2.0
+            self.ok_steps = self.ok_steps + 1 if good else 0
+            timed_out = self.t_phase > 200 and lat < 0.0015 and h < 0.01
+            if self.ok_steps >= 3 or timed_out:
                 self._go("let_go")
-            elif (
-                self.phase == "insert"
-                and len(self.depth_hist) > 12
-                and depth < 0.003
-                and self.depth_hist[-1] - self.depth_hist[-12] < 0.001
-            ):
-                self._go("spiral")  # stalled on the top face: search around the estimate
-            elif self.t_phase > 240:
+            elif self.t_phase > 300:
                 return self._fail_grasp()
             return a
         if self.phase == "let_go":
             self.gripper = OPEN
             a, _, _ = self.track(self.pad_point(), R)
-            if self.t_phase > 8:
-                self._go("back_off")
-            return a
-        if self.phase == "back_off":
-            a, _, _ = self.track(self.pad_point() - R[:, 2] * 0.01 + [0, 0, 0.01], R)
-            if self.t_phase > 12:
+            level = -self.env.robots[0].gripper["right"].current_action[0]
+            if level < -0.9 and self.t_phase > 4:  # fully open, or backing off drags the bolt out
                 self._go("up")
             return a
         if self.phase == "up":
-            a, ep, _ = self.track(
-                np.r_[self.pad_point()[:2], safe_z],
-                frame(R[:, 0], DOWN) if self.t_phase > 10 else R,
-            )
-            if self.t_phase > 40:
+            # straight up first (the open fingers clear the 24 mm head), then turn the hand
+            # back to pointing down at safe height
+            if self.t_phase <= 25:
+                a, _, _ = self.track(self.pad_point() + [0, 0, 0.03], R)
+                return a
+            rel = Rotation.from_matrix(frame(R[:, 0], DOWN) @ R.T).as_rotvec()
+            ang = np.linalg.norm(rel)
+            step = Rotation.from_rotvec(rel * min(1.0, 0.3 / max(ang, 1e-9))).as_matrix() @ R
+            a, _, _ = self.track(np.r_[self.pad_point()[:2], safe_z + 0.03], step)
+            if ang < 0.1 or self.t_phase > 100:
                 self._go("select")
             return a
         raise RuntimeError(self.phase)

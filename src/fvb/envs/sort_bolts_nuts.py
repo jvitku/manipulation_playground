@@ -68,8 +68,8 @@ BUCKET_R, BUCKET_H = 0.10, 0.12
 
 SORTED = ("vanished", "in_bucket")
 # front camera framing the bin, the fixture and bucket A (robosuite's agentview crops both ends)
-SORTVIEW_POS = (0.95, 0.08, 1.55)
-SORTVIEW_TARGET = (-0.02, 0.08, 0.82)
+SORTVIEW_POS = (0.95, -0.12, 1.60)
+SORTVIEW_TARGET = (-0.05, -0.12, 0.82)
 
 
 def look_at_xyaxes(pos, target) -> str:
@@ -94,7 +94,7 @@ class SortTaskParams:
     settle_s: float = 1.0  # spawn settling time
     bin_xy: tuple = (0.0, -0.22)  # table frame
     hole_xy: tuple = (0.05, 0.15)
-    bucket_xy: tuple = (-0.12, 0.38)
+    bucket_xy: tuple = (-0.26, -0.46)  # beside the tray, away from the arm at the hole (V4)
 
 
 @dataclass
@@ -138,7 +138,7 @@ class SortBoltsNuts(ManipulationEnv):
         controller_configs=None,
         gripper_types="TactilePandaGripper",
         initialization_noise="default",
-        table_full_size=(0.8, 1.1, 0.05),
+        table_full_size=(0.8, 1.2, 0.05),
         table_friction=(0.5, 0.005, 0.0001),
         task: SortTaskParams | None = None,
         joint_torque: bool = True,
