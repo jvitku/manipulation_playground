@@ -60,8 +60,10 @@ from fvb.sensors.tactile import TactilePads
 INSTRUCTION = "sort the parts: bolts into the hole, nuts into bucket A"
 SUB_INSTRUCTIONS = {"bolt": "put the bolt in the hole", "nut": "put the nut in bucket A"}
 
-BIN_SIZE = (0.30, 0.22)
-BIN_WALL_H = 0.08
+BIN_SIZE = (0.36, 0.26)  # a bit wider than the plan's 300 x 220 mm: room for the fingers
+# 40 mm tray, not the plan's 80 mm bin: the Franka Hand's palm sits ~45 mm above the pad centre,
+# so reaching a part next to an 80 mm wall drove the palm into the wall (V4 expert, force abort)
+BIN_WALL_H = 0.04
 BUCKET_R, BUCKET_H = 0.10, 0.12
 
 SORTED = ("vanished", "in_bucket")
@@ -332,12 +334,12 @@ class SortBoltsNuts(ManipulationEnv):
     def _sample_spawn(self, rng) -> list[tuple[np.ndarray, np.ndarray]]:
         """Rejection-sample non-overlapping poses above the bin (bounding spheres)."""
         radius = {"bolt": 0.032, "nut": 0.017}
-        lx, ly = BIN_SIZE[0] / 2 - 0.035, BIN_SIZE[1] / 2 - 0.035
+        lx, ly = BIN_SIZE[0] / 2 - 0.06, BIN_SIZE[1] / 2 - 0.06
         c = self.bin_floor
         poses: list[tuple[np.ndarray, np.ndarray]] = []
         for p in self.parts:
             for _ in range(1000):
-                pos = c + [rng.uniform(-lx, lx), rng.uniform(-ly, ly), rng.uniform(0.04, 0.16)]
+                pos = c + [rng.uniform(-lx, lx), rng.uniform(-ly, ly), rng.uniform(0.03, 0.11)]
                 ok = all(
                     np.linalg.norm(pos - q[0]) > radius[p.kind] + radius[o.kind] + 0.004
                     for q, o in zip(poses, self.parts, strict=False)
@@ -485,8 +487,7 @@ class SortBoltsNuts(ManipulationEnv):
                 p.status = "moving"
 
     # -- sensors ----------------------------------------
-    def _pre_action(self, action, policy_step=False):
-        # data holds a fresh forward pass here (robosuite calls sim.forward() first)
+    def _sample_sensors(self) -> None:
         d = self.sim.data._data
         if self.use_joint_torque:
             tau_j, tau_ext = self.jts.read(d)
@@ -496,7 +497,15 @@ class SortBoltsNuts(ManipulationEnv):
             self.taxel_buf.push(self.pads.taxels(d))
             self.pad_force_buf.push(self.pads.pad_force(d))
         self._n_since_obs += 1
-        super()._pre_action(action, policy_step)
+
+    def _update_observables(self, force=False):
+        # robosuite calls this right after every physics step. Sample here, not in _pre_action:
+        # with lite_physics robosuite runs mj_step1, then _pre_action, then mj_step2, so at
+        # _pre_action time qacc / actuator force still belong to the previous state and tau_ext
+        # showed ~50 N phantom spikes. After mj_step2 every term is from one state.
+        if not force:
+            self._sample_sensors()
+        super()._update_observables(force)
 
     def tactile_summary(self, taxels: np.ndarray, pad_force: np.ndarray) -> np.ndarray:
         """(2, 4): normal force, CoP x, CoP y, shear per pad from raw arrays."""

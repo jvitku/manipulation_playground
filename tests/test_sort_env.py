@@ -209,3 +209,29 @@ def test_cameras_render_the_scene():
         assert blue.sum() > 200
     finally:
         e.close()
+
+
+def test_tau_ext_free_motion_is_zero_in_env():
+    """Sensors are sampled after each full physics step. At robosuite's _pre_action (between
+    mj_step1 and mj_step2 with lite_physics) qacc belonged to the previous state and tau_ext
+    showed ~50 N phantom spikes (V4)."""
+    e = suite.make(
+        "SortBoltsNuts",
+        robots="Panda",
+        has_renderer=False,
+        has_offscreen_renderer=False,
+        use_camera_obs=False,
+        seed=0,
+        torque_noise_std=0.0,
+        torque_bias_std=0.0,
+    )
+    try:
+        e.reset()
+        rng = np.random.default_rng(0)
+        worst = 0.0
+        for _ in range(20):
+            e.step(np.r_[rng.uniform(-1, 1, 6) * [1, 1, 0.3, 0.5, 0.5, 0.5], -1.0])
+            worst = max(worst, float(np.abs(e.tau_ext_buf.last(50)).max()))
+        assert worst < 1e-3
+    finally:
+        e.close()
