@@ -95,6 +95,18 @@ def main() -> None:
         "--bc-final", type=float, default=0.0, help="BC weight after the decay (a floor)"
     )
     ap.add_argument(
+        "--pretrain-steps",
+        type=int,
+        default=0,
+        help="offline TD3+BC updates on the demos alone before any interaction",
+    )
+    ap.add_argument(
+        "--pretrain-q-weight",
+        type=float,
+        default=1.0,
+        help="weight of the Q term during pretraining (0 = pure BC actor, critic still trained)",
+    )
+    ap.add_argument(
         "--asym-critic",
         type=int,
         default=0,
@@ -146,6 +158,17 @@ def main() -> None:
         demo_buf = ReplayBuffer(env.obs_dim, env.act_dim, args.demos * 250, priv_dim)
         meta["demo_stats"] = collect_demos(env, args.demos, 900_000, [buf, demo_buf])
         print(json.dumps({"demos": meta["demo_stats"]}), flush=True)
+        if args.pretrain_steps:
+            # offline warm start: actor starts at demo level, critic calibrated on demo returns
+            pre: dict = {}
+            for _ in range(args.pretrain_steps):
+                upd = agent.update(
+                    demo_buf, rng, demo_buf, args.bc_weight, q_weight=args.pretrain_q_weight
+                )
+                for k, v in upd.items():
+                    pre.setdefault(k, []).append(v)
+            meta["pretrain"] = {k: float(np.mean(v[-1000:])) for k, v in pre.items()}
+            print(json.dumps({"pretrain": meta["pretrain"]}), flush=True)
         (out / "config.json").write_text(json.dumps(meta, indent=2))
     eval_seeds = [70000 + i for i in range(args.eval_episodes)]
     train_seed = 1_000_000 * (args.seed + 1)
