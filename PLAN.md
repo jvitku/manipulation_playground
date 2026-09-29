@@ -364,3 +364,8 @@ journal says so):
 **Reporting.** An hourly HTML status page (`docs/progress/index.html`, built by
 `docs/progress/build.py`) summarises the goal, where the work is, progress since the previous
 summary, and what was tried, kept and reverted.
+
+**Status (2026-09-29 17:05).** Queue complete. G5 not met: the best recipe (TD3 + 100 demos, BC
+2.5 → floor 1.0) makes 5/10 F/T seeds reliable and 0/10 without F/T (62.2 % vs 14.8 %,
+p = 0.0014). R5 solved: ACT-lite's force blindness on the arm was dropout; with dropout 0 it
+scores 50/50. Details in FINDINGS "Stage 1.5" and the journal.

@@ -32,6 +32,8 @@ def main() -> None:
     ap.add_argument("--val-frac", type=float, default=0.1)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="auto")
+    ap.add_argument("--act-dropout", type=float, default=0.1)
+    ap.add_argument("--act-input-norm", type=int, default=1)
     args = ap.parse_args()
 
     import torch
@@ -63,7 +65,13 @@ def main() -> None:
         f"windows train/val={len(Xtr)}/{len(Xva)} use_force={use_force} task={spec.name}"
     )
 
-    model = build_model(args.model, spec.obs_dim, spec.act_dim, args.H, args.K).to(device)
+    model_kw = (
+        {"dropout": args.act_dropout, "input_norm": bool(args.act_input_norm)}
+        if args.model == "act"
+        else {}
+    )
+    model = build_model(args.model, spec.obs_dim, spec.act_dim, args.H, args.K, **model_kw)
+    model = model.to(device)
     print(f"model={args.model} params={n_params(model):,}")
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
     steps_per_epoch = int(np.ceil(len(Xtr) / args.batch))
@@ -82,6 +90,7 @@ def main() -> None:
         "use_force": use_force,
         "task": spec.name,
         "action_mode": action_mode,
+        "model_kw": model_kw,
         "obs_dim": spec.obs_dim,
         "act_dim": spec.act_dim,
         "data": args.data,

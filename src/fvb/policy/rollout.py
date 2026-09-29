@@ -33,7 +33,12 @@ class TorchPolicy:
         self.norm = Norm.from_json(ck["norm"])
         self.spec = get_spec(self.meta.get("task"))
         self.model = build_model(
-            self.meta["model"], self.spec.obs_dim, self.spec.act_dim, self.H, self.K
+            self.meta["model"],
+            self.spec.obs_dim,
+            self.spec.act_dim,
+            self.H,
+            self.K,
+            **self.meta.get("model_kw", {}),
         ).to(device)
         self.model.load_state_dict(ck["state_dict"])
         self.model.eval()
@@ -69,7 +74,14 @@ class UntrainedPolicy(TorchPolicy):
 
         self.torch.manual_seed(init_seed)
         sp = self.spec
-        self.model = build_model(self.meta["model"], sp.obs_dim, sp.act_dim, self.H, self.K)
+        self.model = build_model(
+            self.meta["model"],
+            sp.obs_dim,
+            sp.act_dim,
+            self.H,
+            self.K,
+            **self.meta.get("model_kw", {}),
+        )
         self.model.to(device).eval()
 
 

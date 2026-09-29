@@ -24,12 +24,13 @@ class ACTLite(nn.Module):
         dec_layers: int = 2,
         ff: int = 256,
         dropout: float = 0.1,
+        input_norm: bool = True,
     ):
         super().__init__()
         self.H, self.K = H, K
         self.embed = nn.Linear(obs_dim, d)
         self.pos = nn.Parameter(torch.zeros(1, H, d))
-        self.norm_in = nn.LayerNorm(d)
+        self.norm_in = nn.LayerNorm(d) if input_norm else nn.Identity()
         enc = nn.TransformerEncoderLayer(d, heads, ff, dropout, batch_first=True, norm_first=True)
         self.encoder = nn.TransformerEncoder(enc, enc_layers)
         dec = nn.TransformerDecoderLayer(d, heads, ff, dropout, batch_first=True, norm_first=True)
@@ -63,9 +64,10 @@ class MLPPolicy(nn.Module):
         return self.net(x.flatten(1)).view(x.shape[0], self.K, self.act_dim)
 
 
-def build_model(kind: str, obs_dim: int, act_dim: int, H: int, K: int) -> nn.Module:
+def build_model(kind: str, obs_dim: int, act_dim: int, H: int, K: int, **kw) -> nn.Module:
+    """``kw``: ACT-lite options (dropout, input_norm); recorded in checkpoints as model_kw."""
     if kind == "act":
-        return ACTLite(obs_dim, act_dim, H, K)
+        return ACTLite(obs_dim, act_dim, H, K, **kw)
     if kind == "mlp":
         return MLPPolicy(obs_dim, act_dim, H, K)
     raise ValueError(kind)

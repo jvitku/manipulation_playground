@@ -784,3 +784,29 @@ where the hole is; (2) an expert whose decisive action is a one-step pulse, time
 dynamics, cannot be imitated by L1 regression however good the observation is — make decisions
 persistent (positions, not deltas) or make their timing observable; (3) solver randomisation is
 not controller randomisation: a policy can be solver-robust and still fail at 4× the stiffness.
+
+# Stage 1.5 — RL reliability and the ACT-lite puzzle (PLAN §12, 2026-09-29)
+
+**R1–R4 (TD3).** Expert demonstrations in replay plus a TD3+BC actor loss whose BC weight decays
+to a floor (2.5 → 1.0, never 0) is the best recipe found: with F/T 45, 7, 44, 6, 44, 50, 35, 25,
+50, 5 /50 on unseen holes (5/10 seeds ≥ 80 %, mean 62.2 %), without F/T 10, 6, 9, 5, 5, 11, 5, 8,
+9, 6 /50 (0/10, mean 14.8 %); holes > 1 mm off 58 % vs 7 %; permutation p = 0.0014. Goal G5 (≥ 80 %
+of F/T seeds reliable) is not met. Tried and reverted, each measured: BC decaying to 0 (collapse
+when it reaches 0), stronger BC (same 5/10), an asymmetric critic that sees the hole (no gain),
+a rim speed limit (3/10: failures turn into hover-timeouts — the dive was a symptom), lateral
+actions as positions (≤ 19/50: too imprecise for 0.5 mm), offline pretraining (probe: the
+expert's own rim contact, 35–42 N, sits on a knife edge against the 60 N abort). Journal:
+`docs/progress/journal.jsonl`.
+
+**R5 — why ACT-lite ignored force on the arm: dropout.** With dropout 0 instead of 0.1, ACT-lite
+on the arm (tip-referenced wrench, same data) reaches validation L1 0.032 (was 0.104, MLP 0.057)
+and **50/50** unseen holes closed-loop, the expert's score; force zeroed: 5/50. Removing the input
+LayerNorm alone gives 44/50; both changes together 39/50. On the arm the decisive cue (torque at
+the jam) lives in a few frames ~7 steps before the correction; dropout 0.1 on 300 episodes
+regularises it away and the network settles on the no-force solution. On the gantry the cue is
+stronger and closer to the decision, which is why the same architecture worked there. Use
+`--act-dropout 0` for the arm; the default stays 0.1 so earlier results reproduce.
+
+What this means for a force-aware policy: for this task, behaviour cloning with the right
+regularisation (50/50) is far more reliable than TD3 from reward (half the seeds); and a rare,
+sharp contact cue is exactly the kind of signal generic regularisers remove.
