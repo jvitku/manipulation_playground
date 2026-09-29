@@ -72,6 +72,13 @@ class ArmRLEnv:
         t = self.task
         return 1e3 * float(np.linalg.norm(t.env.peg_tip_pos()[:2] - t.env.hole_center_world[:2]))
 
+    def privileged(self) -> np.ndarray:
+        """Critic-only input for the asymmetric critic: hole - tip in xy [mm / 5] and the
+        insertion depth [mm / 25]. Never given to the actor."""
+        t = self.task
+        e = 1e3 * (t.env.hole_center_world[:2] - t.env.peg_tip_pos()[:2]) / 5.0
+        return np.array([*e, 1e3 * t.depth() / 25.0], np.float32)
+
     def _phi(self) -> float:
         return -self.rp.lat_coef * self._lat_err_mm()
 
@@ -104,5 +111,5 @@ class ArmRLEnv:
         self._frames.append(self._frame())
         terminated = reason in ("success", "force_abort")
         truncated = reason == "timeout"
-        info = {"reason": reason, "force_N": f, "depth_mm": 1e3 * depth}
+        info = {"reason": reason, "force_N": f, "depth_mm": 1e3 * depth, "priv": self.privileged()}
         return self._obs(), rp.reward_scale * r, terminated, truncated, info

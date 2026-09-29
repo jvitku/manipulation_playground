@@ -54,7 +54,11 @@ class Critic(nn.Module):
 
 
 class ReplayBuffer:
-    def __init__(self, obs_dim: int, act_dim: int, size: int):
+    """Transitions (o, a, r, o2, terminal) plus optional privileged critic inputs (p, p2)."""
+
+    def __init__(self, obs_dim: int, act_dim: int, size: int, priv_dim: int = 0):
+        self.p = np.zeros((size, priv_dim), np.float32)
+        self.p2 = np.zeros((size, priv_dim), np.float32)
         self.o = np.zeros((size, obs_dim), np.float32)
         self.a = np.zeros((size, act_dim), np.float32)
         self.r = np.zeros((size, 1), np.float32)
@@ -62,7 +66,9 @@ class ReplayBuffer:
         self.d = np.zeros((size, 1), np.float32)  # 1 = terminal (no bootstrap)
         self.size, self.n, self.i = size, 0, 0
 
-    def add(self, o, a, r, o2, terminal: bool) -> None:
+    def add(self, o, a, r, o2, terminal: bool, p=None, p2=None) -> None:
+        if self.p.shape[1]:
+            self.p[self.i], self.p2[self.i] = p, p2
         self.o[self.i], self.a[self.i], self.r[self.i] = o, a, r
         self.o2[self.i], self.d[self.i] = o2, float(terminal)
         self.i = (self.i + 1) % self.size
@@ -71,15 +77,20 @@ class ReplayBuffer:
     def sample(self, batch: int, rng: np.random.Generator, device):
         idx = rng.integers(0, self.n, batch)
         t = lambda x: torch.as_tensor(x[idx], device=device)  # noqa: E731
-        return t(self.o), t(self.a), t(self.r), t(self.o2), t(self.d)
+        return t(self.o), t(self.a), t(self.r), t(self.o2), t(self.d), t(self.p), t(self.p2)
 
 
 class TD3:
-    def __init__(self, obs_dim: int, act_dim: int, cfg: TD3Config, device: str = "cpu"):
+    """``priv_dim`` > 0 makes the critic asymmetric: it sees [o, p] with privileged simulator
+    state p, while the actor sees only o (the deployed policy stays unprivileged)."""
+
+    def __init__(
+        self, obs_dim: int, act_dim: int, cfg: TD3Config, device: str = "cpu", priv_dim: int = 0
+    ):
         self.cfg, self.device = cfg, device
-        self.obs_dim, self.act_dim = obs_dim, act_dim
+        self.obs_dim, self.act_dim, self.priv_dim = obs_dim, act_dim, priv_dim
         self.actor = Actor(obs_dim, act_dim, cfg.hidden).to(device)
-        self.critic = Critic(obs_dim, act_dim, cfg.hidden).to(device)
+        self.critic = Critic(obs_dim + priv_dim, act_dim, cfg.hidden).to(device)
         self.actor_t = copy.deepcopy(self.actor)
         self.critic_t = copy.deepcopy(self.critic)
         self.a_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg.actor_lr)
@@ -102,13 +113,14 @@ class TD3:
         loss is TD3+BC (Fujimoto & Gu 2021): -Q / mean|Q| + bc_weight * |pi(o_d) - a_d|^2 on a
         batch of demonstration transitions."""
         c = self.cfg
-        o, a, r, o2, d = buf.sample(c.batch, rng, self.device)
+        o, a, r, o2, d, p, p2 = buf.sample(c.batch, rng, self.device)
+        co, co2 = torch.cat([o, p], -1), torch.cat([o2, p2], -1)  # critic inputs
         with torch.no_grad():
             noise = (torch.randn_like(a) * c.target_noise).clamp(-c.noise_clip, c.noise_clip)
             a2 = (self.actor_t(o2) + noise).clamp(-1.0, 1.0)
-            q1t, q2t = self.critic_t(o2, a2)
+            q1t, q2t = self.critic_t(co2, a2)
             y = r + c.gamma * (1.0 - d) * torch.min(q1t, q2t)
-        q1, q2 = self.critic(o, a)
+        q1, q2 = self.critic(co, a)
         c_loss = ((q1 - y) ** 2).mean() + ((q2 - y) ** 2).mean()
         self.c_opt.zero_grad(set_to_none=True)
         c_loss.backward()
@@ -120,7 +132,7 @@ class TD3:
         }
         self.updates += 1
         if self.updates % c.policy_delay == 0:
-            q = self.critic(o, self.actor(o))[0]
+            q = self.critic(co, self.actor(o))[0]
             a_loss = -q.mean()
             if demo is not None and bc_weight > 0 and demo.n > 0:
                 od, ad, *_ = demo.sample(c.batch, rng, self.device)
@@ -145,6 +157,7 @@ class TD3:
             "cfg": asdict(self.cfg),
             "obs_dim": self.obs_dim,
             "act_dim": self.act_dim,
+            "priv_dim": self.priv_dim,
             "meta": meta,
         }
 

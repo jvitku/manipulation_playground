@@ -104,3 +104,26 @@ def test_td3_bc_term_pulls_actor_to_demonstrations():
         out = agent.update(buf, rng, demo, bc_weight=5.0)
     assert "bc_loss" in out
     assert abs(float(agent.act(o)[0]) + 0.7) < 0.1
+
+
+def test_asymmetric_critic_learns_from_privileged_input_only():
+    """Reward depends on a hidden sign the actor cannot see; with the privileged input the
+    critic still fits it (TD error drops), and the actor stays privilege-free."""
+    rng = np.random.default_rng(0)
+    torch.manual_seed(0)
+    agent = TD3(2, 1, TD3Config(hidden=64, batch=64), priv_dim=1)
+    buf = ReplayBuffer(2, 1, 4000, priv_dim=1)
+    o = np.zeros(2, np.float32)
+    for _ in range(3000):
+        h = rng.choice([-1.0, 1.0])
+        a = rng.uniform(-1, 1, 1).astype(np.float32)
+        buf.add(
+            o, a, float(h * a[0]), o, True, np.array([h], np.float32), np.array([h], np.float32)
+        )
+    first = np.mean([agent.update(buf, rng)["critic_loss"] for _ in range(50)])
+    for _ in range(1500):
+        agent.update(buf, rng)
+    last = np.mean([agent.update(buf, rng)["critic_loss"] for _ in range(50)])
+    assert last < 0.2 * first
+    assert agent.actor.net[0].in_features == 2  # actor input = observation only
+    assert agent.critic.q1[0].in_features == 2 + 1 + 1  # obs + priv + action

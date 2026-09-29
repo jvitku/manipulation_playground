@@ -60,13 +60,13 @@ def collect_demos(env, n: int, seed0: int, bufs) -> dict:
     ok = 0
     for i in range(n):
         o, done = env.reset(seed0 + i), False
-        info = {}
+        p, info = env.privileged(), {}
         while not done:
             a = np.clip(env.task.expert_action() / env.scale, -1, 1).astype(np.float32)
             o2, r, term, trunc, info = env.step(a)
             for b in bufs:
-                b.add(o, a, r, o2, term)
-            o, done = o2, term or trunc
+                b.add(o, a, r, o2, term, p, info["priv"])
+            o, p, done = o2, info["priv"], term or trunc
         ok += info["reason"] == "success"
     return {"episodes": n, "success": ok, "transitions": bufs[0].n}
 
@@ -91,6 +91,12 @@ def main() -> None:
     ap.add_argument(
         "--bc-decay-steps", type=int, default=100_000, help="linear decay of the BC weight to 0"
     )
+    ap.add_argument(
+        "--asym-critic",
+        type=int,
+        default=0,
+        help="1: the critic also sees the privileged tip->hole vector and depth (actor does not)",
+    )
     args = ap.parse_args()
 
     import torch
@@ -114,8 +120,9 @@ def main() -> None:
     norm = Norm.from_json(json.loads(Path(args.norm).read_text()))
     world = ArmWorld(p, seed=args.seed)
     env = ArmRLEnv(p, world, norm, use_force=bool(args.use_force), history=args.history, rp=rp)
-    agent = TD3(env.obs_dim, env.act_dim, cfg, device)
-    buf = ReplayBuffer(env.obs_dim, env.act_dim, min(args.buffer, args.steps))
+    priv_dim = 3 if args.asym_critic else 0
+    agent = TD3(env.obs_dim, env.act_dim, cfg, device, priv_dim=priv_dim)
+    buf = ReplayBuffer(env.obs_dim, env.act_dim, min(args.buffer, args.steps), priv_dim)
     meta = {
         "algo": "td3",
         "task": "arm",
@@ -133,7 +140,7 @@ def main() -> None:
 
     demo_buf = None
     if args.demos:
-        demo_buf = ReplayBuffer(env.obs_dim, env.act_dim, args.demos * 250)
+        demo_buf = ReplayBuffer(env.obs_dim, env.act_dim, args.demos * 250, priv_dim)
         meta["demo_stats"] = collect_demos(env, args.demos, 900_000, [buf, demo_buf])
         print(json.dumps({"demos": meta["demo_stats"]}), flush=True)
         (out / "config.json").write_text(json.dumps(meta, indent=2))
@@ -144,6 +151,7 @@ def main() -> None:
     best = (-1.0, -np.inf)
     t0 = time.perf_counter()
     o = env.reset(train_seed)
+    p = env.privileged()
     ep_ret, ep_len, ep_peak, n_ep = 0.0, 0, 0.0, 0
     for t in range(1, args.steps + 1):
         if t <= args.start_steps:
@@ -152,8 +160,8 @@ def main() -> None:
             a = agent.act(o) + rng.normal(0, args.expl_noise, env.act_dim)
             a = np.clip(a, -1, 1).astype(np.float32)
         o2, r, term, trunc, info = env.step(a)
-        buf.add(o, a, r, o2, term)
-        o = o2
+        buf.add(o, a, r, o2, term, p, info["priv"])
+        o, p = o2, info["priv"]
         ep_ret += r
         ep_len += 1
         ep_peak = max(ep_peak, info["force_N"])
@@ -173,6 +181,7 @@ def main() -> None:
             )
             n_ep += 1
             o = env.reset(train_seed + n_ep)
+            p = env.privileged()
             ep_ret, ep_len, ep_peak = 0.0, 0, 0.0
         if t % 1000 == 0 and loss_acc:
             prog["losses"].append({"t": t, **{k: float(np.mean(v)) for k, v in loss_acc.items()}})
@@ -206,6 +215,7 @@ def main() -> None:
             torch.save(agent.state({**meta, "t": t}), out / "last.pt")
             (out / "progress.json").write_text(json.dumps(prog))
             o = env.reset(train_seed + n_ep)  # eval used the env: restart the training episode
+            p = env.privileged()
             ep_ret, ep_len, ep_peak = 0.0, 0, 0.0
 
     ck = torch.load(out / "best.pt", map_location=device, weights_only=False)
