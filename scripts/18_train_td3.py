@@ -92,6 +92,9 @@ def main() -> None:
         "--bc-decay-steps", type=int, default=100_000, help="linear decay of the BC weight to 0"
     )
     ap.add_argument(
+        "--bc-final", type=float, default=0.0, help="BC weight after the decay (a floor)"
+    )
+    ap.add_argument(
         "--asym-critic",
         type=int,
         default=0,
@@ -166,7 +169,8 @@ def main() -> None:
         ep_len += 1
         ep_peak = max(ep_peak, info["force_N"])
         if t > args.start_steps:
-            bc_w = args.bc_weight * max(0.0, 1.0 - t / max(args.bc_decay_steps, 1))
+            frac = max(0.0, 1.0 - t / max(args.bc_decay_steps, 1))
+            bc_w = args.bc_final + (args.bc_weight - args.bc_final) * frac
             for k, v in agent.update(buf, rng, demo_buf, bc_w).items():
                 loss_acc.setdefault(k, []).append(v)
         if term or trunc:
