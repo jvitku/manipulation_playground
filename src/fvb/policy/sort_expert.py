@@ -37,7 +37,7 @@ OPEN, CLOSE = -1.0, 1.0
 # robosuite's PandaGripper integrates sign(action) in 0.2 steps into a level c in [-1, 1]; finger
 # q = 0.02 (1 + c), pads meet at q ~ 2 mm. Pre-grasp levels leave ~10 mm per side around the part
 # (a fully open hand is 80 mm wide and hits the bin walls next to a part).
-PREGRASP_LEVEL = {"bolt": 0.0, "nut": 0.2}
+PREGRASP_LEVEL = {"bolt": 0.2, "nut": 0.2}  # 44 mm: the bolt head is 27.7 mm across corners
 FINGER_BELOW_PAD = 0.013  # m, the finger hull reaches this far below the pad centre
 FLOOR_T = 0.005  # tray floor thickness (fasteners.bin_geoms default)
 
@@ -263,7 +263,7 @@ class SortExpert:
                 for sign in (1, -1):
                     cands.append((point, frame(sign * _horizontal(c), DOWN)))
         # never drive the fingertips into the tray floor
-        min_z = env.bin_floor[2] + FLOOR_T + FINGER_BELOW_PAD + 0.002
+        min_z = env.bin_floor[2] + FLOOR_T + FINGER_BELOW_PAD + 0.006  # OSC overshoots ~5 mm
         cands = [(np.r_[p[:2], max(p[2], min_z)], R) for p, R in cands]
         if not self.use_ik:
             return self._grasp_plan_heuristic(cands, aperture, R_now, kind)
@@ -364,7 +364,7 @@ class SortExpert:
 
     def _act(self) -> np.ndarray:
         env = self.env
-        safe_z = env.table_offset[2] + BIN_WALL_H + 0.12
+        safe_z = env.table_offset[2] + BIN_WALL_H + 0.16  # clears bucket A's 120 mm rim
         p, R = self.grip_pose()
         i = self.part
 
@@ -405,15 +405,19 @@ class SortExpert:
                 self.plan = self._grasp_plan(i)
             target, Rg = self.plan
             a, ep, er = self.track(np.r_[target[:2], max(safe_z, self.pad_point()[2])], Rg)
-            if ep < 0.01 and er < 0.05 or self.t_phase > 120:
+            if ep < 0.008 and er < 0.05 and self.t_phase > 3:
                 self._go("descend")
+            elif self.t_phase > 120:
+                # never descend from where the hand is not: the grasp pose is not being reached,
+                # count an attempt and choose again (descending blind hit tray walls / parts)
+                return self._fail_grasp()
             return a
         if self.phase == "descend":
             target, Rg = self.plan  # the plan from "above": never switch grasps mid-descent
             a, ep, er = self.track(target, Rg, gain=0.7)
             # moderate speed down into the tray, the last 3 cm slowly (~2 cm/s): steel on steel
             # at 0.2 m/s is > 80 N before the touch check can react
-            cap = 0.08 if ep < 0.03 else 0.4
+            cap = 0.08 if ep < 0.03 else 0.25
             a[:3] = np.clip(a[:3], -cap, cap)
             # touched something (a leaning part, the floor): stop pushing and grasp here
             touched = self.t_phase > 3 and np.linalg.norm(env.f_ext_hat()[:3]) > 15.0
