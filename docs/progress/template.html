@@ -88,7 +88,7 @@ document.getElementById("facts").innerHTML = [
 
 // milestones: status = latest journal verdict for that id (prefix match), else pending
 const msRows = D.milestones.map(([id, title]) => {
-  const es = J.filter(e => e.id === id || e.id.startsWith(id + "-") || e.id.startsWith(id + "."));
+  const es = J.filter(e => e.id.startsWith(id));  // R1, R1b, R1-fix, ...
   const main = es.filter(e => e.kind === "experiment").slice(-1)[0];
   const v = main ? main.verdict : "pending";
   return `<tr><td>${id}</td><td style="text-align:left">${title}</td><td>${chip(v)}</td><td style="text-align:left" class="small">${main && main.result ? main.result : ""}</td></tr>`;
