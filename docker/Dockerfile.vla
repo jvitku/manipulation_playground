@@ -1,0 +1,20 @@
+# Stage 2 VLA image (PLAN §13, V0): LeRobot + SmolVLA. Separate from the sim image because LeRobot
+# needs Python >= 3.12 and numpy >= 2 while robosuite 1.5.2 needs numpy < 2. The simulator and
+# the policy talk over TCP (fvb.vla.server / fvb.vla.client, stdlib multiprocessing.connection).
+FROM python:3.12-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/workspace/src \
+    HF_HOME=/workspace/outputs/hf_cache
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git ffmpeg libgl1 libglib2.0-0 build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir "torch==2.7.1" "torchvision==0.22.1" \
+      --index-url https://download.pytorch.org/whl/cu126
+RUN pip install --no-cache-dir "lerobot[smolvla]==0.6.1" pytest ruff
+
+WORKDIR /workspace
+CMD ["bash"]

@@ -45,3 +45,26 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+
+  # Stage 2 (PLAN §13): LeRobot + SmolVLA, Python 3.12. Never imports robosuite; talks to the sim
+  # over TCP. `docker compose -f docker/compose.yaml build vla`.
+  vla:
+    image: fvb-vla:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.vla
+    volumes:
+      - ..:/workspace
+    working_dir: /workspace
+    shm_size: 8gb
+    environment:
+      - HOME=/tmp
+      - HF_HOME=/workspace/outputs/hf_cache
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
