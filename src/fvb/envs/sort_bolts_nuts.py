@@ -19,7 +19,7 @@ Success rules (geometric, so they cannot be gamed by lowering a part next to the
 * the episode succeeds when every bolt has vanished and every nut is in the bucket.
 
 ``info`` from ``step`` carries per-part statuses and the episode outcome (success, force_abort,
-timeout or running) and failure counts (dropped, jammed).
+sim_unstable, timeout or running) and failure counts (dropped, jammed).
 
 Registered with robosuite on import: ``suite.make("SortBoltsNuts", robots="Panda", ...)``.
 """
@@ -574,7 +574,10 @@ class SortBoltsNuts(ManipulationEnv):
     def _post_action(self, action):
         self._update_parts()
         reward, done, info = super()._post_action(action)
-        if self._check_success():
+        if self.sim.data._data.warning[mujoco.mjtWarning.mjWARN_BADQACC].number > 0:
+            # MuJoCo reset the state after a bad acceleration: report it, never as a force abort
+            self.outcome = "sim_unstable"
+        elif self._check_success():
             self.outcome = "success"
         elif (
             self.use_joint_torque and np.linalg.norm(self.f_ext_hat()[:3]) > self.task.force_abort_N

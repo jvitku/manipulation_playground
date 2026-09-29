@@ -89,6 +89,9 @@ class SortExpert:
         mid = d.site_xpos[pads].mean(axis=0)
         # pad centre in the grip-site frame (the point that should sit on the grasp point)
         self.pad_offset = R.T @ (mid - d.site_xpos[env.grip_site])
+        self.R_home = R.copy()
+        self.home_pad = d.site_xpos[env.grip_site] + R @ self.pad_offset
+        self.homed = True
         self.speed = self.rng.uniform(*self.noise.speed_range)
         self.hole_est = env.hole_top.copy()
         self.hole_est[:2] += self.rng.normal(0, self.noise.hole_xy_std, 2)
@@ -234,7 +237,8 @@ class SortExpert:
 
     def _yaw_sign(self, c: np.ndarray, R_now: np.ndarray) -> np.ndarray:
         """Pick c or -c (the grasp is symmetric) so joint 7 stays away from its +-2.9 rad limit.
-        For a downward hand a world yaw of +d turns joint 7 by about -d."""
+        For a downward hand a world yaw of +d turns joint 7 by about -d. (Plain least-yaw was
+        re-tried on 8 seeds and was worse: 1 vs 3 full episodes.)"""
         q7 = float(self.env.robots[0]._joint_positions[6])
         best, best_q = c, np.inf
         for cc in (c, -c):
@@ -269,7 +273,24 @@ class SortExpert:
         p, R = self.grip_pose()
         i = self.part
 
+        if self.phase == "home":
+            # back to the start pose between parts: after the horizontal-hand bolt moves the
+            # redundant arm drifted (joint 6 pinned at its 3.75 rad limit) and later top-down
+            # grasps tilted into the tray floor; at home the OSC's posture term recentres it
+            rel = Rotation.from_matrix(self.R_home @ R.T).as_rotvec()
+            ang = np.linalg.norm(rel)
+            step = Rotation.from_rotvec(rel * min(1.0, 0.3 / max(ang, 1e-9))).as_matrix() @ R
+            a, ep, _ = self.track(self.home_pad, step)
+            if (ep < 0.02 and ang < 0.1 and self.t_phase > 15) or self.t_phase > 120:
+                self.homed = True
+                self._go("select")
+            return a
+
         if self.phase == "select":
+            if self.part is not None and not self.homed:
+                self._go("home")
+                return self.track(self.pad_point(), R)[0]
+            self.homed = False
             self.part = self._next_part()
             self.gripper = OPEN
             if self.part is None:
@@ -333,6 +354,15 @@ class SortExpert:
                 if self.t_phase > 12:
                     self._go("select")
                 return a
+
+        if self.phase == "return":
+            above = self.env.bin_floor + [0, 0, BIN_WALL_H + 0.10]
+            a, ep, _ = self.track(np.r_[above[:2], max(above[2], self.pad_point()[2])], R)
+            if ep < 0.03 or self.t_phase > 150:
+                self.gripper = OPEN
+                if self.t_phase > 160 or ep < 0.03:
+                    self._go("select")
+            return a
 
         # bolt
         pos, Rp = env.part_pose(i)
@@ -402,9 +432,28 @@ class SortExpert:
             self.ok_steps = self.ok_steps + 1 if good else 0
             timed_out = self.t_phase > 200 and lat < 0.0015 and h < 0.01
             if self.ok_steps >= 3 or timed_out:
-                self._go("let_go")
+                self._go("enter")
             elif self.t_phase > 300:
                 return self._fail_grasp()
+            return a
+        if self.phase == "enter":
+            # aligned within 0.7 mm: lower the tip 8 mm into the hole, then let go. Dropping it
+            # from the hover height failed: the fingers open over ~10 steps, push the bolt
+            # sideways and it topples onto the table.
+            if not self._held(i):
+                return self._fail_grasp()
+            top = self.hole_est[2]
+            depth = env.hole_top[2] - tip[2]
+            tip_goal = np.r_[self.hole_est[:2], max(top - 0.010, tip[2] - 0.002)]
+            pad_goal = self.pad_point() + (tip_goal - tip) + np.r_[self.i_err, 0.0]
+            a, _, _ = self.track(pad_goal, self.R_insert, gain=0.3)
+            if np.linalg.norm(env.f_ext_hat()[:3]) > 20.0 and depth < 0.006:
+                self.ok_steps = 0
+                self._go("hover")  # caught the chamfer: back to hovering and re-align
+            elif depth > 0.008:
+                self._go("let_go")
+            elif self.t_phase > 80:
+                self._go("let_go")
             return a
         if self.phase == "let_go":
             self.gripper = OPEN
@@ -433,9 +482,14 @@ class SortExpert:
         self.attempts[i] += 1
         if self.attempts[i] >= 3:
             self.skipped.add(i)
+        _, R = self.grip_pose()
+        if self._held(i) and self.phase in ("rotate", "to_hole", "hover", "enter"):
+            # still holding it (a timeout, not a drop): put it back in the tray instead of
+            # opening the hand over the fixture, where it fell onto the table and was lost
+            self._go("return")
+            return self.track(self.pad_point() + [0, 0, 0.02], R)[0]
         self.gripper = OPEN
         self._go("regrasp_up")
         self.phase = "select"
-        _, R = self.grip_pose()
         a, _, _ = self.track(self.pad_point() + [0, 0, 0.02], R)
         return a
