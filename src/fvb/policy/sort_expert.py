@@ -69,11 +69,48 @@ def _horizontal(v: np.ndarray) -> np.ndarray:
     return h / n if n > 1e-6 else np.array([1.0, 0.0, 0.0])
 
 
+def ik_margin(env, pad_target, R_target, pad_offset, iters: int = 60) -> tuple[float, float]:
+    """Damped-least-squares IK for the arm on a scratch copy of the state.
+
+    Returns (pose error, smallest distance of any arm joint to its limit, rad). Used to choose
+    grasps whose later insertion pose the arm reaches without pinning a joint.
+    """
+    import mujoco
+
+    m = env.sim.model._model
+    d = mujoco.MjData(m)
+    d.qpos[:] = env.sim.data._data.qpos
+    r = env.robots[0]
+    qi, vi = np.array(r._ref_joint_pos_indexes), np.array(r._ref_joint_vel_indexes)
+    lo, hi = m.jnt_range[[m.dof_jntid[v] for v in vi]].T
+    sid = env.grip_site
+    jp, jr = np.zeros((3, m.nv)), np.zeros((3, m.nv))
+    err = np.inf
+    for _ in range(iters):
+        mujoco.mj_kinematics(m, d)
+        mujoco.mj_comPos(m, d)
+        p = d.site_xpos[sid]
+        R = d.site_xmat[sid].reshape(3, 3)
+        e = np.r_[
+            pad_target - (p + R @ pad_offset), Rotation.from_matrix(R_target @ R.T).as_rotvec()
+        ]
+        err = float(np.linalg.norm(e[:3]) + 0.1 * np.linalg.norm(e[3:]))
+        if err < 1e-3:
+            break
+        mujoco.mj_jacSite(m, d, jp, jr, sid)
+        J = np.vstack([jp, jr])[:, vi]
+        dq = J.T @ np.linalg.solve(J @ J.T + 1e-3 * np.eye(6), e)
+        d.qpos[qi] = np.clip(d.qpos[qi] + 0.5 * dq, lo, hi)
+    q = d.qpos[qi]
+    return err, float(np.min(np.minimum(q - lo, hi - q)))
+
+
 class SortExpert:
     """Call ``reset(env)`` after ``env.reset()``, then ``act()`` every control step."""
 
-    def __init__(self, noise: ExpertNoise = NO_NOISE, seed: int = 0) -> None:
+    def __init__(self, noise: ExpertNoise = NO_NOISE, seed: int = 0, use_ik: bool = True) -> None:
         self.noise = noise
+        self.use_ik = use_ik
         self.rng = np.random.default_rng(seed)
 
     # -- env access ----------------------------------------
@@ -209,26 +246,57 @@ class SortExpert:
             # by the hex head (pads on two flats): with the hand horizontal over the hole the
             # palm spans +-32 mm around the grasp point, so a shank grasp put it on the fixture
             point = pos + axis * (0.005 + self.grasp_noise[i]) + [0, 0, 0.004]
-            c0 = self._yaw_sign(np.cross([0, 0, 1.0], u), R_now)
-            for deg in (0, 25, -25, 50, -50):
-                rot = Rotation.from_rotvec(u * math.radians(deg)).as_matrix()
-                c = rot @ c0
-                cands.append((point, frame(c, rot @ DOWN)))
+            c0 = np.cross([0, 0, 1.0], u)
+            for sign in (1, -1):
+                for deg in (0, 25, -25, 50, -50):
+                    rot = Rotation.from_rotvec(u * math.radians(deg)).as_matrix()
+                    cands.append((point, frame(rot @ (sign * c0), rot @ DOWN)))
         else:
             point = pos + [0, 0, 0.004]
             if abs(axis[2]) > 0.7:  # lying flat: across two flats (flats at 30 + 60k deg)
                 dirs = [
                     Rp @ [math.cos(t), math.sin(t), 0] for t in np.deg2rad(30 + 60 * np.arange(3))
                 ]
-                dirs.sort(key=lambda c: -abs(_horizontal(c) @ R_now[:, 0]))  # least yaw first
             else:  # on its edge: pads on the two faces
                 dirs = [axis]
             for c in dirs:
-                cands.append((point, frame(self._yaw_sign(_horizontal(c), R_now), DOWN)))
+                for sign in (1, -1):
+                    cands.append((point, frame(sign * _horizontal(c), DOWN)))
         # never drive the fingertips into the tray floor
         min_z = env.bin_floor[2] + FLOOR_T + FINGER_BELOW_PAD + 0.002
         cands = [(np.r_[p[:2], max(p[2], min_z)], R) for p, R in cands]
-        scored = [(self._clearance(p, R, aperture), p, R) for p, R in cands]
+        if not self.use_ik:
+            return self._grasp_plan_heuristic(cands, aperture, R_now, kind)
+        # choose by reachability: the arm's joint margin at the grasp pose and, for bolts, at
+        # the head-up insertion pose this grasp leads to (the grasp sign fixes palm up / down).
+        # Walls first: a candidate must clear the tray walls by 10 mm if any can.
+        # IK is a feasibility filter (joint margin > 0.15 rad), not an objective: maximising the
+        # margin picked 50 deg tilted grasps. Among feasible candidates take the least hand
+        # rotation from now, tilt penalised.
+        scored = []
+        for p, R in cands:
+            clear = self._clearance(p, R, aperture)
+            err, margin = ik_margin(env, p, R, self.pad_offset)
+            reach = margin - 10.0 * err
+            if kind == "bolt":
+                u_hand = R.T @ axis
+                u_hand[2] = 0.0
+                if np.linalg.norm(u_hand) > 1e-6:
+                    reach = min(reach, self._best_insert(u_hand / np.linalg.norm(u_hand))[0])
+            turn = np.linalg.norm(Rotation.from_matrix(R @ R_now.T).as_rotvec())
+            tilt = math.acos(np.clip(-R[2, 2], -1, 1))
+            scored.append((clear > 0.010, reach > 0.15, -(turn + 2.0 * tilt), reach, p, R))
+        _, _, _, _, p, R = max(scored, key=lambda t: t[:4])
+        return p, R
+
+    def _grasp_plan_heuristic(self, cands, aperture, R_now, kind):
+        """Pre-IK rule: least yaw (joint-7 aware), first candidate clearing the walls."""
+        out = []
+        for p, R in cands:
+            c = self._yaw_sign(R[:, 0], R_now)
+            if c @ R[:, 0] > 0:
+                out.append((p, R))
+        scored = [(self._clearance(p, R, aperture), p, R) for p, R in out]
         for clear, p, R in scored:
             if clear > 0.010:
                 return p, R
@@ -247,6 +315,33 @@ class SortExpert:
             q_new = abs(q7 - d)
             if q_new < best_q:
                 best, best_q = cc, q_new
+        return best
+
+    def _insert_candidates(self, u_hand: np.ndarray) -> list[np.ndarray]:
+        env = self.env
+        base = env.sim.data._data.xpos[env.sim.model._model.body("robot0_base").id]
+        to_hole = self.hole_est[:2] - base[:2]
+        t0 = math.atan2(to_hole[1], to_hole[0])
+        H = np.column_stack([u_hand, [0, 0, 1.0], np.cross(u_hand, [0, 0, 1.0])])
+        out = []
+        for deg in (0, 30, -30, 60, -60):
+            t = t0 + math.radians(deg)
+            approach = np.array([math.cos(t), math.sin(t), 0.0])
+            W = np.column_stack([[0, 0, 1.0], approach, np.cross([0, 0, 1.0], approach)])
+            U, _, Vt = np.linalg.svd(W @ np.linalg.inv(H))
+            out.append(U @ Vt)
+        return out
+
+    def _best_insert(self, u_hand: np.ndarray) -> tuple[float, np.ndarray]:
+        """(score, R_insert): the insertion hand pose the arm reaches with the most joint margin
+        (score = joint margin, minus 10 per metre of IK pose error)."""
+        hover_pad = self.hole_est + [0, 0, 0.004 + DEFAULT_BOLT.length + 0.005]
+        best = (-np.inf, None)
+        for Rc in self._insert_candidates(u_hand):
+            err, margin = ik_margin(self.env, hover_pad, Rc, self.pad_offset)
+            score = margin - 10.0 * err
+            if score > best[0]:
+                best = (score, Rc)
         return best
 
     def _held(self, i: int) -> bool:
@@ -306,15 +401,15 @@ class SortExpert:
         kind = env.parts[i].kind
         if self.phase == "above":
             self.gripper = -PREGRASP_LEVEL[kind]
-            target, Rg = self._grasp_plan(i)
+            if self.t_phase == 1 or self.t_phase % 20 == 0:  # the part may still settle
+                self.plan = self._grasp_plan(i)
+            target, Rg = self.plan
             a, ep, er = self.track(np.r_[target[:2], max(safe_z, self.pad_point()[2])], Rg)
             if ep < 0.01 and er < 0.05 or self.t_phase > 120:
                 self._go("descend")
             return a
         if self.phase == "descend":
-            if self.t_phase == 1:
-                self.plan = self._grasp_plan(i)
-            target, Rg = self.plan
+            target, Rg = self.plan  # the plan from "above": never switch grasps mid-descent
             a, ep, er = self.track(target, Rg, gain=0.7)
             # moderate speed down into the tray, the last 3 cm slowly (~2 cm/s): steel on steel
             # at 0.2 m/s is > 80 N before the touch check can react
@@ -375,8 +470,17 @@ class SortExpert:
             u_hand = R.T @ u_world
             H = np.column_stack([u_hand, [0, 0, 1.0], np.cross(u_hand, [0, 0, 1.0])])
             best = None
-            for deg in (0, 45, -45):  # +-90 put the elbow over bucket A
-                t = math.radians(deg)
+            base = (
+                env.robots[0].base_pos
+                if hasattr(env.robots[0], "base_pos")
+                else np.array(env.sim.data._data.xpos[env.sim.model._model.body("robot0_base").id])
+            )
+            to_hole = self.hole_est[:2] - base[:2]
+            t0 = math.atan2(to_hole[1], to_hole[0])
+            # approach directions around the base -> hole line (a fixed +x frame let it pick a
+            # hand pointing away from the hole, which the arm reached only with joint 6 pinned)
+            for deg in (0, 30, -30):
+                t = t0 + math.radians(deg)
                 approach = np.array([math.cos(t), math.sin(t), 0.0])
                 W = np.column_stack([[0, 0, 1.0], approach, np.cross([0, 0, 1.0], approach)])
                 U, _, Vt = np.linalg.svd(W @ np.linalg.inv(H))  # re-orthonormalise
@@ -385,14 +489,22 @@ class SortExpert:
                 if best is None or ang < best[0]:
                     best = (ang, Rc)
             self.R_insert = best[1]
+            if self.use_ik:
+                u_h = u_hand.copy()
+                u_h[2] = 0.0
+                self.R_insert = self._best_insert(u_h / np.linalg.norm(u_h))[1]
             self.i_err = np.zeros(2)
+            # turn while moving to a fixed point between the tray and the hole: a rotation that
+            # only tracked "the pad, wherever it is" let the hand drift ~20 cm outwards
+            mid = 0.5 * (self.env.bin_floor[:2] + self.hole_est[:2])
+            self.rot_anchor = np.r_[mid, safe_z + 0.05]
             self._go("rotate")
         if self.phase == "rotate":
             # slerp the target so the OSC is never asked for a huge rotation at once
             rel = Rotation.from_matrix(self.R_insert @ R.T).as_rotvec()
             ang = np.linalg.norm(rel)
             step = Rotation.from_rotvec(rel * min(1.0, 0.3 / max(ang, 1e-9))).as_matrix() @ R
-            a, _, _ = self.track(np.r_[self.pad_point()[:2], safe_z + 0.02], step)
+            a, _, _ = self.track(self.rot_anchor, step)
             if not self._held(i):
                 return self._fail_grasp()
             if ang < 0.05 or self.t_phase > 150:
