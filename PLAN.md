@@ -369,3 +369,42 @@ summary, and what was tried, kept and reverted.
 2.5 → floor 1.0) makes 5/10 F/T seeds reliable and 0/10 without F/T (62.2 % vs 14.8 %,
 p = 0.0014). R5 solved: ACT-lite's force blindness on the arm was dropout; with dropout 0 it
 scores 50/50. Details in FINDINGS "Stage 1.5" and the journal.
+
+## 13. Stage 2 — bolt/nut sorting with a force-aware VLA (started 2026-09-29)
+
+Full visual plan: `docs/plans/vla_bolt_nut_sorting_plan.html`. Summary:
+
+**Task.** A Panda with a Franka Hand sorts parts from a bin: ISO 4017 M16×50 hex bolts go into a
+Ø 17 mm clearance hole (ISO 273 fine, 0.5 mm radial clearance, 1 mm chamfer) and vanish 1 s after
+being seated and released; ISO 4032 M16 nuts go into bucket A. Start with 3 bolts + 3 nuts.
+
+**Robot and sensors.** Real-Panda-like: 7 joint-torque sensors (link-side τ_J from
+`jointactuatorfrc` + passive, τ_ext = τ_J − `mj_inverse` model torque, F̂_ext = J^-T τ_ext, 1 kHz,
+noise + bias); Franka Hand force limit raised from robosuite's 20 N to 70 N; each finger pad
+replaced by a 4×4 taxel grid (separate geoms, one `touch` sensor each) plus a pad `force` sensor
+for shear; cameras `agentview` + `robot0_eye_in_hand` at 256², EGL rendering.
+
+**Decisions (2026-09-29).** Scripted stand-in demos first (privileged expert + human-like noise,
+labelled synthetic); SmolVLA fine-tuned locally on the RTX 3080; few parts first; LeRobot in a
+separate `Dockerfile.vla` (LeRobot needs Python ≥ 3.12 / numpy ≥ 2, robosuite 1.5.2 needs numpy
+< 2, so the sim and the policy talk over TCP via `multiprocessing.connection`).
+
+**Phase 2 (TA-VLA, arXiv 2509.07962).** Torque history (10 frames over 2 s; τ_ext 7 + tactile
+summary 8) flattened into one token through an MLP and prepended to SmolVLA's action-expert
+*suffix* (SmolVLA keeps state in the VLM prefix, so this is a subclass); joint loss
+L = L_action + 0.1·L_torque. Also: ACT + force token (dropout 0 on that path, R5) and TD3 skills
+(pick, insert with unknown in-hand offset) with torque/tactile observations.
+
+| id | deliverable | gate |
+|---|---|---|
+| V0 | VLA image, policy server round trip, SmolVLA memory probe | fine-tune step fits 10 GB; round trip < 200 ms |
+| V1 | M16 bolt/nut generators, fixture, bin, bucket | ISO dims ±0.1 mm, mass ±5 %, stable drops, no penetration > 0.5 mm |
+| V2 | Franka Hand force, taxel pads, joint-torque sensor | τ_ext ≈ Jᵀmg ±2 %; taxel sum ≈ applied force ±5 %; CoP follows contact |
+| V3 | SortBoltsNuts env (spawn, success, vanish, cameras, language, reward) | seat→vanish after 1 s; tilted/jammed/gripped bolt not seated; nut in bucket counts |
+| V4 | scripted expert + human-like noise, 200 synthetic demos (with torque + tactile) | expert ≥ 90 % episodes; dataset validates |
+| V5 | ACT behaviour cloning baseline | success on 50 unseen seeds (reference) |
+| V6 | TD3 skills (pick, insert) with TD3+BC, scripted sequencer | skill success, 10 seeds each |
+| V7 | SmolVLA fine-tune via the policy server | success vs ACT on 50 unseen seeds; latency |
+| V8 | force features + seated / grasp-stable labels | offline detectors > 95 % on held-out episodes |
+| V9 | ACT + force token, TD3 + F/T obs, TA-SmolVLA | each vs its no-force twin, same seeds |
+| V10 | evaluation matrix, report, README | all cells with 95 % intervals; FINDINGS |

@@ -24,7 +24,7 @@ __STYLE__
   <div class="eyebrow" id="stamp"></div>
   <h1>Peg-in-Hole Progress</h1>
   <p class="lede">An hourly status page for the force-aware peg-insertion work: the goal, where things stand, what changed since the previous summary, and a running log of what was tried, what worked, and what was reverted.</p>
-  <div class="goal"><b>Current goal (PLAN §12, G5):</b> make reinforcement learning reliable on the Panda hidden-hole insertion so the with-vs-without force/torque comparison is a result, not a seed lottery. <b>Bar:</b> with F/T, at least 4 of 5 TD3 seeds reach ≥ 80 % on 50 unseen holes within 150k steps; the no-F/T condition is run with the identical recipe. <b>Baseline:</b> 1 of 5 seeds (49/50; the others 0–9/50).</div>
+  <div class="goal"><b>Current goal (PLAN §13, Stage 2):</b> a Panda with joint-torque sensing and fingertip tactile pads sorts realistic M16 bolts and nuts (bolts into a 17 mm hole, nuts into bucket A). Phase 1: TD3 skills, behaviour cloning and a SmolVLA fine-tune without force. Phase 2: the same three with torque and tactile, including a TA-VLA-style torque token, for better grasps and insertion detection. <b>Plan:</b> <code>docs/plans/vla_bolt_nut_sorting_plan.html</code>. <b>Previous goal G5</b> (reliable TD3 on the peg task) closed as not met; see the log.</div>
   <div class="facts" id="facts"></div>
 </header>
 
@@ -37,7 +37,7 @@ __STYLE__
 </nav>
 
 <section id="where">
-  <div class="eyebrow">PLAN §12 experiment queue</div>
+  <div class="eyebrow">PLAN §13 milestones V0–V10</div>
   <h2>Where we are</h2>
   <div class="table-wrap"><table id="ms"></table></div>
 </section>

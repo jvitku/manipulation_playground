@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bolt &amp; Nut Sorting VLA Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --font-display: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
+    --font-body: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+    --bg: #eef3f8;
+    --grid: rgba(30, 58, 95, 0.07);
+    --surface: #ffffff;
+    --surface2: #f6f9fc;
+    --surface-elevated: #ffffff;
+    --border: rgba(30, 58, 95, 0.12);
+    --border-bright: rgba(30, 58, 95, 0.24);
+    --text: #14243a;
+    --text-dim: #5b6b80;
+
+    --accent: #1e3a5f;          /* blueprint navy */
+    --accent-dim: rgba(30, 58, 95, 0.07);
+    --gold: #b8871f;
+    --gold-dim: rgba(184, 135, 31, 0.10);
+    --sage: #3f7d4e;
+    --sage-dim: rgba(63, 125, 78, 0.10);
+    --rose: #b23a48;
+    --rose-dim: rgba(178, 58, 72, 0.09);
+    --amber: #c26a0e;
+    --amber-dim: rgba(194, 106, 14, 0.10);
+    --steel: #4a6fa5;
+    --steel-dim: rgba(74, 111, 165, 0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c1522;
+      --grid: rgba(140, 180, 230, 0.06);
+      --surface: #122033;
+      --surface2: #0f1b2b;
+      --surface-elevated: #16273d;
+      --border: rgba(160, 190, 230, 0.12);
+      --border-bright: rgba(160, 190, 230, 0.24);
+      --text: #dfe8f4;
+      --text-dim: #8fa3bd;
+
+      --accent: #8fb4e3;
+      --accent-dim: rgba(143, 180, 227, 0.10);
+      --gold: #e2b75a;
+      --gold-dim: rgba(226, 183, 90, 0.12);
+      --sage: #7fc28f;
+      --sage-dim: rgba(127, 194, 143, 0.12);
+      --rose: #e8828d;
+      --rose-dim: rgba(232, 130, 141, 0.12);
+      --amber: #f0a551;
+      --amber-dim: rgba(240, 165, 81, 0.12);
+      --steel: #9bbbe8;
+      --steel-dim: rgba(155, 187, 232, 0.12);
+    }
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background-color: var(--bg);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 28px 28px;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.6;
+    padding: 40px;
+    overflow-wrap: break-word;
+  }
+  a { color: var(--accent); }
+  code {
+    font-family: var(--font-mono); font-size: 0.84em;
+    background: var(--accent-dim); color: var(--accent);
+    padding: 1px 5px; border-radius: 3px;
+  }
+
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .animate { animation: fadeUp 0.45s ease-out both; animation-delay: calc(var(--i, 0) * 0.05s); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; transition-duration: 0.01ms !important; }
+    html { scroll-behavior: auto; }
+  }
+
+  /* ---------- layout + nav ---------- */
+  .wrap { max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: 190px 1fr; gap: 0 44px; }
+  .main { min-width: 0; }
+  .toc { position: sticky; top: 24px; align-self: start; padding: 14px 0; grid-row: 1 / -1; max-height: calc(100dvh - 48px); overflow-y: auto; }
+  .toc-title { font-family: var(--font-mono); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 2px; color: var(--text-dim); padding-bottom: 10px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .toc a { display: block; font-size: 11.5px; color: var(--text-dim); text-decoration: none; padding: 4px 8px; border-radius: 5px; border-left: 2px solid transparent; transition: all 0.15s; line-height: 1.4; margin-bottom: 1px; }
+  .toc a:hover { color: var(--text); background: var(--surface2); }
+  .toc a.active { color: var(--text); border-left-color: var(--gold); }
+  @media (max-width: 1000px) {
+    .wrap { grid-template-columns: 1fr; }
+    .toc { position: sticky; top: 0; z-index: 200; max-height: none; display: flex; gap: 4px; overflow-x: auto; background: var(--bg); border-bottom: 1px solid var(--border); padding: 10px 40px; margin: 0 -40px; grid-row: auto; }
+    .toc::-webkit-scrollbar { display: none; }
+    .toc-title { display: none; }
+    .toc a { white-space: nowrap; flex-shrink: 0; border-left: none; border-bottom: 2px solid transparent; border-radius: 4px 4px 0 0; padding: 6px 10px; font-size: 10.5px; }
+    .toc a.active { border-bottom-color: var(--gold); background: var(--surface); }
+    .sec-head { scroll-margin-top: 56px; }
+  }
+  @media (max-width: 700px) {
+    body { padding: 18px; }
+    .toc { margin: 0 -18px; padding: 10px 18px; }
+  }
+
+  /* ---------- header ---------- */
+  .kicker { font-family: var(--font-mono); font-size: 11px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--gold); display: inline-flex; gap: 10px; align-items: center; }
+  .kicker::before { content: ''; width: 26px; height: 1px; background: var(--gold); }
+  h1 { font-family: var(--font-display); font-style: italic; font-weight: 400; font-size: clamp(40px, 6vw, 64px); line-height: 1.02; letter-spacing: -0.5px; margin: 14px 0 12px; text-wrap: balance; }
+  .lede { font-size: 17px; color: var(--text-dim); max-width: 70ch; }
+  .hero {
+    margin-top: 26px; padding: 22px 24px; border-radius: 12px;
+    background: color-mix(in srgb, var(--surface) 90%, var(--accent) 10%);
+    border: 1px solid color-mix(in srgb, var(--border) 40%, var(--accent) 60%);
+    box-shadow: 0 6px 24px rgba(20, 36, 58, 0.08);
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 18px;
+  }
+  .hero > * { min-width: 0; }
+  .hero b { display: block; font-family: var(--font-display); font-size: 30px; font-weight: 400; line-height: 1.1; }
+  .hero span { font-size: 12.5px; color: var(--text-dim); }
+
+  /* ---------- sections ---------- */
+  .sec-head { margin: 64px 0 18px; display: flex; align-items: baseline; gap: 14px; scroll-margin-top: 24px; }
+  .sec-num { font-family: var(--font-mono); font-size: 12px; color: var(--gold); border: 1px solid var(--gold); border-radius: 4px; padding: 2px 7px; }
+  .sec-head h2 { font-family: var(--font-display); font-weight: 400; font-size: 34px; line-height: 1.1; }
+  .sec-intro { color: var(--text-dim); max-width: 78ch; margin: -4px 0 18px; }
+  h3 { font-family: var(--font-body); font-size: 15px; font-weight: 600; margin: 26px 0 10px; }
+
+  .ve-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; position: relative; min-width: 0; }
+  .ve-card--elevated { background: var(--surface-elevated); box-shadow: 0 3px 12px rgba(20, 36, 58, 0.08); }
+  .ve-card--recessed { background: color-mix(in srgb, var(--bg) 65%, var(--surface) 35%); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06); }
+  .ve-card__label { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; color: var(--accent); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .ve-card__label::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .ve-card p { font-size: 13.5px; color: var(--text-dim); margin-bottom: 8px; }
+  .ve-card p:last-child { margin-bottom: 0; }
+  .ve-card ul { list-style: none; font-size: 13.5px; }
+  .ve-card li { padding-left: 16px; position: relative; margin: 5px 0; }
+  .ve-card li::before { content: '›'; position: absolute; left: 2px; color: var(--gold); font-weight: 600; }
+  .lbl-gold { color: var(--gold); } .lbl-sage { color: var(--sage); } .lbl-rose { color: var(--rose); } .lbl-steel { color: var(--steel); } .lbl-amber { color: var(--amber); }
+
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+  .grid2 > *, .grid3 > * { min-width: 0; }
+
+  /* ---------- before / after ---------- */
+  .diff-panels { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 3px 12px rgba(20, 36, 58, 0.07); }
+  .diff-panels > * { min-width: 0; }
+  .diff-h { font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; padding: 10px 18px; }
+  .diff-h--before { background: var(--rose-dim); color: var(--rose); border-bottom: 2px solid var(--rose); }
+  .diff-h--after { background: var(--sage-dim); color: var(--sage); border-bottom: 2px solid var(--sage); }
+  .diff-b { background: var(--surface); padding: 16px 18px; }
+  .diff-b + .diff-b { border-left: 1px solid var(--border); }
+  .steps { list-style: none; counter-reset: s; }
+  .steps li { counter-increment: s; position: relative; padding: 0 0 12px 34px; font-size: 13.5px; }
+  .steps li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%; font-family: var(--font-mono); font-size: 11px; display: grid; place-items: center; border: 1px solid currentColor; }
+  .diff-b--before .steps li::before { color: var(--rose); }
+  .diff-b--after .steps li::before { color: var(--sage); }
+  .steps li:not(:last-child)::after { content: ''; position: absolute; left: 11px; top: 24px; bottom: 2px; width: 1px; background: var(--border-bright); }
+  @media (max-width: 800px) { .diff-panels { grid-template-columns: 1fr; } .diff-b + .diff-b { border-left: none; border-top: 1px solid var(--border); } }
+
+  /* ---------- tables ---------- */
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .table-scroll { overflow-x: auto; max-height: 640px; overflow-y: auto; }
+  .data-table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.5; }
+  .data-table thead { position: sticky; top: 0; z-index: 2; }
+  .data-table th { background: var(--surface2); font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); text-align: left; padding: 11px 14px; border-bottom: 2px solid var(--border-bright); white-space: nowrap; }
+  .data-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .data-table tbody tr:nth-child(even) { background: var(--accent-dim); }
+  .data-table tbody tr:hover { background: var(--gold-dim); }
+  .data-table tbody tr:last-child td { border-bottom: none; }
+  .data-table td.num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .data-table small { display: block; color: var(--text-dim); font-size: 11.5px; margin-top: 2px; }
+  .data-table .wide { min-width: 260px; }
+  .tag { display: inline-block; font-family: var(--font-mono); font-size: 10.5px; padding: 2px 8px; border-radius: 5px; white-space: nowrap; }
+  .tag--p1 { background: var(--steel-dim); color: var(--steel); }
+  .tag--p2 { background: var(--gold-dim); color: var(--gold); }
+  .tag--ok { background: var(--sage-dim); color: var(--sage); }
+  .tag--warn { background: var(--amber-dim); color: var(--amber); }
+  .tag--risk { background: var(--rose-dim); color: var(--rose); }
+
+  /* ---------- code ---------- */
+  .code-file { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; margin-top: 8px; }
+  .code-file__header { padding: 8px 14px; background: var(--surface2); border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim); }
+  .code-file__body { font-family: var(--font-mono); font-size: 12.3px; line-height: 1.55; padding: 14px 16px; background: color-mix(in srgb, var(--surface) 88%, var(--accent) 12%); white-space: pre-wrap; word-break: break-word; max-height: 460px; overflow: auto; }
+  .c-com { color: var(--text-dim); font-style: italic; }
+  .c-key { color: var(--steel); font-weight: 500; }
+  .c-new { color: var(--gold); font-weight: 600; }
+
+  /* ---------- mermaid ---------- */
+  .mermaid-wrap { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 34px 20px 22px; overflow: auto; box-shadow: 0 3px 12px rgba(20, 36, 58, 0.07); }
+  .mermaid-wrap .mermaid { display: flex; justify-content: center; transition: transform 0.2s ease; transform-origin: top center; }
+  .zoom-controls { position: absolute; top: 8px; right: 8px; display: flex; gap: 2px; z-index: 10; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
+  .zoom-controls button { width: 28px; height: 28px; border: none; background: transparent; color: var(--text-dim); font-family: var(--font-mono); font-size: 14px; cursor: pointer; border-radius: 4px; }
+  .zoom-controls button:hover { background: var(--border); color: var(--text); }
+  .mermaid-wrap.is-zoomed { cursor: grab; }
+  .mermaid-wrap.is-panning { cursor: grabbing; user-select: none; }
+  .mermaid .nodeLabel { font-family: var(--font-body) !important; font-size: 15px !important; color: var(--text) !important; }
+  .mermaid .edgeLabel { font-family: var(--font-mono) !important; font-size: 12px !important; color: var(--text-dim) !important; }
+  .mermaid .cluster-label .nodeLabel { font-family: var(--font-mono) !important; font-size: 12px !important; text-transform: uppercase; letter-spacing: 1px; }
+  .caption { font-size: 12.5px; color: var(--text-dim); margin-top: 10px; max-width: 90ch; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 10px; }
+  .legend-item { display: flex; gap: 6px; align-items: center; font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 3px; border: 1.5px solid; }
+
+  /* ---------- callouts ---------- */
+  .callout { padding: 14px 18px; border-radius: 0 9px 9px 0; border-left: 4px solid var(--cb); background: var(--cbg); margin: 12px 0; font-size: 13.5px; }
+  .callout strong { color: var(--cb); }
+  .callout--gold { --cb: var(--gold); --cbg: var(--gold-dim); }
+  .callout--rose { --cb: var(--rose); --cbg: var(--rose-dim); }
+  .callout--amber { --cb: var(--amber); --cbg: var(--amber-dim); }
+  .callout--sage { --cb: var(--sage); --cbg: var(--sage-dim); }
+  .callout ul { margin: 6px 0 0 1.3em; }
+  .callout li { margin: 3px 0; }
+
+  details.collapsible { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-top: 10px; background: var(--surface); }
+  details.collapsible summary { padding: 12px 18px; font-family: var(--font-mono); font-size: 12px; font-weight: 600; cursor: pointer; list-style: none; display: flex; gap: 8px; align-items: center; }
+  details.collapsible summary::-webkit-details-marker { display: none; }
+  details.collapsible summary::before { content: '▸'; color: var(--text-dim); transition: transform 0.15s; }
+  details.collapsible[open] summary::before { transform: rotate(90deg); }
+  details.collapsible .collapsible__body { border-top: 1px solid var(--border); }
+
+  .spec { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; }
+  .spec dt { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim); }
+  .spec dd { min-width: 0; }
+  footer { margin: 70px 0 20px; font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav class="toc" id="toc">
+  <div class="toc-title">Plan</div>
+  <a href="#s1">1. Decisions</a>
+  <a href="#s2">2. Problem</a>
+  <a href="#s3">3. Robot &amp; sensors</a>
+  <a href="#s4">4. Parts &amp; scene</a>
+  <a href="#s5">5. Task state machine</a>
+  <a href="#s6">6. System architecture</a>
+  <a href="#s7">7. Learners</a>
+  <a href="#s8">8. State variables</a>
+  <a href="#s9">9. Key modules</a>
+  <a href="#s10">10. Commands / API</a>
+  <a href="#s11">11. Milestones</a>
+  <a href="#s12">12. Evaluation</a>
+  <a href="#s13">13. Edge cases</a>
+  <a href="#s14">14. Tests</a>
+  <a href="#s15">15. Files</a>
+  <a href="#s16">16. Notes &amp; risks</a>
+</nav>
+
+<div class="main">
+
+<header class="animate" style="--i:0">
+  <div class="kicker">Implementation Spec · PLAN §13 · manipulation_playground</div>
+  <h1>Sorting bolts and nuts with a force-aware VLA</h1>
+  <p class="lede">A Panda with a Franka Hand picks realistic M16 bolts and nuts out of a bin, drops the bolts into a clearance hole and the nuts into bucket A. The robot senses torque at all seven joints and has simple tactile pads on its fingertips. Phase 1 builds the task and trains TD3, behaviour cloning and a fine-tuned SmolVLA without force. Phase 2 adds joint-torque and tactile sensing to all three, with a TA-VLA-style torque token for the VLA, aimed at better grasps and reliable insertion detection.</p>
+  <div class="hero">
+    <div><b>M16 · ISO</b><span>ISO 4017 bolts, ISO 4032 nuts, 17 mm clearance hole (ISO 273 fine)</span></div>
+    <div><b>7 + 32</b><span>joint torque channels + tactile taxels (2 pads × 4 × 4)</span></div>
+    <div><b>3 learners</b><span>TD3 (skills), behaviour cloning (ACT), SmolVLA fine-tune</span></div>
+    <div><b>11 milestones</b><span>V0–V10, each gated by tests and a measured bar</span></div>
+  </div>
+</header>
+
+<!-- 1 DECISIONS -->
+<div class="sec-head" id="s1"><span class="sec-num">01</span><h2>Decisions already made</h2></div>
+<p class="sec-intro">Answered on 2026-09-29. They fix the order of work and what "done" means in phase 1.</p>
+<div class="grid2">
+  <div class="ve-card ve-card--elevated"><div class="ve-card__label lbl-gold">Demonstrations</div><p><b>Scripted stand-in first.</b> A privileged scripted expert with a human-like noise model generates the demos, labelled <code>source: synthetic</code> in every episode. A human teleop recorder can come later; robosuite's keyboard and SpaceMouse drivers need an X display, so they would run on the host, not in the container.</p></div>
+  <div class="ve-card ve-card--elevated"><div class="ve-card__label lbl-gold">VLA model</div><p><b>SmolVLA, fine-tuned locally</b> on the RTX 3080 (10 GB). It has 450M parameters in total and a ~100M flow-matching action expert, predicts 50-step action chunks, and keeps its vision encoder frozen by default. The TA-VLA "smaller variant" means adding a torque token to SmolVLA's action expert.</p></div>
+  <div class="ve-card ve-card--elevated"><div class="ve-card__label lbl-gold">Scene scope</div><p><b>Few parts first:</b> 3 bolts and 3 nuts in the bin, one hole, and bucket A. The geometry, masses and friction are realistic from day one. Growing to a cluttered bucket is a later milestone once the pipeline works.</p></div>
+  <div class="ve-card ve-card--elevated"><div class="ve-card__label lbl-gold">Dependencies</div><p><b>A separate VLA Docker image.</b> LeRobot needs Python ≥ 3.12, torch ≥ 2.7 and numpy ≥ 2. The sim image stays on robosuite 1.5.2, MuJoCo 3.3.0, Python 3.11 and numpy &lt; 2. The two images talk over TCP (see §6).</p></div>
+</div>
+
+<!-- 2 PROBLEM -->
+<div class="sec-head" id="s2"><span class="sec-num">02</span><h2>From one peg to a sorting job</h2></div>
+<p class="sec-intro">What the repo does today, and what it has to do after this phase.</p>
+<div class="diff-panels">
+  <div class="diff-h diff-h--before">Today (Stage 0–1.5)</div>
+  <div class="diff-h diff-h--after">After this phase</div>
+  <div class="diff-b diff-b--before"><ol class="steps">
+    <li>One cylindrical peg is <b>welded</b> to the flange: there is no gripper, no grasping, and no chance of dropping it.</li>
+    <li>The only force sensor is a <b>wrist F/T</b> sensor, which a real Panda does not have out of the box.</li>
+    <li>A single <b>hidden-hole</b> insertion with state-only observations: no cameras and no language.</li>
+    <li>Policies are ACT-lite and MLP behaviour cloning plus TD3(+BC), all on 20-dim state vectors.</li>
+    <li>The demos are 300 privileged scripted episodes in a custom npz format.</li>
+  </ol></div>
+  <div class="diff-b diff-b--after"><ol class="steps">
+    <li>A <b>Franka Hand</b> (80 mm stroke, 70 N continuous) grasps loose M16 bolts and nuts out of a bin and can slip or drop them.</li>
+    <li><b>Seven joint-torque sensors</b>, as on the real Panda (link-side τ<sub>J</sub> and a model-based τ<sub>ext</sub> estimate), plus <b>4 × 4 tactile taxels</b> on each finger pad.</li>
+    <li>A long-horizon <b>sort</b>: bolts go into the hole (each vanishes 1 s after it is seated) and nuts go into bucket A. The policy sees the front and wrist cameras and a language instruction.</li>
+    <li>Three learners on the same data: <b>TD3</b> skills, <b>behaviour cloning</b> (ACT) and a <b>SmolVLA</b> fine-tune. Phase 2 adds force and tactile sensing to all three.</li>
+    <li>Demos are recorded in the <b>LeRobot dataset format</b> (video + parquet) with torque and tactile streams, synthetic now and human-ready later.</li>
+  </ol></div>
+</div>
+
+<!-- 3 ROBOT -->
+<div class="sec-head" id="s3"><span class="sec-num">03</span><h2>Robot and sensor design</h2></div>
+<p class="sec-intro">The design stays as close as possible to what a real Panda with a Franka Hand provides, so the lessons transfer. Anything that differs from robosuite's defaults is listed together with the reason.</p>
+<div class="grid3">
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label lbl-steel">Arm · Franka Panda (robosuite)</div>
+    <dl class="spec">
+      <dt>DoF</dt><dd>7 revolute joints, OSC_POSE controller at 20 Hz</dd>
+      <dt>physics</dt><dd>1 ms step (the converged default from Stage 0 M3)</dd>
+      <dt>action</dt><dd>6-D EE delta plus 1 gripper command = <b>7</b> (the LeRobot convention)</dd>
+      <dt>proprio</dt><dd>q, q̇ (7 + 7), EE pose (7), gripper width (1)</dd>
+    </dl>
+  </div>
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label lbl-steel">Hand · Franka Hand</div>
+    <dl class="spec">
+      <dt>stroke</dt><dd>2 × 40 mm, 80 mm total (robosuite already matches)</dd>
+      <dt>force</dt><dd>raise the finger force limit from robosuite's <b>20 N</b> to the real Hand's <b>70 N continuous</b> (140 N peak)</dd>
+      <dt>pads</dt><dd>replace the single 16 × 8 × 16 mm pad box with a <b>4 × 4 taxel grid</b> of small boxes; rubber-like μ ≈ 1.0</dd>
+    </dl>
+  </div>
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label lbl-gold">Joint torque sensing (new)</div>
+    <dl class="spec">
+      <dt>τ<sub>J</sub></dt><dd>link-side torque per joint: MuJoCo <code>jointactuatorfrc</code> sensor + passive (damping, friction)</dd>
+      <dt>τ<sub>ext</sub></dt><dd>τ<sub>J</sub> − model torque from <code>mj_inverse</code> (like Franka's τ̂<sub>ext</sub>)</dd>
+      <dt>F̂<sub>ext</sub></dt><dd>EE wrench estimate J<sup>−T</sup> τ<sub>ext</sub> (no wrist F/T needed)</dd>
+      <dt>rate / noise</dt><dd>1 kHz, Gaussian noise + bias drift; σ to be set from the Franka spec in V2</dd>
+    </dl>
+  </div>
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label lbl-gold">Tactile pads (new)</div>
+    <dl class="spec">
+      <dt>layout</dt><dd>2 pads × 4 × 4 taxels, 4 mm pitch over the 16 × 16 mm pad face</dd>
+      <dt>sensor</dt><dd>one MuJoCo <code>touch</code> sensor per taxel (normal force); one <code>force</code> sensor per pad (3-D, gives shear)</dd>
+      <dt>derived</dt><dd>total normal force, centre of pressure (x, y), contact area, shear magnitude (a slip cue)</dd>
+      <dt>rate</dt><dd>physics rate, summarised per 50 ms control step (max and mean), the same pattern as Stage 0</dd>
+    </dl>
+  </div>
+  <div class="ve-card">
+    <div class="ve-card__label lbl-steel">Cameras</div>
+    <dl class="spec">
+      <dt>front</dt><dd><code>agentview</code>, 256 × 256 RGB</dd>
+      <dt>wrist</dt><dd><code>robot0_eye_in_hand</code>, 256 × 256 RGB</dd>
+      <dt>VLA</dt><dd>SmolVLA pads images to 512 × 512 internally</dd>
+      <dt>render</dt><dd>EGL on the GPU (<code>dev-gpu</code> service); OSMesa is too slow at 2 × 20 Hz</dd>
+    </dl>
+  </div>
+  <div class="ve-card">
+    <div class="ve-card__label lbl-steel">Language</div>
+    <p>Episode instruction: <i>"sort the parts: bolts into the hole, nuts into bucket A"</i>.</p>
+    <p>Per-part sub-instructions (<i>"put the bolt in the hole"</i>, <i>"put the nut in bucket A"</i>) are also stored, for a later hierarchical variant.</p>
+  </div>
+</div>
+<div class="callout callout--amber"><strong>Why taxels are separate geoms.</strong> MuJoCo produces only a handful of contact points between two boxes, so a <code>touch</code> sensor laid over a single pad would give a blocky, mostly empty map. Making every taxel its own small collision geom, each with its own touch sensor, gives each taxel its own contacts and a true per-taxel force. Coarse, but honest for a "simple tactile sensor".</div>
+
+<!-- 4 PARTS -->
+<div class="sec-head" id="s4"><span class="sec-num">04</span><h2>Parts and scene</h2></div>
+<p class="sec-intro">Dimensions follow ISO tables and masses are computed for steel (ρ = 7850 kg/m³). Threads are not modelled; their effect on friction is folded into μ.</p>
+<div class="table-wrap"><div class="table-scroll"><table class="data-table">
+  <thead><tr><th>Part</th><th>Standard</th><th>Key dimensions</th><th class="num">Mass</th><th>Collision model</th><th class="wide">Notes</th></tr></thead>
+  <tbody>
+    <tr><td><b>Hex bolt M16 × 50</b></td><td>ISO 4017</td><td>shank Ø 16 mm × 50 mm; head across flats s = 24 mm (27.7 mm across corners), height k = 10 mm</td><td class="num">≈ 118 g</td><td>convex hex-prism mesh for the head + cylinder for the shank, 0.5 mm × 45° chamfer at the tip</td><td class="wide">Grasped across the shank or the head (both under 80 mm). Lying flat in the bin, it has to be <b>reoriented shank-down</b> before insertion.</td></tr>
+    <tr><td><b>Hex nut M16</b></td><td>ISO 4032</td><td>s = 24 mm, thickness m = 14.8 mm, bore Ø 16 mm</td><td class="num">≈ 35 g</td><td>6 convex trapezoidal prisms forming a hex ring (the bore is real)</td><td class="wide">Rests flat or on an edge; it can roll. Only its identity and destination matter, so orientation is free.</td></tr>
+    <tr><td><b>Insertion fixture</b></td><td>ISO 273 (fine)</td><td>steel block 100 × 100 × 40 mm with a Ø 17.0 mm through-hole (0.5 mm radial clearance) and a 1 mm × 45° entry chamfer</td><td class="num">fixed</td><td>convex pieces around the bore (as in Stage 1's hole)</td><td class="wide">Same clearance as the Stage 1 peg task, so the insertion lessons carry over. More holes later.</td></tr>
+    <tr><td><b>Source bin</b></td><td>—</td><td>300 × 220 mm floor, 80 mm walls, 5 mm plywood-like</td><td class="num">fixed</td><td>5 boxes</td><td class="wide">3 bolts + 3 nuts, dropped from random poses and settled for 1 s before the episode starts; spawns are rejection-sampled against overlap.</td></tr>
+    <tr><td><b>Bucket A</b></td><td>—</td><td>Ø 200 mm, 120 mm tall</td><td class="num">fixed</td><td>floor + 16 wall segments</td><td class="wide">A nut counts once it rests inside the bucket below the rim with speed under 2 cm/s.</td></tr>
+  </tbody>
+</table></div></div>
+<div class="grid2" style="margin-top:16px">
+  <div class="ve-card"><div class="ve-card__label lbl-sage">Success: a bolt</div><ul>
+    <li>Shank ≥ 25 mm below the fixture's top face, and the axis tilted less than 5° from vertical.</li>
+    <li>No gripper contact (released), held for <b>1.0 s</b>.</li>
+    <li>Then the bolt <b>vanishes</b>: its free joint is moved to a parking pose far below the table with zero velocity. MuJoCo cannot delete bodies at runtime.</li>
+  </ul></div>
+  <div class="ve-card"><div class="ve-card__label lbl-sage">Success: an episode</div><ul>
+    <li>Every part sorted, with bolts vanished and nuts in bucket A, within 180 s of sim time (3,600 control steps).</li>
+    <li>Failure outcomes are logged separately: <i>dropped outside</i>, <i>nut in the hole area</i>, <i>bolt jammed</i>, <i>force abort</i> (|F̂<sub>ext</sub>| &gt; 80 N) and <i>timeout</i>.</li>
+  </ul></div>
+</div>
+
+<!-- 5 STATE MACHINE -->
+<div class="sec-head" id="s5"><span class="sec-num">05</span><h2>Task state machine</h2></div>
+<p class="sec-intro">The scripted expert implements this loop with privileged state. The learned policies have to reproduce it from cameras, proprioception and, in phase 2, torque and tactile. Gold edges are decisions where force and touch should help.</p>
+<div class="mermaid-wrap animate" style="--i:2">
+  <div class="zoom-controls"><button onclick="zoomDiagram(this,1.2)" title="Zoom in">+</button><button onclick="zoomDiagram(this,0.8)" title="Zoom out">&minus;</button><button onclick="resetZoom(this)" title="Reset">&#8634;</button></div>
+  <pre class="mermaid">
+flowchart TD
+  start(["Episode start: 3 bolts + 3 nuts settled in the bin"]) --> select[Select next part]
+  select --> approach[Approach and pre-grasp]
+  approach --> grasp[Close gripper]
+  grasp --> gok{"Grasp OK?"}
+  gok -->|no| regrasp[Open and re-approach]
+  regrasp --> approach
+  gok -->|yes| lift[Lift and identify part]
+  lift --> slip{"Slip?"}
+  slip -->|dropped| select
+  slip -->|held| kind{Bolt or nut?}
+  kind -->|nut| bucket[Carry to bucket A and release]
+  kind -->|bolt| reorient[Reorient shank-down]
+  reorient --> tohole[Carry above the hole]
+  tohole --> insert[Align, descend, spiral search]
+  insert --> jam{"Jam?"}
+  jam -->|yes| retract[Retract 3 mm and shift]
+  retract --> insert
+  jam -->|no| seated{"Seated?"}
+  seated -->|no| insert
+  seated -->|yes| release[Release, wait 1 s, bolt vanishes]
+  bucket --> more{Parts left?}
+  release --> more
+  more -->|yes| select
+  more -->|no| done(["Episode success"])
+  class gok,slip,jam,seated sense
+  classDef sense fill:#b8871f22,stroke:#b8871f,stroke-width:2px
+  </pre>
+</div>
+<p class="caption">Gold decisions and their sensing: <b>Grasp OK?</b> both pads in contact, normal force above 5 N · <b>Slip?</b> pad force lost or CoP drifting · <b>Jam?</b> joint-torque spike with no depth progress · <b>Seated?</b> depth, tilt and torque signature. Phase 2's claims are all about these four decisions. Better <b>grasp</b> means fewer regrasps and drops (tactile force and CoP). Better <b>insertion detection</b> means the seated test is answered from the torque signature and the tactile release rather than from privileged depth. Jam recovery uses joint torque the way Stage 1 used wrist torque.</p>
+
+<!-- 6 ARCHITECTURE -->
+<div class="sec-head" id="s6"><span class="sec-num">06</span><h2>System architecture</h2></div>
+<p class="sec-intro">Two images, because LeRobot and robosuite need incompatible Python and numpy versions. The simulator never imports LeRobot, and the VLA never imports robosuite.</p>
+<div class="mermaid-wrap">
+  <div class="zoom-controls"><button onclick="zoomDiagram(this,1.2)" title="Zoom in">+</button><button onclick="zoomDiagram(this,0.8)" title="Zoom out">&minus;</button><button onclick="resetZoom(this)" title="Reset">&#8634;</button></div>
+  <pre class="mermaid">
+flowchart TD
+  subgraph SIM["sim image: py3.11, numpy below 2, MuJoCo 3.3, robosuite 1.5.2"]
+    env["SortBoltsNuts env"]
+    sens["JointTorqueSensor + TactilePads"]
+    expert["Scripted expert + human-like noise"]
+    rec["Episode recorder: raw npz + mp4"]
+    client["Eval client"]
+    env --- sens
+    expert --> env
+    env --> rec
+    client --> env
+  end
+  subgraph TRAIN["train image: existing, torch 2.5"]
+    td3["TD3 skills: pick, insert"]
+  end
+  subgraph VLA["vla image: py3.12, torch 2.7+, LeRobot"]
+    conv["Converter to LeRobotDataset"]
+    act["ACT behaviour cloning"]
+    smol["SmolVLA fine-tune"]
+    ta["TA-SmolVLA: torque token"]
+    server["Policy server"]
+  end
+  rec --> conv
+  conv --> act
+  conv --> smol
+  conv --> ta
+  act --> server
+  smol --> server
+  ta --> server
+  server <-->|"TCP: obs in, action chunk out"| client
+  td3 <--> env
+  </pre>
+</div>
+<p class="caption">The link is Python's standard-library <code>multiprocessing.connection</code> (TCP plus pickle with an auth key), so it needs no new dependency. The client sends images, state, torque and tactile history and the instruction; the server returns a 50-step action chunk and the client executes the first <i>n</i>. TD3 trains directly against the env in the existing train image.</p>
+
+<!-- 7 LEARNERS -->
+<div class="sec-head" id="s7"><span class="sec-num">07</span><h2>The learners, phase 1 and phase 2</h2></div>
+<div class="grid3">
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label lbl-steel">TD3 · skills, not the whole sort</div>
+    <p>Long-horizon RL from pixels is out of reach at this budget, so TD3 learns the two contact-rich <b>skills</b> on state, reusing the Stage 1.5 recipe (100 demos plus TD3+BC with a BC floor). A scripted sequencer chains them.</p>
+    <ul>
+      <li><b>Insert:</b> bolt in hand, with an unknown in-hand offset and tilt (± 3 mm, ± 5°) observable only through tactile CoP and joint torque.</li>
+      <li><b>Pick:</b> grasp one given part from the bin, with success measured after lift and shake.</li>
+      <li><b>Phase 2:</b> add the τ<sub>ext</sub> history and the tactile summary to the observation; compare with and without, 10 seeds each.</li>
+    </ul>
+  </div>
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label lbl-steel">Behaviour cloning · ACT</div>
+    <p>LeRobot's ACT (ResNet-18 image encoder plus a transformer, action chunks) trained from scratch on the demos. It is the standard BC baseline for the VLA.</p>
+    <ul>
+      <li>Inputs: 2 cameras + proprio (+ instruction id).</li>
+      <li><b>Phase 2:</b> a force token (τ<sub>ext</sub> history and tactile summary → MLP → one token), the design that worked in Stage 1. Dropout 0 on that path: Stage 1.5 R5 showed dropout erases rare, sharp contact cues.</li>
+    </ul>
+  </div>
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label lbl-gold">SmolVLA → TA-SmolVLA</div>
+    <p>Fine-tune <code>lerobot/smolvla_base</code> with a frozen VLM, training the action expert and the state projection (the SmolVLA defaults).</p>
+    <ul>
+      <li><b>Phase 2, per TA-VLA:</b> the torque history (10 frames over 2 s) is flattened into <b>one token</b> and fed to the <b>action expert</b> (decoder), not the VLM prefix.</li>
+      <li>Joint loss <code>L = L_action + β·L_torque</code> with β = 0.1: the expert also predicts the future torque chunk.</li>
+      <li>SmolVLA has no suffix state slot (state lives in the prefix), so the token is <b>prepended to the suffix</b> in our own subclass.</li>
+    </ul>
+  </div>
+</div>
+<h3>TA-SmolVLA: where the torque token goes</h3>
+<div class="mermaid-wrap">
+  <div class="zoom-controls"><button onclick="zoomDiagram(this,1.2)" title="Zoom in">+</button><button onclick="zoomDiagram(this,0.8)" title="Zoom out">&minus;</button><button onclick="resetZoom(this)" title="Reset">&#8634;</button></div>
+  <pre class="mermaid">
+flowchart TD
+  m_imgs["Front + wrist images"] --> m_vis["SigLIP vision encoder, frozen"]
+  m_lang["Instruction tokens"] --> m_prefix["Prefix: image tokens + language + state token"]
+  m_vis --> m_prefix
+  m_state["Proprio state, 16 dims"] --> m_sproj["state_proj"]
+  m_sproj --> m_prefix
+  m_prefix --> m_vlm["SmolVLM2 layers, frozen, 16 of them"]
+  m_vlm -->|"keys and values"| m_expert
+  m_hist["NEW: torque + tactile history, 10 frames x 15 dims over 2 s"] --> m_tmlp["NEW: MLP to expert width"]
+  m_tmlp --> m_suffix["Suffix: torque token + noisy action chunk + time"]
+  m_noisy["Noisy action chunk, 50 x 7"] --> m_ain["action_in_proj"]
+  m_ain --> m_suffix
+  m_suffix --> m_expert["Action expert, 0.75 x width, flow matching"]
+  m_expert --> m_aout["action_out_proj: action velocity"]
+  m_expert --> m_tout["NEW: torque head: future torque, beta 0.1"]
+  class m_hist,m_tmlp,m_tout newc
+  classDef newc fill:#b8871f22,stroke:#b8871f,stroke-width:2px
+  </pre>
+</div>
+<p class="caption">Gold nodes are new. The 15 channels per frame are τ<sub>ext</sub> (7) and the tactile summary per pad: normal force, CoP x, CoP y and shear (2 × 4 = 8). The ablation "torque token zeroed" is built into the same model, so the comparison changes only the information, not the architecture.</p>
+
+<!-- 8 STATE -->
+<div class="sec-head" id="s8"><span class="sec-num">08</span><h2>State variables</h2></div>
+<div class="grid2">
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label lbl-gold">New · task state (per episode)</div>
+    <div class="code-file"><div class="code-file__header">src/fvb/envs/sort_bolts_nuts.py</div>
+<pre class="code-file__body"><span class="c-key">@dataclass</span>
+<span class="c-key">class</span> <span class="c-new">SortTaskParams</span>:
+    n_bolts: int = 3
+    n_nuts: int = 3
+    bolt: str = <span class="c-key">"M16x50"</span>          <span class="c-com"># ISO 4017</span>
+    hole_d: float = 0.017           <span class="c-com"># m, ISO 273 fine</span>
+    seat_depth: float = 0.025       <span class="c-com"># m below fixture top</span>
+    vanish_after: float = 1.0       <span class="c-com"># s, released + seated</span>
+    max_time: float = 180.0         <span class="c-com"># s sim time</span>
+    force_abort_N: float = 80.0     <span class="c-com"># |F_ext_hat|</span>
+
+<span class="c-key">@dataclass</span>
+<span class="c-key">class</span> <span class="c-new">PartState</span>:
+    kind: str                       <span class="c-com"># "bolt" | "nut"</span>
+    body: str                       <span class="c-com"># MuJoCo body name</span>
+    status: str = <span class="c-key">"in_bin"</span>   <span class="c-com"># in_bin, grasped, seated,</span>
+                                    <span class="c-com"># vanished, in_bucket, dropped</span>
+    seated_since: float | None = None</pre></div>
+  </div>
+  <div class="ve-card ve-card--elevated">
+    <div class="ve-card__label lbl-gold">New · sensor buffers</div>
+    <div class="code-file"><div class="code-file__header">src/fvb/sensors/</div>
+<pre class="code-file__body"><span class="c-key">class</span> <span class="c-new">JointTorqueSensor</span>:       <span class="c-com"># joint_torque.py</span>
+    tau_J: RingBuffer[(2000, 7)]    <span class="c-com"># 2 s at 1 kHz</span>
+    tau_ext: RingBuffer[(2000, 7)]
+    noise_std: np.ndarray           <span class="c-com"># (7,) N·m</span>
+    bias: np.ndarray                <span class="c-com"># slow drift</span>
+
+<span class="c-key">class</span> <span class="c-new">TactilePads</span>:             <span class="c-com"># tactile.py</span>
+    taxels: RingBuffer[(2000, 2, 4, 4)]  <span class="c-com"># N</span>
+    pad_force: RingBuffer[(2000, 2, 3)]  <span class="c-com"># N, pad frame</span>
+
+<span class="c-com"># per 50 ms control step the env exposes:</span>
+<span class="c-com">#  torque_hist (10, 15): 10 frames over 2 s</span>
+<span class="c-com">#  tactile (2,4,4) max over the interval</span></pre></div>
+  </div>
+</div>
+<div class="callout callout--gold"><strong>Existing state touched.</strong> <code>fvb.policy.spec</code> gains a <code>SORT</code> task spec (obs groups: proprio, torque summary, tactile summary; action dim 7). The <code>§5</code> episode schema is extended, not changed: new optional keys <code>tau_J</code>, <code>tau_ext</code>, <code>tactile_hf</code> and <code>images/*</code>. Existing keys and tests stay as they are.</div>
+
+<!-- 9 MODULES -->
+<div class="sec-head" id="s9"><span class="sec-num">09</span><h2>Key modules</h2></div>
+<p class="sec-intro">Patterns only. Each snippet shows the core decision in the module, not the full implementation.</p>
+<div class="grid2">
+  <div>
+    <div class="code-file"><div class="code-file__header">src/fvb/sensors/joint_torque.py · measured vs external torque</div>
+<pre class="code-file__body"><span class="c-key">def</span> <span class="c-new">read</span>(self) -&gt; tuple[np.ndarray, np.ndarray]:
+    d, m = self.d, self.m
+    <span class="c-com"># link-side torque: actuator + passive (damping, friction)</span>
+    tau_J = d.sensordata[self.adr] + d.qfrc_passive[self.dofs]
+    <span class="c-com"># model torque for the current (q, qd, qdd)</span>
+    self.scratch.qpos[:] = d.qpos; self.scratch.qvel[:] = d.qvel
+    self.scratch.qacc[:] = d.qacc
+    mujoco.mj_inverse(m, self.scratch)
+    tau_model = self.scratch.qfrc_inverse[self.dofs]
+    tau_ext = tau_J - tau_model            <span class="c-com"># ~ Franka tau_ext_hat</span>
+    n = self.rng.normal(0, 1, 7) * self.noise_std
+    return tau_J + n + self.bias, tau_ext + n + self.bias</pre></div>
+    <div class="code-file"><div class="code-file__header">src/fvb/sensors/tactile.py · taxel grid on each pad</div>
+<pre class="code-file__body"><span class="c-key">def</span> <span class="c-new">add_tactile_pads</span>(gripper_xml, rows=4, cols=4, pitch=0.004):
+    <span class="c-com">"""Replace each finger's pad box by rows x cols taxel geoms,</span>
+<span class="c-com">    each with its own touch sensor; one force sensor per pad."""</span>
+    for side in ("finger1", "finger2"):
+        pad = find_geom(gripper_xml, f"{side}_pad_collision")
+        for i, j in np.ndindex(rows, cols):
+            g = taxel_geom(pad, i, j, pitch, friction=1.0)
+            site = taxel_site(g)                <span class="c-com"># slightly larger</span>
+            add_sensor("touch", f"{side}_tx{i}{j}", site)
+        add_sensor("force", f"{side}_padF", pad_site(pad))</pre></div>
+  </div>
+  <div>
+    <div class="code-file"><div class="code-file__header">src/fvb/envs/sort_bolts_nuts.py · seat, dwell, vanish</div>
+<pre class="code-file__body"><span class="c-key">def</span> <span class="c-new">_update_parts</span>(self, t: float) -&gt; None:
+    for p in self.parts:
+        if p.kind == "bolt" and p.status != "vanished":
+            ok = (self._shank_depth(p) &gt;= P.seat_depth
+                  and self._tilt_deg(p) &lt; 5.0
+                  and not self._touching_gripper(p))
+            if not ok:
+                p.seated_since = None
+            elif p.seated_since is None:
+                p.seated_since = t
+            elif t - p.seated_since &gt;= P.vanish_after:
+                self._park(p)                  <span class="c-com"># free joint far away</span>
+                p.status = "vanished"
+        elif p.kind == "nut" and self._in_bucket_at_rest(p):
+            p.status = "in_bucket"</pre></div>
+    <div class="code-file"><div class="code-file__header">src/fvb/vla/ta_smolvla.py · decoder-side torque token</div>
+<pre class="code-file__body"><span class="c-key">class</span> <span class="c-new">TASmolVLA</span>(VLAFlowMatching):   <span class="c-com"># lerobot's model, subclassed</span>
+    <span class="c-key">def</span> embed_suffix(self, noisy_actions, timestep, torque_hist):
+        embs, pad, att = super().embed_suffix(noisy_actions, timestep)
+        tok = self.torque_mlp(torque_hist.flatten(1))[:, None]  <span class="c-com"># (B,1,W)</span>
+        embs = torch.cat([tok, embs], dim=1)          <span class="c-com"># prepend</span>
+        pad = torch.cat([pad[:, :1], pad], dim=1)
+        att = torch.cat([att[:, :1], att], dim=1)
+        return embs, pad, att
+
+    <span class="c-key">def</span> loss(self, v_pred, u_t, tq_pred, tq_target):
+        return mse(v_pred, u_t) + 0.1 * mse(tq_pred, tq_target)</pre></div>
+  </div>
+</div>
+<div class="callout callout--rose"><strong>Verify in V0.</strong> The <code>embed_suffix</code> signature and the attention-mask conventions come from the current LeRobot source; they change between releases. V0 pins one LeRobot version and a unit test checks that TA-SmolVLA with a zeroed torque token produces the same action shapes and masks as SmolVLA.</div>
+
+<!-- 10 COMMANDS -->
+<div class="sec-head" id="s10"><span class="sec-num">10</span><h2>Commands and API</h2></div>
+<div class="table-wrap"><div class="table-scroll"><table class="data-table">
+  <thead><tr><th>Command / function</th><th>Image</th><th>Parameters</th><th class="wide">Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td><code>suite.make("SortBoltsNuts", ...)</code></td><td>sim</td><td><code>n_bolts, n_nuts, tactile=True, joint_torque=True, camera_size=256</code></td><td class="wide">Registered on <code>import fvb.envs</code>, like <code>PegInHole</code>.</td></tr>
+    <tr><td><code>scripts/20_collect_sort_demos.py</code></td><td>sim</td><td><code>--n 200 --noise human --seed --out data/sort_synth</code></td><td class="wide">Runs the scripted expert and writes raw episodes (npz + mp4 per camera + json) with <code>source: synthetic</code>.</td></tr>
+    <tr><td><code>scripts/21_to_lerobot.py</code></td><td>vla</td><td><code>--raw data/sort_synth --repo local/sort_synth</code></td><td class="wide">Converts to a <code>LeRobotDataset</code>: <code>observation.images.front/wrist</code>, <code>observation.state</code>, <code>observation.torque_hist</code>, <code>observation.tactile</code>, <code>action</code>, <code>task</code>.</td></tr>
+    <tr><td><code>lerobot-train --policy.type=act</code></td><td>vla</td><td>dataset, steps, batch</td><td class="wide">BC baseline (phase 1); a phase 2 config adds the force token.</td></tr>
+    <tr><td><code>scripts/23_train_smolvla.py</code></td><td>vla</td><td><code>--base lerobot/smolvla_base --ta 0|1 --beta 0.1</code></td><td class="wide">Fine-tunes SmolVLA or TA-SmolVLA; frozen VLM, bf16, gradient accumulation sized to 10 GB.</td></tr>
+    <tr><td><code>scripts/24_policy_server.py</code></td><td>vla</td><td><code>--ckpt --port 6010 --authkey</code></td><td class="wide">Serves <code>act(obs) → action chunk</code> over <code>multiprocessing.connection</code>.</td></tr>
+    <tr><td><code>scripts/25_eval_sort.py</code></td><td>sim</td><td><code>--policy tcp://host:6010 | expert | td3:&lt;ckpt&gt; --n 50</code></td><td class="wide">Closed-loop eval on fixed unseen seeds; per-part and per-episode metrics; optional videos.</td></tr>
+    <tr><td><code>scripts/18_train_td3.py --task sort_insert|sort_pick</code></td><td>train</td><td>existing flags + <code>--obs-force 0|1 --obs-tactile 0|1</code></td><td class="wide">Reuses the Stage 1.5 TD3+BC recipe on the two skills.</td></tr>
+  </tbody>
+</table></div></div>
+
+<!-- 11 MILESTONES -->
+<div class="sec-head" id="s11"><span class="sec-num">11</span><h2>Milestones and gates</h2></div>
+<p class="sec-intro">Each milestone ends with tests green, a journal entry and a measured bar, the same working agreement as PLAN §10. Nothing downstream starts until its gate is met.</p>
+<div class="table-wrap"><div class="table-scroll"><table class="data-table">
+  <thead><tr><th>ID</th><th>Phase</th><th class="wide">Deliverable</th><th class="wide">Gate (accept when)</th></tr></thead>
+  <tbody>
+    <tr><td><b>V0</b></td><td><span class="tag tag--p1">infra</span></td><td class="wide"><code>Dockerfile.vla</code> (Python 3.12, pinned torch and LeRobot), policy-server round trip, SmolVLA memory probe on the 3080</td><td class="wide">A fine-tune step of <code>smolvla_base</code> runs within 10 GB (batch and accumulation recorded); the server round trip returns a chunk in &lt; 200 ms</td></tr>
+    <tr><td><b>V1</b></td><td><span class="tag tag--p1">phase 1</span></td><td class="wide">M16 bolt and nut generators, fixture, bin, bucket</td><td class="wide">Dimensions within 0.1 mm of ISO; mass within 5 %; a nut rests stably; a bolt rolls and settles; no penetration &gt; 0.5 mm when dropped</td></tr>
+    <tr><td><b>V2</b></td><td><span class="tag tag--p1">phase 1</span></td><td class="wide">Franka Hand force limit, taxel pads, joint-torque sensor with noise</td><td class="wide">Static 1 kg load: τ<sub>ext</sub> ≈ Jᵀ m g within 2 %; pressing the pads on a box: taxel sum ≈ applied force within 5 %; CoP moves with the contact point</td></tr>
+    <tr><td><b>V3</b></td><td><span class="tag tag--p1">phase 1</span></td><td class="wide"><code>SortBoltsNuts</code> env: spawn, success logic, vanish, cameras, language, staged reward</td><td class="wide">Scripted forcing tests: a bolt pushed into the hole is seated, then vanishes after 1 s; a jammed or tilted bolt is not seated; a nut in the bucket counts; a nut on the rim does not</td></tr>
+    <tr><td><b>V4</b></td><td><span class="tag tag--p1">phase 1</span></td><td class="wide">Scripted expert (pick, reorient, insert with spiral search, drop) + human-like noise; 200 synthetic demos</td><td class="wide">Expert completes ≥ 90 % of episodes on unseen seeds; the dataset validates; demos recorded with torque and tactile from the start</td></tr>
+    <tr><td><b>V5</b></td><td><span class="tag tag--p1">phase 1</span></td><td class="wide">BC baseline: ACT on the images + proprio dataset</td><td class="wide">Closed-loop per-part and per-episode success reported on 50 unseen seeds (no bar: this is the reference)</td></tr>
+    <tr><td><b>V6</b></td><td><span class="tag tag--p1">phase 1</span></td><td class="wide">TD3 skills (pick, insert) with the TD3+BC recipe; a scripted sequencer for the full sort</td><td class="wide">Skill success reported on 10 seeds each; full-sort success with the sequencer</td></tr>
+    <tr><td><b>V7</b></td><td><span class="tag tag--p1">phase 1</span></td><td class="wide">SmolVLA fine-tune, evaluated through the server</td><td class="wide">Closed-loop success on 50 unseen seeds vs ACT; inference latency and chunk-execution settings recorded</td></tr>
+    <tr><td><b>V8</b></td><td><span class="tag tag--p2">phase 2</span></td><td class="wide">Force features: τ<sub>ext</sub> history and tactile summary in the dataset and the RL obs; insertion-seated and grasp-quality labels</td><td class="wide">Offline check: a simple classifier on the torque/tactile features detects "seated" and "grasp stable" above 95 % on held-out episodes</td></tr>
+    <tr><td><b>V9</b></td><td><span class="tag tag--p2">phase 2</span></td><td class="wide">Force-aware variants: ACT + force token, TD3 skills + F/T obs, TA-SmolVLA (token + joint loss)</td><td class="wide">Each against its no-force twin on the same seeds: grasp success, drops, insertion success, false "seated" releases</td></tr>
+    <tr><td><b>V10</b></td><td><span class="tag tag--p2">phase 2</span></td><td class="wide">Evaluation matrix, report, README section, videos</td><td class="wide">Every cell of §12 filled with 95 % intervals; findings in <code>docs/FINDINGS.md</code></td></tr>
+  </tbody>
+</table></div></div>
+
+<!-- 12 EVAL -->
+<div class="sec-head" id="s12"><span class="sec-num">12</span><h2>Evaluation matrix</h2></div>
+<div class="grid2">
+  <div class="table-wrap"><div class="table-scroll"><table class="data-table">
+    <thead><tr><th>Learner</th><th>no force</th><th>+ joint τ</th><th>+ tactile</th><th>+ both</th></tr></thead>
+    <tbody>
+      <tr><td>ACT (BC)</td><td>V5</td><td>V9</td><td>V9</td><td>V9</td></tr>
+      <tr><td>TD3 skills</td><td>V6</td><td>V9</td><td>V9</td><td>V9</td></tr>
+      <tr><td>SmolVLA / TA-SmolVLA</td><td>V7</td><td>V9</td><td>V9</td><td>V9</td></tr>
+      <tr><td>Scripted expert</td><td colspan="4">reference (privileged)</td></tr>
+    </tbody>
+  </table></div></div>
+  <div class="ve-card"><div class="ve-card__label lbl-sage">Metrics (50 unseen seeds, fixed)</div><ul>
+    <li><b>Episode success</b>: all 6 parts sorted in 180 s.</li>
+    <li><b>Grasp success</b> per attempt, <b>regrasps</b>, <b>drops</b> (the phase 2 grasping claim).</li>
+    <li><b>Insertion success</b>, <b>jams</b>, <b>false "seated" releases</b> (the detection claim).</li>
+    <li>Time per part; peak |F̂<sub>ext</sub>| and peak taxel force.</li>
+    <li>Seeds: 3–5 training seeds per cell, with permutation tests as in Stage 1.5 R4.</li>
+  </ul></div>
+</div>
+
+<!-- 13 EDGE CASES -->
+<div class="sec-head" id="s13"><span class="sec-num">13</span><h2>Edge cases</h2></div>
+<div class="table-wrap"><div class="table-scroll"><table class="data-table">
+  <thead><tr><th>Scenario</th><th class="wide">Expected behaviour</th></tr></thead>
+  <tbody>
+    <tr><td>Bolt standing on its head in the bin</td><td class="wide">Expert grasps the head side-on; RL/BC may knock it over. Spawns sample poses by dropping, so this occurs naturally.</td></tr>
+    <tr><td>Two parts grasped at once</td><td class="wide">Detected (two part bodies in pad contact); counted as a grasp failure; the expert opens and retries.</td></tr>
+    <tr><td>Bolt jammed tilted in the chamfer</td><td class="wide">Not seated (tilt ≥ 5° or depth &lt; 25 mm); the joint-torque jam signature triggers a retract. Never counted as a success.</td></tr>
+    <tr><td>Bolt seated but still gripped</td><td class="wide">The dwell timer starts only after release (no pad contact), so a grasped bolt never vanishes.</td></tr>
+    <tr><td>Nut on the bucket rim</td><td class="wide">Not counted until below the rim and at rest; a later fall inside counts.</td></tr>
+    <tr><td>Nut dropped into the fixture area</td><td class="wide">Logged as <i>nut in the hole area</i>; may block the hole, which the policy must clear or the episode times out.</td></tr>
+    <tr><td>Part leaves the table</td><td class="wide">Status <i>dropped</i>; the episode can still succeed only if every remaining part is sorted (otherwise a partial score).</td></tr>
+    <tr><td>Spawn overlap</td><td class="wide">Rejection sampling at spawn, then 1 s of settling; seeds whose settle fails are skipped deterministically.</td></tr>
+    <tr><td>Thin nut walls tunnelling</td><td class="wide">1 ms physics step (Stage 0 M3), convex ring pieces ≥ 4 mm thick; V1 drop test checks penetration.</td></tr>
+    <tr><td>Force abort</td><td class="wide">|F̂<sub>ext</sub>| &gt; 80 N ends the episode (logged), as the 60 N abort did for Stage 1.</td></tr>
+    <tr><td>Policy server slow or down</td><td class="wide">The client times out (1 s) and marks the episode <i>infra error</i>, not a policy failure; nothing is silently skipped.</td></tr>
+    <tr><td>Normalisation mismatch sim ↔ server</td><td class="wide">Dataset stats ship with the checkpoint; the client sends raw values and the server normalises; a round-trip test checks an expert episode re-encodes exactly.</td></tr>
+    <tr><td>GPU OOM in fine-tuning</td><td class="wide">V0 measures the limit; the config uses the frozen VLM, bf16 and gradient accumulation; the batch is recorded in the checkpoint.</td></tr>
+    <tr><td>Reward hacking</td><td class="wide">Success is defined geometrically (depth, tilt, released, dwell, in-bucket at rest). Stage 1.5's "lowered beside the block" lesson becomes a regression test from day one.</td></tr>
+  </tbody>
+</table></div></div>
+
+<!-- 14 TESTS -->
+<div class="sec-head" id="s14"><span class="sec-num">14</span><h2>Test requirements</h2></div>
+<div class="table-wrap"><div class="table-scroll"><table class="data-table">
+  <thead><tr><th>Group</th><th>File</th><th class="wide">Tests</th></tr></thead>
+  <tbody>
+    <tr><td><span class="tag tag--ok">unit</span></td><td><code>tests/test_fasteners.py</code></td><td class="wide">ISO dimensions (s, k, m, bore) within 0.1 mm; mass within 5 %; hex mesh convex; nut ring pieces closed</td></tr>
+    <tr><td><span class="tag tag--ok">unit</span></td><td><code>tests/test_joint_torque.py</code></td><td class="wide">Static hold τ<sub>ext</sub> ≈ Jᵀ m g (2 %); free motion τ<sub>ext</sub> ≈ 0 (noise off); noise statistics match the configured σ</td></tr>
+    <tr><td><span class="tag tag--ok">unit</span></td><td><code>tests/test_tactile.py</code></td><td class="wide">Taxel sum ≈ applied normal force (5 %); CoP follows the contact point; no contact → all zeros; pad shear sign</td></tr>
+    <tr><td><span class="tag tag--warn">integration</span></td><td><code>tests/test_sort_env.py</code></td><td class="wide">Seat → vanish after 1 s; grasped bolt never vanishes; tilted bolt not seated; nut in bucket / on rim; lowered beside the block ≠ success</td></tr>
+    <tr><td><span class="tag tag--warn">integration</span></td><td><code>tests/test_sort_expert.py</code></td><td class="wide">Expert completes 3 seeds; recorded episode validates (schema, monotonic time, image shapes)</td></tr>
+    <tr><td><span class="tag tag--warn">integration</span></td><td><code>tests/test_policy_server.py</code></td><td class="wide">Round trip with a dummy policy; timeout path; raw → normalised → action consistency</td></tr>
+    <tr><td><span class="tag tag--risk">vla image</span></td><td><code>tests/vla/test_ta_smolvla.py</code></td><td class="wide">Shapes and attention masks with the torque token; zeroed token vs baseline shapes; joint loss finite; 5-step overfit on one batch</td></tr>
+  </tbody>
+</table></div></div>
+
+<!-- 15 FILES -->
+<div class="sec-head" id="s15"><span class="sec-num">15</span><h2>File references</h2></div>
+<details class="collapsible" open><summary>New and modified files (19)</summary><div class="collapsible__body"><div class="table-scroll"><table class="data-table">
+  <thead><tr><th>File</th><th>Status</th><th class="wide">Change</th></tr></thead>
+  <tbody>
+    <tr><td><code>docker/Dockerfile.vla</code>, <code>docker/compose.yaml</code></td><td><span class="tag tag--p2">new / mod</span></td><td class="wide">VLA image (Python 3.12, pinned torch and LeRobot); a <code>vla</code> compose service with the GPU</td></tr>
+    <tr><td><code>src/fvb/envs/fasteners.py</code></td><td><span class="tag tag--p2">new</span></td><td class="wide">ISO M-series bolt and nut generators (mesh vertices in MJCF, masses, inertia)</td></tr>
+    <tr><td><code>src/fvb/envs/sort_bolts_nuts.py</code></td><td><span class="tag tag--p2">new</span></td><td class="wide">The env: scene, spawns, success and vanish logic, cameras, language, reward</td></tr>
+    <tr><td><code>src/fvb/envs/__init__.py</code></td><td><span class="tag tag--p1">mod</span></td><td class="wide">Register <code>SortBoltsNuts</code></td></tr>
+    <tr><td><code>src/fvb/sensors/joint_torque.py</code>, <code>tactile.py</code></td><td><span class="tag tag--p2">new</span></td><td class="wide">Sensor models, ring buffers, per-step summaries</td></tr>
+    <tr><td><code>src/fvb/policy/sort_expert.py</code></td><td><span class="tag tag--p2">new</span></td><td class="wide">Scripted expert state machine (§5) + human-like noise model</td></tr>
+    <tr><td><code>src/fvb/policy/spec.py</code></td><td><span class="tag tag--p1">mod</span></td><td class="wide"><code>SORT</code> task spec</td></tr>
+    <tr><td><code>src/fvb/logging/episode.py</code></td><td><span class="tag tag--p1">mod</span></td><td class="wide">Optional keys <code>tau_J</code>, <code>tau_ext</code>, <code>tactile_hf</code>, <code>images/*</code></td></tr>
+    <tr><td><code>src/fvb/vla/server.py</code>, <code>client.py</code></td><td><span class="tag tag--p2">new</span></td><td class="wide">Policy server and client over <code>multiprocessing.connection</code></td></tr>
+    <tr><td><code>src/fvb/vla/ta_smolvla.py</code></td><td><span class="tag tag--p2">new</span></td><td class="wide">TA-SmolVLA subclass (VLA image only)</td></tr>
+    <tr><td><code>scripts/20_…</code> – <code>25_…</code></td><td><span class="tag tag--p2">new</span></td><td class="wide">Collect, convert, train SmolVLA, serve, evaluate (§10)</td></tr>
+    <tr><td><code>scripts/18_train_td3.py</code>, <code>src/fvb/policy/rl_env.py</code></td><td><span class="tag tag--p1">mod</span></td><td class="wide">Skill envs <code>sort_insert</code>, <code>sort_pick</code>; force and tactile obs flags</td></tr>
+    <tr><td><code>tests/…</code> (7 files)</td><td><span class="tag tag--p2">new</span></td><td class="wide">§14</td></tr>
+    <tr><td><code>PLAN.md</code> §13, <code>docs/progress/*</code></td><td><span class="tag tag--p1">mod</span></td><td class="wide">This plan; hourly progress page tracks V0–V10</td></tr>
+  </tbody>
+</table></div></div></details>
+
+<!-- 16 NOTES -->
+<div class="sec-head" id="s16"><span class="sec-num">16</span><h2>Implementation notes and risks</h2></div>
+<div class="callout callout--gold"><strong>Backward compatibility.</strong> Nothing in Stage 0–1.5 changes behaviour: new envs register alongside <code>PegInHole</code>; the §5 schema only gains optional keys; the sim and train images keep their pins; all 28 existing tests stay green at every milestone.</div>
+<div class="callout callout--rose"><strong>Critical.</strong>
+<ul>
+  <li><b>Version wall.</b> LeRobot (Python ≥ 3.12, numpy ≥ 2) cannot share an environment with robosuite 1.5.2 (numpy &lt; 2). The server/client split is not optional.</li>
+  <li><b>SmolVLA's state lives in the VLM prefix.</b> TA-VLA's finding is that torque belongs in the decoder, so the torque token goes into the action expert's suffix through our subclass, pinned to one LeRobot release.</li>
+  <li><b>Synthetic ≠ human.</b> Every scripted demo carries <code>source: synthetic</code>, and results say so. Human demos need a teleop recorder on the host (X display for robosuite's keyboard/SpaceMouse drivers), a later milestone.</li>
+  <li><b>Reorienting a bolt lying flat</b> is the hardest motion for the expert (pitching the wrist ~90° while holding the shank). V4 may need a regrasp or reorientation step; this is the main schedule risk in phase 1.</li>
+</ul></div>
+<div class="callout callout--amber"><strong>Performance.</strong>
+<ul>
+  <li>Two 256² cameras at 20 Hz need EGL on the GPU; OSMesa on the CPU would dominate episode time.</li>
+  <li>SmolVLA inference is a VLM prefix pass plus 10 flow steps per chunk. Executing several steps of each 50-step chunk keeps the closed loop near real time; V0 measures the latency.</li>
+  <li>RL stays on state (skills), not pixels; Stage 1.5 showed even state-based TD3 needs demos and a BC floor to be reliable.</li>
+</ul></div>
+<div class="callout callout--sage"><strong>Assumptions to verify early.</strong> The joint-torque noise σ and bias (set from the Franka spec in V2); whether MuJoCo's touch sensors resolve 4 mm taxels cleanly (V2 test); the ≥ 90 % expert rate (V4); SmolVLA fitting in 10 GB with frozen VLM and bf16 (V0).</div>
+
+<footer>Sources: TA-VLA (arXiv 2509.07962, CoRL 2025) · LeRobot SmolVLA docs and source (configuration_smolvla.py, modeling_smolvla.py) · ISO 4017 / 4032 / 273 · robosuite 1.5.2 Panda gripper MJCF. Generated 2026-09-29 for manipulation_playground.</footer>
+</div>
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({
+    startOnLoad: false, theme: 'base', look: 'classic',
+    flowchart: { curve: 'basis', nodeSpacing: 40, rankSpacing: 48, htmlLabels: true },
+    themeVariables: {
+      primaryColor: isDark ? '#16273d' : '#eaf1f9',
+      primaryBorderColor: isDark ? '#8fb4e3' : '#1e3a5f',
+      primaryTextColor: isDark ? '#dfe8f4' : '#14243a',
+      secondaryColor: isDark ? '#122033' : '#f6f9fc',
+      secondaryBorderColor: isDark ? '#9bbbe8' : '#4a6fa5',
+      secondaryTextColor: isDark ? '#dfe8f4' : '#14243a',
+      tertiaryColor: isDark ? '#0f1b2b' : '#f4f7fb',
+      tertiaryBorderColor: isDark ? '#8fa3bd' : '#5b6b80',
+      tertiaryTextColor: isDark ? '#dfe8f4' : '#14243a',
+      clusterBkg: isDark ? '#0f1b2b' : '#f4f7fb',
+      clusterBorder: isDark ? '#8fa3bd' : '#5b6b80',
+      lineColor: isDark ? '#8fa3bd' : '#5b6b80',
+      fontSize: '16px',
+      fontFamily: "'DM Sans', system-ui, sans-serif",
+    }
+  });
+  // render only after the web fonts are in, so label widths are measured with the real font
+  await document.fonts.ready;
+  // render each diagram with its own id (auto ids are time-based and can collide)
+  const pres = document.querySelectorAll('pre.mermaid');
+  for (let i = 0; i < pres.length; i++) {
+    const { svg } = await mermaid.render('mmd-diagram-' + i, pres[i].textContent);
+    pres[i].innerHTML = svg;
+  }
+</script>
+<script>
+  function updateZoomState(wrap) { var t = wrap.querySelector('.mermaid'); wrap.classList.toggle('is-zoomed', parseFloat(t.dataset.zoom || '1') > 1); }
+  function zoomDiagram(btn, f) { var w = btn.closest('.mermaid-wrap'), t = w.querySelector('.mermaid'); var z = Math.min(Math.max(parseFloat(t.dataset.zoom || '1') * f, 0.3), 5); t.dataset.zoom = z; t.style.transform = 'scale(' + z + ')'; updateZoomState(w); }
+  function resetZoom(btn) { var w = btn.closest('.mermaid-wrap'), t = w.querySelector('.mermaid'); t.dataset.zoom = '1'; t.style.transform = 'scale(1)'; updateZoomState(w); }
+  document.querySelectorAll('.mermaid-wrap').forEach(function (wrap) {
+    wrap.addEventListener('wheel', function (e) { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); var t = wrap.querySelector('.mermaid'); var z = Math.min(Math.max(parseFloat(t.dataset.zoom || '1') * (e.deltaY < 0 ? 1.1 : 0.9), 0.3), 5); t.dataset.zoom = z; t.style.transform = 'scale(' + z + ')'; updateZoomState(wrap); }, { passive: false });
+    var sx, sy, sl, st;
+    wrap.addEventListener('mousedown', function (e) { if (e.target.closest('.zoom-controls')) return; if (parseFloat(wrap.querySelector('.mermaid').dataset.zoom || '1') <= 1) return; wrap.classList.add('is-panning'); sx = e.clientX; sy = e.clientY; sl = wrap.scrollLeft; st = wrap.scrollTop; });
+    window.addEventListener('mousemove', function (e) { if (!wrap.classList.contains('is-panning')) return; wrap.scrollLeft = sl - (e.clientX - sx); wrap.scrollTop = st - (e.clientY - sy); });
+    window.addEventListener('mouseup', function () { wrap.classList.remove('is-panning'); });
+  });
+  (function () {
+    var toc = document.getElementById('toc'), links = toc.querySelectorAll('a'), secs = [];
+    links.forEach(function (l) { var el = document.getElementById(l.getAttribute('href').slice(1)); if (el) secs.push({ el: el, link: l }); });
+    var obs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { if (!en.isIntersecting) return; links.forEach(function (l) { l.classList.remove('active'); }); var m = secs.find(function (s) { return s.el === en.target; }); if (m) { m.link.classList.add('active'); if (window.innerWidth <= 1000) m.link.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }); } });
+    }, { rootMargin: '-10% 0px -80% 0px' });
+    secs.forEach(function (s) { obs.observe(s.el); });
+  })();
+</script>
+</body>
+</html>

@@ -20,11 +20,17 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 MILESTONES = [
-    ("R1", "TD3 + demonstrations (TD3+BC)"),
-    ("R2", "Asymmetric critic (privileged critic input)"),
-    ("R3", "Combine / tune the winners"),
-    ("R4", "Final F/T vs no-F/T with the winning recipe"),
-    ("R5", "ACT-lite ignoring force on the arm"),
+    ("V0", "VLA image, policy server, SmolVLA memory probe"),
+    ("V1", "M16 bolt / nut parts, fixture, bin, bucket"),
+    ("V2", "Franka Hand force, tactile pads, joint-torque sensor"),
+    ("V3", "SortBoltsNuts env"),
+    ("V4", "Scripted expert + 200 synthetic demos"),
+    ("V5", "ACT behaviour-cloning baseline"),
+    ("V6", "TD3 skills (pick, insert)"),
+    ("V7", "SmolVLA fine-tune"),
+    ("V8", "Force / tactile features and detectors"),
+    ("V9", "Force-aware ACT, TD3, TA-SmolVLA"),
+    ("V10", "Evaluation matrix and report"),
 ]
 
 
