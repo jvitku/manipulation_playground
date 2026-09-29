@@ -192,7 +192,11 @@ class TD3Policy:
         self.force_idx = ARM.force_idx
         self.scale = np.array([self.meta["xy_scale"], self.meta["xy_scale"], self.meta["z_scale"]])
         self.frames: deque = deque(maxlen=int(self.meta["history"]))
-        self.task_overrides: dict = {}
+        # controller settings the policy was trained with (e.g. the rim speed limit)
+        tp = self.meta.get("task_params", {})
+        self.task_overrides: dict = (
+            {"rim_speed_limit": tp["rim_speed_limit"]} if tp.get("rim_speed_limit") else {}
+        )
 
     def reset(self) -> None:
         self.frames.clear()

@@ -107,6 +107,12 @@ def main() -> None:
         help="weight of the Q term during pretraining (0 = pure BC actor, critic still trained)",
     )
     ap.add_argument(
+        "--rim-speed-limit-mm",
+        type=float,
+        default=0.0,
+        help="cap the downward step within 5 mm of the rim (mm/step, 0 = off)",
+    )
+    ap.add_argument(
         "--asym-critic",
         type=int,
         default=0,
@@ -129,7 +135,7 @@ def main() -> None:
     )
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    p = ArmTaskParams()
+    p = ArmTaskParams(rim_speed_limit=1e-3 * args.rim_speed_limit_mm)
     rp = RewardParams()
     cfg = TD3Config()
     norm = Norm.from_json(json.loads(Path(args.norm).read_text()))

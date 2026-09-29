@@ -66,3 +66,23 @@ def test_lowering_beside_the_hole_block_is_not_success(world):
             break
     assert task.depth() >= p.success_depth  # it did get 'deep'...
     assert reason != "success"  # ...but not into the hole
+
+
+def test_rim_speed_limit_caps_descent_near_the_rim_only(world):
+    from dataclasses import replace
+
+    p = replace(ArmTaskParams(), rim_speed_limit=0.0005)
+    task = ArmTask(p, 4, world, hole_offset=np.array([0.0, 0.0]))
+    z0 = task.target[2]
+    task.step(np.array([0.0, 0.0, -0.005]))  # 20 mm above the rim: unlimited
+    assert np.isclose(task.target[2], z0 - 0.005)
+    for _ in range(40):  # step down until the (lagging) tip is within 5 mm of the rim
+        if task.env.peg_tip_pos()[2] - task.rim_z < p.slow_zone:
+            break
+        task.step(np.array([0.0, 0.0, -0.0025]))
+    assert task.env.peg_tip_pos()[2] - task.rim_z < p.slow_zone
+    z1 = task.target[2]
+    task.step(np.array([0.0, 0.0, -0.005]))
+    assert np.isclose(task.target[2], z1 - 0.0005)  # capped at 0.5 mm
+    task.step(np.array([0.0, 0.0, 0.004]))  # upward is never limited
+    assert np.isclose(task.target[2], z1 - 0.0005 + 0.004)

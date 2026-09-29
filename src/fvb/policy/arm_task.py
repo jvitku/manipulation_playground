@@ -56,6 +56,10 @@ class ArmTaskParams:
     wrench_ref: str = "tip"
     correct_at: str = "after_retract"  # or "jam" (see fvb.policy.task.TaskParams)
     action_mode: str = "delta"  # or "xy_abs" (see fvb.policy.task.TaskParams)
+    # controller-level speed limit near contact: within slow_zone of the rim (a height known in
+    # every episode, not privileged) the downward target step is capped at this many metres.
+    # 0 = off. The expert's own contact speed is contact_speed * DT = 0.5 mm.
+    rim_speed_limit: float = 0.0
     xy_int_max: float = 0.005
     rot_gain: float = 1.0
 
@@ -200,6 +204,8 @@ class ArmTask:
     def step(self, action: np.ndarray, log=None) -> tuple[bool, str | None]:
         delta = decode_action(self.p.action_mode, action, self.target, self.target_xy0)
         delta = np.clip(delta, -ACT_STEP_MAX, ACT_STEP_MAX)
+        if self.p.rim_speed_limit > 0 and self.env.peg_tip_pos()[2] - self.rim_z < self.p.slow_zone:
+            delta[2] = max(delta[2], -self.p.rim_speed_limit)
         self.target = self.target + delta
         self.rig.step(self.low_level(self.target), log)
         self.prev_action = delta.astype(np.float32)
