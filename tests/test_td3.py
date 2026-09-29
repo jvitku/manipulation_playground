@@ -88,3 +88,19 @@ def test_td3_policy_matches_the_env_pipeline(tmp_path):
             o, *_ = env.step(agent.act(o))
     finally:
         world.close()
+
+
+def test_td3_bc_term_pulls_actor_to_demonstrations():
+    """With only the BC term informative (constant reward), TD3+BC imitates the demo action."""
+    rng = np.random.default_rng(0)
+    torch.manual_seed(0)
+    agent = TD3(2, 1, TD3Config(hidden=64, batch=64))
+    buf, demo = ReplayBuffer(2, 1, 1000), ReplayBuffer(2, 1, 1000)
+    o = np.zeros(2, np.float32)
+    for _ in range(500):
+        buf.add(o, rng.uniform(-1, 1, 1).astype(np.float32), 0.0, o, True)
+        demo.add(o, np.array([-0.7], np.float32), 0.0, o, True)
+    for _ in range(800):
+        out = agent.update(buf, rng, demo, bc_weight=5.0)
+    assert "bc_loss" in out
+    assert abs(float(agent.act(o)[0]) + 0.7) < 0.1

@@ -54,6 +54,23 @@ def run_eval(env, agent, seeds: list[int]) -> dict:
     }
 
 
+def collect_demos(env, n: int, seed0: int, bufs) -> dict:
+    """Run the privileged expert through the RL env (real observations and rewards) and add its
+    transitions to every buffer in ``bufs``. Expert target deltas are scaled to [-1, 1]."""
+    ok = 0
+    for i in range(n):
+        o, done = env.reset(seed0 + i), False
+        info = {}
+        while not done:
+            a = np.clip(env.task.expert_action() / env.scale, -1, 1).astype(np.float32)
+            o2, r, term, trunc, info = env.step(a)
+            for b in bufs:
+                b.add(o, a, r, o2, term)
+            o, done = o2, term or trunc
+        ok += info["reason"] == "success"
+    return {"episodes": n, "success": ok, "transitions": bufs[0].n}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--use-force", type=int, default=1)
@@ -69,6 +86,11 @@ def main() -> None:
     ap.add_argument("--norm", default="outputs/s1_arm/force/norm.json")
     ap.add_argument("--out", default="outputs/s1_td3/force_s0")
     ap.add_argument("--device", default="auto")
+    ap.add_argument("--demos", type=int, default=0, help="expert episodes pre-filled into replay")
+    ap.add_argument("--bc-weight", type=float, default=0.0, help="TD3+BC weight at the start")
+    ap.add_argument(
+        "--bc-decay-steps", type=int, default=100_000, help="linear decay of the BC weight to 0"
+    )
     args = ap.parse_args()
 
     import torch
@@ -109,6 +131,12 @@ def main() -> None:
     }
     (out / "config.json").write_text(json.dumps(meta, indent=2))
 
+    demo_buf = None
+    if args.demos:
+        demo_buf = ReplayBuffer(env.obs_dim, env.act_dim, args.demos * 250)
+        meta["demo_stats"] = collect_demos(env, args.demos, 900_000, [buf, demo_buf])
+        print(json.dumps({"demos": meta["demo_stats"]}), flush=True)
+        (out / "config.json").write_text(json.dumps(meta, indent=2))
     eval_seeds = [70000 + i for i in range(args.eval_episodes)]
     train_seed = 1_000_000 * (args.seed + 1)
     prog: dict = {"episodes": [], "losses": [], "evals": [], "meta": meta}
@@ -130,7 +158,8 @@ def main() -> None:
         ep_len += 1
         ep_peak = max(ep_peak, info["force_N"])
         if t > args.start_steps:
-            for k, v in agent.update(buf, rng).items():
+            bc_w = args.bc_weight * max(0.0, 1.0 - t / max(args.bc_decay_steps, 1))
+            for k, v in agent.update(buf, rng, demo_buf, bc_w).items():
                 loss_acc.setdefault(k, []).append(v)
         if term or trunc:
             prog["episodes"].append(

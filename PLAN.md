@@ -338,3 +338,29 @@ section finishes the stage.
 Open: why ACT-lite ignores force on the arm; the source of the 8 N lateral force along the arm's
 reach; a lateral action that is both timing-robust (like `xy_abs`) and precise (like `delta`),
 e.g. ACT's temporal ensembling of chunks or a discrete "correct now" head.
+
+## 12. Stage 1.5 — reliable RL with force/torque (started 2026-09-29)
+
+TD3 on the arm hidden-hole task learns only in 1 of 5 seeds (with F/T: 49/50 unseen holes for
+seed 3, the rest 0–9/50; without F/T no seed beyond chance; README "Reinforcement learning").
+The other runs sit in two local optima: dive-and-abort and hover-until-timeout.
+
+**Goal G5.** Make RL reliable enough that the force/torque comparison is a result, not a seed
+lottery. *Accept:* with F/T, ≥ 4 of 5 seeds reach ≥ 80 % on the 50 unseen holes within 150k
+environment steps; the no-F/T condition, run with the identical recipe, is reported alongside.
+
+**Experiment queue** (each: 5 seeds per condition unless noted, same budget, journaled in
+`docs/progress/journal.jsonl`; a variant that does not help is switched off / reverted and the
+journal says so):
+
+| id | experiment | hypothesis |
+|---|---|---|
+| R1 | TD3 + demonstrations: replay pre-filled with expert transitions, TD3+BC actor loss (Fujimoto & Gu 2021) with a BC weight decaying to 0 | demos put the agent past both local optima; the decaying BC term lets RL outgrow the expert's slow approach |
+| R2 | asymmetric critic: the critic also sees the privileged tip→hole vector; the actor does not | an informed critic gives the actor a useful gradient early, without making the policy privileged |
+| R3 | combine / tune the winners of R1–R2 | — |
+| R4 | final F/T vs no-F/T comparison with the winning recipe | the no-F/T agent gets the same help; does it now search, or still fail? |
+| R5 | ACT-lite ignoring force on the arm (S1.4 open issue) | — |
+
+**Reporting.** An hourly HTML status page (`docs/progress/index.html`, built by
+`docs/progress/build.py`) summarises the goal, where the work is, progress since the previous
+summary, and what was tried, kept and reverted.

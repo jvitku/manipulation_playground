@@ -1,0 +1,137 @@
+<title>Peg-in-Hole Progress</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+__STYLE__
+<style>
+.chip.running { color: var(--accent); }
+.chip.kept { color: var(--ok); }
+.chip.reverted, .chip.failed { color: var(--bad); }
+.chip.inconclusive, .chip.pending { color: var(--muted); }
+.jtab td { text-align: left; vertical-align: top; white-space: normal; }
+.jtab td:first-child { white-space: nowrap; }
+.jtab th { text-align: left; }
+.jtab td.small { max-width: 44ch; }
+.new { font: 600 0.68rem var(--mono); color: var(--accent); margin-left: 6px; }
+.goal { border: 1px solid var(--accent); background: var(--accent-soft); padding: 14px 16px; margin-top: 16px; max-width: 80ch; }
+.next { font-size: 1.02rem; max-width: 72ch; }
+.progress-bar { height: 6px; background: var(--sunk); border: 1px solid var(--rule); width: 120px; display: inline-block; vertical-align: middle; }
+.progress-bar i { display: block; height: 100%; background: var(--accent); }
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow" id="stamp"></div>
+  <h1>Peg-in-Hole Progress</h1>
+  <p class="lede">An hourly status page for the force-aware peg-insertion work: the goal, where things stand, what changed since the previous summary, and a running log of what was tried, what worked, and what was reverted.</p>
+  <div class="goal"><b>Current goal (PLAN §12, G5):</b> make reinforcement learning reliable on the Panda hidden-hole insertion so the with-vs-without force/torque comparison is a result, not a seed lottery. <b>Bar:</b> with F/T, at least 4 of 5 TD3 seeds reach ≥ 80 % on 50 unseen holes within 150k steps; the no-F/T condition is run with the identical recipe. <b>Baseline:</b> 1 of 5 seeds (49/50; the others 0–9/50).</div>
+  <div class="facts" id="facts"></div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#where">Where we are</a>
+  <a href="#since">Since the last summary</a>
+  <a href="#running">Running now</a>
+  <a href="#log">Tried, kept, reverted</a>
+  <a href="#next">Next</a>
+</nav>
+
+<section id="where">
+  <div class="eyebrow">PLAN §12 experiment queue</div>
+  <h2>Where we are</h2>
+  <div class="table-wrap"><table id="ms"></table></div>
+</section>
+
+<section id="since">
+  <div class="eyebrow" id="since-eyebrow"></div>
+  <h2>Since the last summary</h2>
+  <div id="since-body"></div>
+</section>
+
+<section id="running">
+  <div class="eyebrow">live: evaluation success on 20 held-out holes, every 10k steps</div>
+  <h2>Running now</h2>
+  <div id="running-body"></div>
+</section>
+
+<section id="log">
+  <div class="eyebrow">docs/progress/journal.jsonl · newest first</div>
+  <h2>Tried, kept, reverted</h2>
+  <div class="table-wrap"><table class="jtab" id="journal"></table></div>
+</section>
+
+<section id="next">
+  <div class="eyebrow">plan for the next hour</div>
+  <h2>Next</h2>
+  <p class="next" id="next-body"></p>
+</section>
+<footer>Built by <code>docs/progress/build.py</code> from the journal, the git log and the training outputs. Experiment design and bars: <code>PLAN.md</code> §12.</footer>
+</div>
+
+<script id="report-data" type="application/json">__DATA__</script>
+<script>
+(() => {
+__CHARTLIB__
+
+const J = D.journal, isNew = e => e.ts > D.last;
+const fmtTs = s => s.replace("T", " ");
+document.getElementById("stamp").textContent = `summary #${D.n} · ${fmtTs(D.now)} · covers ${fmtTs(D.last)} → ${fmtTs(D.now)}`;
+const chip = v => `<span class="chip ${v}">${v}</span>`;
+const kept = J.filter(e => e.verdict === "kept").length, rev = J.filter(e => ["reverted", "failed"].includes(e.verdict)).length;
+const run = J.filter(e => e.verdict === "running");
+document.getElementById("facts").innerHTML = [
+  [run.length ? run.map(e => e.id).join(", ") : "—", "running now"],
+  [String(J.filter(isNew).length), "journal entries since the last summary"],
+  [String(kept), "changes kept (all time)"],
+  [String(rev), "tried and reverted or failed (all time)"],
+].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
+
+// milestones: status = latest journal verdict for that id (prefix match), else pending
+const msRows = D.milestones.map(([id, title]) => {
+  const es = J.filter(e => e.id === id || e.id.startsWith(id + "-") || e.id.startsWith(id + "."));
+  const main = es.filter(e => e.kind === "experiment").slice(-1)[0];
+  const v = main ? main.verdict : "pending";
+  return `<tr><td>${id}</td><td style="text-align:left">${title}</td><td>${chip(v)}</td><td style="text-align:left" class="small">${main && main.result ? main.result : ""}</td></tr>`;
+});
+document.getElementById("ms").innerHTML = "<thead><tr><th>id</th><th style='text-align:left'>experiment</th><th>status</th><th style='text-align:left'>result so far</th></tr></thead><tbody>" + msRows.join("") + "</tbody>";
+
+// since last summary
+document.getElementById("since-eyebrow").textContent = `${fmtTs(D.last)} → ${fmtTs(D.now)}`;
+const newE = J.filter(isNew).slice().reverse();
+let sb = newE.length ? `<ul class="tight prose">${newE.map(e => `<li>${chip(e.verdict)} <b>${e.id} · ${e.title}</b>${e.result ? " — " + e.result : e.hypothesis ? " — hypothesis: " + e.hypothesis : ""}</li>`).join("")}</ul>` : `<p class="muted">No journal entries since the previous summary.</p>`;
+sb += D.commits.length ? `<h3>Commits</h3><ul class="tight prose">${D.commits.map(c => `<li><code>${c.sha}</code> ${c.subject}</li>`).join("")}</ul>` : `<p class="small muted">No commits since the previous summary.</p>`;
+document.getElementById("since-body").innerHTML = sb;
+
+function drawRunning() {
+  for (const k in groups) delete groups[k];
+  const host = document.getElementById("running-body");
+  if (!D.running.length) { host.innerHTML = `<p class="muted">Nothing is training right now.</p>`; return; }
+  host.innerHTML = "";
+  for (const e of D.running) {
+    const box = document.createElement("div"); box.className = "panel"; host.appendChild(box);
+    box.insertAdjacentHTML("beforeend", `<h3 style="margin-top:0">${e.id} · ${e.title}</h3><p class="small muted">${e.hypothesis ? "Hypothesis: " + e.hypothesis : ""}</p>`);
+    const ch = document.createElement("div"); box.appendChild(ch);
+    const series = e.status.map(r => ({name: `${r.use_force ? "F/T" : "no F/T"} s${r.seed}`, x: r.evals.map(q => q.t / 1000), y: r.evals.map(q => q.success), color: r.use_force ? "--c-force" : "--c-noforce", dash: ["", "5 4", "2 3", "8 3 2 3", "1 3"][r.seed % 5], markers: true}));
+    const base = D.baseline.filter(r => r.use_force && r.final).map(r => r.final.success);
+    if (series.some(s => s.x.length)) lineChart(ch, {title: "Evaluation success during training", xlabel: "environment steps [k]", ylabel: "success rate", yDomain: [0, 1.05], height: 260, series});
+    else ch.innerHTML = `<p class="muted small">No evaluation yet (first one at 10k steps).</p>`;
+    let t = "<thead><tr><th>run</th><th>progress</th><th>latest eval</th><th>final (50 unseen holes)</th></tr></thead><tbody>";
+    for (const r of e.status) {
+      const last = r.evals.slice(-1)[0], pct = r.steps_total ? r.steps_done / r.steps_total : 0;
+      t += `<tr><td>${r.use_force ? "F/T" : "no F/T"} seed ${r.seed}</td><td><span class="progress-bar"><i style="width:${Math.round(pct * 100)}%"></i></span> ${Math.round(r.steps_done / 1000)}k / ${Math.round((r.steps_total || 0) / 1000)}k</td><td>${last ? Math.round(last.success * 100) + " %" : "—"}</td><td>${r.final ? Math.round(r.final.success * r.final.n) + "/" + r.final.n : "—"}</td></tr>`;
+    }
+    const w = document.createElement("div"); w.className = "table-wrap"; w.innerHTML = `<table>${t}</tbody></table>`; box.appendChild(w);
+    if (base.length) box.insertAdjacentHTML("beforeend", `<p class="small muted">Baseline TD3 with F/T (no demos), final success per seed: ${base.map(v => Math.round(v * 100) + " %").join(", ")}.</p>`);
+  }
+}
+drawRunning();
+
+// journal table
+document.getElementById("journal").innerHTML = "<thead><tr><th>when</th><th>id</th><th>what</th><th>verdict</th><th>result / note</th></tr></thead><tbody>" +
+  J.slice().reverse().map(e => `<tr><td class="mono small">${fmtTs(e.ts)}${isNew(e) ? '<span class="new">NEW</span>' : ""}</td><td>${e.id}</td><td><b>${e.title}</b>${e.hypothesis ? `<br><span class="small muted">${e.hypothesis}</span>` : ""}</td><td>${chip(e.verdict)}</td><td class="small">${e.result || ""}${e.note ? `<br><span class="muted">${e.note}</span>` : ""}${e.commit ? ` <code>${e.commit}</code>` : ""}</td></tr>`).join("") + "</tbody>";
+
+document.getElementById("next-body").textContent = D.next || "Continue the PLAN §12 queue.";
+let lastW = window.innerWidth, rt;
+window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { if (Math.abs(window.innerWidth - lastW) > 40) { lastW = window.innerWidth; drawRunning(); } }, 200); });
+})();
+</script>

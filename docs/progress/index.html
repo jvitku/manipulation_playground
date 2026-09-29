@@ -1,0 +1,426 @@
+<title>Peg-in-Hole Progress</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #f2f4f1;
+  --surface: #ffffff;
+  --sunk: #e8ebe6;
+  --ink: #1a1f22;
+  --muted: #5a6468;
+  --rule: #d5dad3;
+  --accent: #0d6a72;
+  --accent-soft: #d6ebec;
+  --ok: #2c7d4f;
+  --bad: #b93a2c;
+  --c-fz: #1f67c9;
+  --c-tx: #d0561c;
+  --c-ty: #2b9245;
+  --c-tz: #8a4fc2;
+  --c-f: #1a1f22;
+  --c-hf: #d9a21b;
+  --c-gt: #8d9599;
+  --c-untrained: #9a8f86;
+  --c-noforce: #d0561c;
+  --c-force: #1f67c9;
+  --c-expert: #1a1f22;
+  --c-mlp: #7ea9df;
+  --c-mlpno: #f0a47a;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #121618; --surface: #1a1f22; --sunk: #0d1012; --ink: #e5e9e6; --muted: #98a2a5;
+    --rule: #2d3538; --accent: #55b6bd; --accent-soft: #1b3437; --ok: #57b77f; --bad: #e0725f;
+    --c-fz: #5f9cf0; --c-tx: #f08a55; --c-ty: #5cc279; --c-tz: #b58ae6; --c-f: #e5e9e6;
+    --c-hf: #e8bb4a; --c-gt: #7b8589; --c-untrained: #a39a92; --c-noforce: #f08a55;
+    --c-force: #5f9cf0; --c-expert: #e5e9e6; --c-mlp: #3f6fae; --c-mlpno: #a8603a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #121618; --surface: #1a1f22; --sunk: #0d1012; --ink: #e5e9e6; --muted: #98a2a5;
+  --rule: #2d3538; --accent: #55b6bd; --accent-soft: #1b3437; --ok: #57b77f; --bad: #e0725f;
+  --c-fz: #5f9cf0; --c-tx: #f08a55; --c-ty: #5cc279; --c-tz: #b58ae6; --c-f: #e5e9e6;
+  --c-hf: #e8bb4a; --c-gt: #7b8589; --c-untrained: #a39a92; --c-noforce: #f08a55;
+  --c-force: #5f9cf0; --c-expert: #e5e9e6; --c-mlp: #3f6fae; --c-mlpno: #a8603a;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--ground); color: var(--ink); font: 15.5px/1.6 var(--body);
+  padding-inline: 20px; padding-block: 0 64px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; }
+.prose { max-width: 68ch; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; line-height: 1.08; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2.6rem, 6vw, 4.2rem); letter-spacing: -0.01em; font-weight: 700; }
+h2 { font-size: 2.1rem; margin-bottom: 0.4rem; }
+h3 { font-size: 1.35rem; margin: 1.8rem 0 0.4rem; }
+p { margin: 0.6rem 0; }
+a { color: var(--accent); }
+code, .mono { font-family: var(--mono); font-size: 0.88em; }
+.eyebrow { font: 500 0.74rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.muted { color: var(--muted); }
+.small { font-size: 0.86rem; }
+
+header.top { padding-block: 44px 28px; border-bottom: 1px solid var(--rule); }
+header.top .lede { font-size: 1.12rem; max-width: 62ch; margin-top: 14px; color: var(--muted); }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-top: 26px; }
+.facts div { background: var(--surface); padding: 14px 16px; }
+.facts b { display: block; font: 600 1.7rem/1.1 var(--display); font-variant-numeric: tabular-nums; }
+.facts span { font-size: 0.82rem; color: var(--muted); }
+
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 18px; padding-block: 14px; border-bottom: 1px solid var(--rule); font-size: 0.88rem; position: sticky; top: env(safe-area-inset-top, 0px); background: var(--ground); z-index: 5; }
+nav.toc a { color: var(--muted); text-decoration: none; }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); }
+
+section { padding-block: 44px 8px; border-bottom: 1px solid var(--rule); scroll-margin-top: 50px; }
+.stage-mark { display: inline-block; font: 500 0.72rem/1 var(--mono); letter-spacing: 0.08em; padding: 4px 7px; border: 1px solid var(--accent); color: var(--accent); margin-left: 10px; vertical-align: 0.5em; }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-top: 18px; }
+.grid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 18px; }
+figure { margin: 0; }
+figure video, figure img { width: 100%; max-width: 100%; display: block; background: var(--sunk); border: 1px solid var(--rule); }
+figcaption { font-size: 0.84rem; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+figcaption b { color: var(--ink); font-weight: 600; }
+
+.panel { background: var(--surface); border: 1px solid var(--rule); padding: 16px 18px; margin-top: 18px; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 8px; }
+.controls label { font-size: 0.85rem; color: var(--muted); }
+select, button.seg { font: 500 0.86rem var(--body); color: var(--ink); background: var(--surface); border: 1px solid var(--rule); padding: 6px 10px; }
+select:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.segs { display: inline-flex; flex-wrap: wrap; }
+button.seg { cursor: pointer; margin-left: -1px; }
+button.seg[aria-pressed="true"] { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+
+.chart { width: 100%; position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .ax text { fill: var(--muted); font: 11px var(--mono); }
+.chart .ax line, .chart .ax path { stroke: var(--rule); }
+.chart .lab { fill: var(--muted); font: 11.5px var(--body); }
+.chart .ttl { fill: var(--ink); font: 600 12.5px var(--body); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.8rem; color: var(--muted); margin: 2px 0 4px; }
+.legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--rule); padding: 5px 8px; font: 11.5px/1.45 var(--mono); color: var(--ink); white-space: nowrap; z-index: 3; box-shadow: 0 2px 10px rgba(0,0,0,0.12); }
+.tip[hidden] { display: none; }
+
+.table-wrap { overflow-x: auto; margin-top: 14px; }
+table { border-collapse: collapse; font-size: 0.88rem; min-width: 100%; }
+th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--rule); font-variant-numeric: tabular-nums; white-space: nowrap; }
+th { font: 600 0.78rem var(--body); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+th:first-child, td:first-child { text-align: left; }
+td.ok { color: var(--ok); font-weight: 600; }
+td.bad { color: var(--bad); font-weight: 600; }
+tr.hl td { background: var(--accent-soft); }
+
+.takeaway { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; margin: 16px 0; max-width: 68ch; }
+.takeaway b { font-family: var(--display); font-size: 1.05rem; letter-spacing: 0.02em; }
+ul.tight { padding-left: 1.2em; margin: 0.4rem 0; }
+ul.tight li { margin: 0.3rem 0; }
+
+.diagram { overflow-x: auto; margin-top: 16px; background: var(--surface); border: 1px solid var(--rule); padding: 12px; }
+.diagram svg { display: block; min-width: 820px; width: 100%; height: auto; }
+.diagram .box { fill: var(--surface); stroke: var(--ink); stroke-width: 1.2; }
+.diagram .box.acc { fill: var(--accent-soft); stroke: var(--accent); }
+.diagram .box.force { fill: var(--accent-soft); stroke: var(--c-fz); stroke-dasharray: 4 3; }
+.diagram .box.sunk { fill: var(--sunk); stroke: var(--rule); }
+.diagram text { fill: var(--ink); font: 12px var(--body); }
+.diagram text.m { font: 10.5px var(--mono); fill: var(--muted); }
+.diagram text.h { font: 600 13px var(--body); }
+.diagram .arr { stroke: var(--muted); stroke-width: 1.3; fill: none; marker-end: url(#arrow); }
+.diagram .arrhead { fill: var(--muted); }
+
+.principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0; margin-top: 16px; border-top: 1px solid var(--rule); }
+.principles div { padding: 14px 18px 14px 0; border-bottom: 1px solid var(--rule); }
+.principles h4 { margin: 0 0 4px; font: 600 1.02rem var(--display); letter-spacing: 0.02em; }
+.principles p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+
+.cmp-video { max-width: 1000px; }
+.chip { display: inline-block; font: 500 0.72rem/1 var(--mono); padding: 3px 6px; border: 1px solid currentColor; }
+.chip.ok { color: var(--ok); } .chip.bad { color: var(--bad); }
+.runs { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; margin-top: 10px; font-size: 0.85rem; }
+.runs div { border: 1px solid var(--rule); background: var(--surface); padding: 8px 10px; }
+.runs b { display: block; font-weight: 600; }
+footer { padding-block: 30px; font-size: 0.84rem; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+<style>
+.chip.running { color: var(--accent); }
+.chip.kept { color: var(--ok); }
+.chip.reverted, .chip.failed { color: var(--bad); }
+.chip.inconclusive, .chip.pending { color: var(--muted); }
+.jtab td { text-align: left; vertical-align: top; white-space: normal; }
+.jtab td:first-child { white-space: nowrap; }
+.jtab th { text-align: left; }
+.jtab td.small { max-width: 44ch; }
+.new { font: 600 0.68rem var(--mono); color: var(--accent); margin-left: 6px; }
+.goal { border: 1px solid var(--accent); background: var(--accent-soft); padding: 14px 16px; margin-top: 16px; max-width: 80ch; }
+.next { font-size: 1.02rem; max-width: 72ch; }
+.progress-bar { height: 6px; background: var(--sunk); border: 1px solid var(--rule); width: 120px; display: inline-block; vertical-align: middle; }
+.progress-bar i { display: block; height: 100%; background: var(--accent); }
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="eyebrow" id="stamp"></div>
+  <h1>Peg-in-Hole Progress</h1>
+  <p class="lede">An hourly status page for the force-aware peg-insertion work: the goal, where things stand, what changed since the previous summary, and a running log of what was tried, what worked, and what was reverted.</p>
+  <div class="goal"><b>Current goal (PLAN §12, G5):</b> make reinforcement learning reliable on the Panda hidden-hole insertion so the with-vs-without force/torque comparison is a result, not a seed lottery. <b>Bar:</b> with F/T, at least 4 of 5 TD3 seeds reach ≥ 80 % on 50 unseen holes within 150k steps; the no-F/T condition is run with the identical recipe. <b>Baseline:</b> 1 of 5 seeds (49/50; the others 0–9/50).</div>
+  <div class="facts" id="facts"></div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#where">Where we are</a>
+  <a href="#since">Since the last summary</a>
+  <a href="#running">Running now</a>
+  <a href="#log">Tried, kept, reverted</a>
+  <a href="#next">Next</a>
+</nav>
+
+<section id="where">
+  <div class="eyebrow">PLAN §12 experiment queue</div>
+  <h2>Where we are</h2>
+  <div class="table-wrap"><table id="ms"></table></div>
+</section>
+
+<section id="since">
+  <div class="eyebrow" id="since-eyebrow"></div>
+  <h2>Since the last summary</h2>
+  <div id="since-body"></div>
+</section>
+
+<section id="running">
+  <div class="eyebrow">live: evaluation success on 20 held-out holes, every 10k steps</div>
+  <h2>Running now</h2>
+  <div id="running-body"></div>
+</section>
+
+<section id="log">
+  <div class="eyebrow">docs/progress/journal.jsonl · newest first</div>
+  <h2>Tried, kept, reverted</h2>
+  <div class="table-wrap"><table class="jtab" id="journal"></table></div>
+</section>
+
+<section id="next">
+  <div class="eyebrow">plan for the next hour</div>
+  <h2>Next</h2>
+  <p class="next" id="next-body"></p>
+</section>
+<footer>Built by <code>docs/progress/build.py</code> from the journal, the git log and the training outputs. Experiment design and bars: <code>PLAN.md</code> §12.</footer>
+</div>
+
+<script id="report-data" type="application/json">{"now":"2026-09-29T09:33","last":"2026-09-29T09:00","n":1,"journal":[{"ts":"2026-09-24T23:00","id":"S0","kind":"milestone","title":"Stage 0 (M0\u2013M6) reproduced","change":"make all on a clean build; 14 tests","result":"All F/T sensing findings reproduced; report docs/report","verdict":"kept","commit":"3349da9"},{"ts":"2026-09-25T00:10","id":"S1.3a","kind":"experiment","title":"Arm expert: gantry descent speed (50 mm/s)","hypothesis":"the gantry expert transfers unchanged","result":"6 of 8 probe episodes hit the 60 N abort on first rim contact (OSC lag ~15 mm)","verdict":"reverted","commit":"34a22bc"},{"ts":"2026-09-25T00:20","id":"S1.3b","kind":"fix","title":"Two-speed approach (10 mm/s near the rim)","result":"expert 299/300","verdict":"kept","commit":"34a22bc"},{"ts":"2026-09-25T02:00","id":"S1.4a","kind":"fix","title":"Wrench torque about the peg tip instead of the flange","hypothesis":"a lever-arm term (corr 0.83 with -0.1\u00b7Fx) hides the x-direction cue","result":"x cue 54% -> 78%; BC MLP + F/T 13/50 -> 39/50","verdict":"kept","commit":"34a22bc"},{"ts":"2026-09-25T02:10","id":"S1.4b","kind":"experiment","title":"Anti-windup: freeze xy integrator in contact","hypothesis":"the 8 N lateral force is integrator wind-up","result":"8 N unchanged: not the cause (source still open)","verdict":"kept","note":"harmless, kept on; hypothesis rejected","commit":"34a22bc"},{"ts":"2026-09-25T03:00","id":"S1.4c","kind":"experiment","title":"ACT-lite on the arm: H 16/20, lr 1e-4, 250 epochs","hypothesis":"history or optimisation budget makes ACT-lite use force","result":"val loss plateau 0.102-0.105 in every variant, = no-force","verdict":"reverted","commit":"34a22bc"},{"ts":"2026-09-25T03:30","id":"S1.5a","kind":"experiment","title":"kp randomisation with delta actions","hypothesis":"randomising kp makes the gantry policy stiffness-robust","result":"collapsed to ~10%: one-step corrections regress to 1% of their size","verdict":"reverted","commit":"34a22bc"},{"ts":"2026-09-25T03:40","id":"S1.5b","kind":"experiment","title":"Observe log(kp); expert corrects at the jam step","hypothesis":"the collapse is hidden timing","result":"neither helped (val 0.189; 5/50)","verdict":"reverted","commit":"34a22bc"},{"ts":"2026-09-25T04:00","id":"S1.5c","kind":"experiment","title":"xy_abs actions (lateral target as a position)","result":"kp-random 10% -> 54-92%, but nominal 100% -> 80-92%","verdict":"kept","note":"kept as an option, not the default","commit":"34a22bc"},{"ts":"2026-09-25T12:00","id":"RL0a","kind":"experiment","title":"TD3 baseline, first batch","result":"'96-100%' successes were reward hacking: peg lowered onto the table beside the hole block","verdict":"reverted","note":"results retracted","commit":"fb4ca61"},{"ts":"2026-09-25T12:30","id":"RL0b","kind":"fix","title":"Success requires the tip over the hole opening","result":"regression tests on both tasks; BC numbers re-evaluated identically","verdict":"kept","commit":"1582a03"},{"ts":"2026-09-25T14:00","id":"RL0c","kind":"experiment","title":"TD3 baseline, corrected (5 seeds x F/T, no F/T)","result":"F/T 9,6,0,49,0 /50; no F/T 4,9,1,0,8 /50 -> 1 of 5 seeds learns","verdict":"kept","note":"baseline for G5","runs":"outputs/s1_td3","commit":"bbe5dc6"},{"ts":"2026-09-29T09:20","id":"R1-fix","kind":"fix","title":"TD3+BC: floor the |Q| normaliser at 1.0","hypothesis":"found by a unit test: near-zero |Q| early on turns the Q term into amplified noise","result":"BC test passes; 25 tests green","verdict":"kept"},{"ts":"2026-09-29T09:31","id":"R1","kind":"experiment","title":"TD3 + 100 expert demos, TD3+BC (weight 2.5 -> 0 over 100k)","hypothesis":"demos move the agent past the dive-and-abort and hover optima","verdict":"running","runs":"outputs/r1_td3bc"}],"commits":[],"running":[{"ts":"2026-09-29T09:31","id":"R1","kind":"experiment","title":"TD3 + 100 expert demos, TD3+BC (weight 2.5 -> 0 over 100k)","hypothesis":"demos move the agent past the dive-and-abort and hover optima","verdict":"running","runs":"outputs/r1_td3bc","status":[{"name":"force_s0","use_force":true,"seed":0,"evals":[],"steps_done":0,"steps_total":150000,"final":null},{"name":"force_s1","use_force":true,"seed":1,"evals":[],"steps_done":0,"steps_total":150000,"final":null},{"name":"force_s2","use_force":true,"seed":2,"evals":[],"steps_done":0,"steps_total":150000,"final":null},{"name":"force_s3","use_force":true,"seed":3,"evals":[],"steps_done":0,"steps_total":150000,"final":null},{"name":"force_s4","use_force":true,"seed":4,"evals":[],"steps_done":0,"steps_total":150000,"final":null},{"name":"noforce_s0","use_force":false,"seed":0,"evals":[],"steps_done":0,"steps_total":150000,"final":null},{"name":"noforce_s1","use_force":false,"seed":1,"evals":[],"steps_done":0,"steps_total":150000,"final":null},{"name":"noforce_s2","use_force":false,"seed":2,"evals":[],"steps_done":0,"steps_total":150000,"final":null},{"name":"noforce_s3","use_force":false,"seed":3,"evals":[],"steps_done":0,"steps_total":150000,"final":null},{"name":"noforce_s4","use_force":false,"seed":4,"evals":[],"steps_done":0,"steps_total":150000,"final":null}]}],"baseline":[{"name":"force_s0","use_force":true,"seed":0,"evals":[{"t":10000,"success":0.15},{"t":20000,"success":0.25},{"t":30000,"success":0.2},{"t":40000,"success":0.0},{"t":50000,"success":0.1},{"t":60000,"success":0.15},{"t":70000,"success":0.1},{"t":80000,"success":0.3},{"t":90000,"success":0.0},{"t":100000,"success":0.1},{"t":110000,"success":0.1},{"t":120000,"success":0.05},{"t":130000,"success":0.1},{"t":140000,"success":0.25},{"t":150000,"success":0.3}],"steps_done":150000,"steps_total":150000,"final":{"success":0.18,"n":50,"reasons":{"force_abort":41,"success":9}}},{"name":"force_s1","use_force":true,"seed":1,"evals":[{"t":10000,"success":0.0},{"t":20000,"success":0.0},{"t":30000,"success":0.2},{"t":40000,"success":0.0},{"t":50000,"success":0.0},{"t":60000,"success":0.0},{"t":70000,"success":0.0},{"t":80000,"success":0.0},{"t":90000,"success":0.0},{"t":100000,"success":0.0},{"t":110000,"success":0.0},{"t":120000,"success":0.0},{"t":130000,"success":0.0},{"t":140000,"success":0.0},{"t":150000,"success":0.0}],"steps_done":150000,"steps_total":150000,"final":{"success":0.12,"n":50,"reasons":{"success":6,"force_abort":44}}},{"name":"force_s2","use_force":true,"seed":2,"evals":[{"t":10000,"success":0.0},{"t":20000,"success":0.0},{"t":30000,"success":0.0},{"t":40000,"success":0.0},{"t":50000,"success":0.0},{"t":60000,"success":0.0},{"t":70000,"success":0.05},{"t":80000,"success":0.1},{"t":90000,"success":0.05},{"t":100000,"success":0.1},{"t":110000,"success":0.05},{"t":120000,"success":0.0},{"t":130000,"success":0.0},{"t":140000,"success":0.0},{"t":150000,"success":0.0}],"steps_done":150000,"steps_total":150000,"final":{"success":0.0,"n":50,"reasons":{"force_abort":3,"timeout":47}}},{"name":"force_s3","use_force":true,"seed":3,"evals":[{"t":10000,"success":0.2},{"t":20000,"success":0.1},{"t":30000,"success":0.2},{"t":40000,"success":0.45},{"t":50000,"success":0.8},{"t":60000,"success":0.85},{"t":70000,"success":0.75},{"t":80000,"success":0.95},{"t":90000,"success":1.0},{"t":100000,"success":0.85},{"t":110000,"success":0.9},{"t":120000,"success":0.95},{"t":130000,"success":0.95},{"t":140000,"success":1.0},{"t":150000,"success":1.0}],"steps_done":150000,"steps_total":150000,"final":{"success":0.98,"n":50,"reasons":{"force_abort":1,"success":49}}},{"name":"force_s4","use_force":true,"seed":4,"evals":[{"t":10000,"success":0.0},{"t":20000,"success":0.0},{"t":30000,"success":0.0},{"t":40000,"success":0.0},{"t":50000,"success":0.0},{"t":60000,"success":0.0},{"t":70000,"success":0.0},{"t":80000,"success":0.0},{"t":90000,"success":0.0},{"t":100000,"success":0.0},{"t":110000,"success":0.0},{"t":120000,"success":0.0},{"t":130000,"success":0.0},{"t":140000,"success":0.0},{"t":150000,"success":0.0}],"steps_done":150000,"steps_total":150000,"final":{"success":0.0,"n":50,"reasons":{"timeout":50}}},{"name":"noforce_s0","use_force":false,"seed":0,"evals":[{"t":10000,"success":0.2},{"t":20000,"success":0.15},{"t":30000,"success":0.15},{"t":40000,"success":0.05},{"t":50000,"success":0.15},{"t":60000,"success":0.1},{"t":70000,"success":0.1},{"t":80000,"success":0.1},{"t":90000,"success":0.05},{"t":100000,"success":0.15},{"t":110000,"success":0.05},{"t":120000,"success":0.05},{"t":130000,"success":0.05},{"t":140000,"success":0.05},{"t":150000,"success":0.05}],"steps_done":150000,"steps_total":150000,"final":{"success":0.08,"n":50,"reasons":{"force_abort":46,"success":4}}},{"name":"noforce_s1","use_force":false,"seed":1,"evals":[{"t":10000,"success":0.1},{"t":20000,"success":0.0},{"t":30000,"success":0.05},{"t":40000,"success":0.05},{"t":50000,"success":0.05},{"t":60000,"success":0.0},{"t":70000,"success":0.05},{"t":80000,"success":0.2},{"t":90000,"success":0.4},{"t":100000,"success":0.0},{"t":110000,"success":0.1},{"t":120000,"success":0.05},{"t":130000,"success":0.15},{"t":140000,"success":0.25},{"t":150000,"success":0.2}],"steps_done":150000,"steps_total":150000,"final":{"success":0.18,"n":50,"reasons":{"force_abort":21,"success":9,"timeout":20}}},{"name":"noforce_s2","use_force":false,"seed":2,"evals":[{"t":10000,"success":0.0},{"t":20000,"success":0.0},{"t":30000,"success":0.2},{"t":40000,"success":0.0},{"t":50000,"success":0.0},{"t":60000,"success":0.0},{"t":70000,"success":0.0},{"t":80000,"success":0.0},{"t":90000,"success":0.0},{"t":100000,"success":0.0},{"t":110000,"success":0.0},{"t":120000,"success":0.0},{"t":130000,"success":0.0},{"t":140000,"success":0.0},{"t":150000,"success":0.0}],"steps_done":150000,"steps_total":150000,"final":{"success":0.02,"n":50,"reasons":{"success":1,"force_abort":49}}},{"name":"noforce_s3","use_force":false,"seed":3,"evals":[{"t":10000,"success":0.0},{"t":20000,"success":0.0},{"t":30000,"success":0.0},{"t":40000,"success":0.0},{"t":50000,"success":0.0},{"t":60000,"success":0.0},{"t":70000,"success":0.0},{"t":80000,"success":0.0},{"t":90000,"success":0.0},{"t":100000,"success":0.0},{"t":110000,"success":0.0},{"t":120000,"success":0.0},{"t":130000,"success":0.0},{"t":140000,"success":0.0},{"t":150000,"success":0.0}],"steps_done":150000,"steps_total":150000,"final":{"success":0.0,"n":50,"reasons":{"timeout":50}}},{"name":"noforce_s4","use_force":false,"seed":4,"evals":[{"t":10000,"success":0.0},{"t":20000,"success":0.0},{"t":30000,"success":0.0},{"t":40000,"success":0.05},{"t":50000,"success":0.0},{"t":60000,"success":0.0},{"t":70000,"success":0.05},{"t":80000,"success":0.15},{"t":90000,"success":0.15},{"t":100000,"success":0.05},{"t":110000,"success":0.1},{"t":120000,"success":0.1},{"t":130000,"success":0.1},{"t":140000,"success":0.15},{"t":150000,"success":0.0}],"steps_done":150000,"steps_total":150000,"final":{"success":0.16,"n":50,"reasons":{"success":8,"force_abort":19,"timeout":23}}}],"milestones":[["R1","TD3 + demonstrations (TD3+BC)"],["R2","Asymmetric critic (privileged critic input)"],["R3","Combine / tune the winners"],["R4","Final F/T vs no-F/T with the winning recipe"],["R5","ACT-lite ignoring force on the arm"]],"next":"R1 (TD3 + 100 expert demos, TD3+BC) finishes in about 45 minutes. Then: record the final 50-hole results per seed, decide keep/revert against the bar (at least 4 of 5 F/T seeds at 80 % or more), and start R2 (asymmetric critic), with or without the demos depending on the R1 verdict."}</script>
+<script>
+(() => {
+const D = JSON.parse(document.getElementById("report-data").textContent);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs = {}, parent) => {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+};
+const fmt = v => {
+  if (v === null || v === undefined || !isFinite(v)) return "–";
+  const a = Math.abs(v);
+  if (a === 0) return "0";
+  if (a >= 100) return v.toFixed(0);
+  if (a >= 10) return v.toFixed(1);
+  if (a >= 1) return v.toFixed(2);
+  if (a >= 0.01) return v.toFixed(3);
+  return v.toExponential(1);
+};
+function niceTicks(lo, hi, n = 5) {
+  const span = hi - lo || 1;
+  const step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= n) || mag * 10;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+
+// ---------- generic line / scatter chart --------------------------------------------------
+// opts: {title, xlabel, ylabel, series:[{name, x, y, color, dash, width, points}], height,
+//        ylog, xDomain, yDomain, group, equal, rects:[{x0,x1,y0,y1,color}]}
+const groups = {};
+function lineChart(host, o) {
+  host.innerHTML = "";
+  const box = document.createElement("div"); box.className = "chart"; host.appendChild(box);
+  if (o.series.length > 1 || o.legend) {
+    const lg = document.createElement("div"); lg.className = "legend";
+    o.series.filter(s => !s.nolegend).forEach(s => {
+      const c = s.color.startsWith("--") ? css(s.color) : s.color;
+      lg.insertAdjacentHTML("beforeend", `<span><i style="background:${c}${s.dash ? ";height:2px;background:repeating-linear-gradient(90deg," + c + " 0 4px,transparent 4px 7px)" : ""}"></i>${s.name}</span>`);
+    });
+    box.appendChild(lg);
+  }
+  const W = Math.max(320, Math.round(host.clientWidth || 900)), H = o.height || 230, m = {l: 58, r: 14, t: o.title ? 22 : 8, b: 38};
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.title || o.ylabel});
+  box.appendChild(svg);
+  const all = o.series.flatMap(s => s.x.map((x, i) => [x, s.y[i]])).filter(p => p[1] !== null && isFinite(p[1]));
+  let [x0, x1] = o.xDomain || [Math.min(...all.map(p => p[0])), Math.max(...all.map(p => p[0]))];
+  let [y0, y1] = o.yDomain || [Math.min(...all.map(p => p[1])), Math.max(...all.map(p => p[1]))];
+  if (!o.yDomain && !o.ylog) { const pad = (y1 - y0) * 0.06 || 1; y0 = Math.min(y0, 0) === 0 && y0 >= 0 ? 0 : y0 - pad; y1 += pad; }
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  if (o.equal) { // equal aspect for xy paths
+    const sx = pw / (x1 - x0), sy = ph / (y1 - y0), s = Math.min(sx, sy);
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    x0 = cx - pw / s / 2; x1 = cx + pw / s / 2; y0 = cy - ph / s / 2; y1 = cy + ph / s / 2;
+  }
+  const ly = v => Math.log10(Math.max(v, 1e-12));
+  const X = v => m.l + (v - x0) / (x1 - x0) * pw;
+  const Y = o.ylog ? v => m.t + ph - (ly(v) - ly(y0)) / (ly(y1) - ly(y0)) * ph
+                   : v => m.t + ph - (v - y0) / (y1 - y0) * ph;
+  const ax = el("g", {class: "ax"}, svg);
+  const yt = o.ylog ? (() => { const t = []; for (let e = Math.ceil(ly(y0)); e <= Math.floor(ly(y1)); e++) t.push(Math.pow(10, e)); return t; })() : niceTicks(y0, y1, Math.max(3, Math.round(ph / 45)));
+  yt.forEach(v => { el("line", {x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), "stroke-opacity": 0.7}, ax);
+    const t = el("text", {x: m.l - 6, y: Y(v) + 4, "text-anchor": "end"}, ax); t.textContent = o.ylog ? (v >= 1 ? v : v.toString()) : fmt(v); });
+  niceTicks(x0, x1, Math.round(pw / 90)).forEach(v => { el("line", {x1: X(v), x2: X(v), y1: m.t + ph, y2: m.t + ph + 4}, ax);
+    const t = el("text", {x: X(v), y: m.t + ph + 16, "text-anchor": "middle"}, ax); t.textContent = fmt(v); });
+  el("line", {x1: m.l, x2: W - m.r, y1: m.t + ph, y2: m.t + ph}, ax);
+  if (!o.ylog && y0 < 0 && y1 > 0) el("line", {x1: m.l, x2: W - m.r, y1: Y(0), y2: Y(0), "stroke-width": 1.4}, ax);
+  const xl = el("text", {class: "lab", x: m.l + pw / 2, y: H - 4, "text-anchor": "middle"}, svg); xl.textContent = o.xlabel || "";
+  const yl = el("text", {class: "lab", x: 12, y: m.t + ph / 2, transform: `rotate(-90 12 ${m.t + ph / 2})`, "text-anchor": "middle"}, svg); yl.textContent = o.ylabel || "";
+  if (o.title) { const t = el("text", {class: "ttl", x: m.l, y: 14}, svg); t.textContent = o.title; }
+  const clipId = "c" + Math.random().toString(36).slice(2);
+  const cp = el("clipPath", {id: clipId}, el("defs", {}, svg)); el("rect", {x: m.l, y: m.t, width: pw, height: ph}, cp);
+  const plot = el("g", {"clip-path": `url(#${clipId})`}, svg);
+  (o.rects || []).forEach(r => el("rect", {x: X(r.x0), y: Y(r.y1), width: X(r.x1) - X(r.x0), height: Y(r.y0) - Y(r.y1), fill: "none", stroke: css(r.color), "stroke-width": r.width || 1.5, "stroke-dasharray": r.dash || ""}, plot));
+  o.series.forEach(s => {
+    const c = s.color.startsWith("--") ? css(s.color) : s.color;
+    let d = "", pen = false;
+    s.x.forEach((x, i) => { const y = s.y[i];
+      if (y === null || !isFinite(y) || (o.ylog && y <= 0)) { pen = false; return; }
+      d += (pen ? "L" : "M") + X(x).toFixed(1) + "," + Y(y).toFixed(1); pen = true; });
+    if (!s.points) el("path", {d, fill: "none", stroke: c, "stroke-width": s.width || 1.6, "stroke-dasharray": s.dash || "", "stroke-linejoin": "round"}, plot);
+    if (s.points || s.markers) s.x.forEach((x, i) => { if (s.y[i] !== null && isFinite(s.y[i])) el("circle", {cx: X(x), cy: Y(s.y[i]), r: s.r || 3.5, fill: c, stroke: css("--surface"), "stroke-width": 1}, plot); });
+    if (s.end) { const i = s.x.length - 1; el("circle", {cx: X(s.x[i]), cy: Y(s.y[i]), r: 4.5, fill: c, stroke: css("--surface"), "stroke-width": 1.5}, plot); }
+  });
+  // hover
+  if (o.hover === false) return;
+  const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; box.appendChild(tip);
+  const cross = el("line", {y1: m.t, y2: m.t + ph, stroke: css("--muted"), "stroke-dasharray": "3 3", visibility: "hidden"}, svg);
+  const show = xv => {
+    if (xv === null) { tip.hidden = true; cross.setAttribute("visibility", "hidden"); return; }
+    cross.setAttribute("x1", X(xv)); cross.setAttribute("x2", X(xv)); cross.setAttribute("visibility", "visible");
+    let rows = `<b>${o.xlabel ? o.xlabel.split(" [")[0] : "x"} ${fmt(xv)}</b>`;
+    o.series.forEach(s => { if (s.nolegend) return; let bi = 0, bd = Infinity;
+      s.x.forEach((x, i) => { const dd = Math.abs(x - xv); if (dd < bd) { bd = dd; bi = i; } });
+      const c = s.color.startsWith("--") ? css(s.color) : s.color;
+      rows += `<br><span style="color:${c}">■</span> ${s.name}: ${fmt(s.y[bi])}`; });
+    tip.innerHTML = rows; tip.hidden = false;
+    const bw = box.clientWidth, px = X(xv) / W * bw;
+    tip.style.left = (px > bw * 0.6 ? px - tip.offsetWidth - 12 : px + 12) + "px";
+    tip.style.top = (m.t / H * svg.clientHeight + 30) + "px";
+  };
+  const api = {show};
+  if (o.group) (groups[o.group] = groups[o.group] || []).push(api);
+  const fan = xv => (o.group ? groups[o.group] : [api]).forEach(a => a.show(xv));
+  svg.addEventListener("pointermove", e => {
+    const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) / r.width * W;
+    if (px < m.l || px > W - m.r) return fan(null);
+    fan(x0 + (px - m.l) / pw * (x1 - x0));
+  });
+  svg.addEventListener("pointerleave", () => fan(null));
+}
+
+// ---------- horizontal bars ---------------------------------------------------------------
+function barChart(host, o) { // o: {rows:[{label, value, color}], unit, title}
+  host.innerHTML = "";
+  const W = Math.max(320, Math.round(host.clientWidth || 900)), rowH = 30, m = {l: W < 560 ? 130 : 170, r: 70, t: o.title ? 26 : 6, b: 8};
+  const H = m.t + m.b + rowH * o.rows.length;
+  const box = document.createElement("div"); box.className = "chart"; host.appendChild(box);
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.title || ""}, box);
+  if (o.title) { const t = el("text", {class: "ttl", x: m.l, y: 16}, svg); t.textContent = o.title; }
+  const mx = Math.max(...o.rows.map(r => r.value), 1e-9), pw = W - m.l - m.r;
+  o.rows.forEach((r, i) => {
+    const y = m.t + i * rowH;
+    const lb = el("text", {class: "lab", x: m.l - 10, y: y + rowH / 2 + 4, "text-anchor": "end"}, svg); lb.textContent = r.label;
+    el("rect", {x: m.l, y: y + 6, width: Math.max(1, r.value / mx * pw), height: rowH - 12, fill: css(r.color || "--accent")}, svg);
+    const v = el("text", {x: m.l + r.value / mx * pw + 6, y: y + rowH / 2 + 4, class: "lab"}, svg); v.textContent = fmt(r.value) + (o.unit ? " " + o.unit : "");
+  });
+}
+
+const segState = {};
+function segs(host, items, onPick, initial) {
+  host.innerHTML = "";
+  initial = segState[host.id] ?? initial;
+  items.forEach(([key, label]) => {
+    const b = document.createElement("button"); b.className = "seg"; b.type = "button"; b.textContent = label;
+    b.setAttribute("aria-pressed", key === initial); b.id = host.id + "-" + key;
+    b.onclick = () => { host.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); segState[host.id] = key; onPick(key); };
+    host.appendChild(b);
+  });
+  onPick(initial);
+}
+
+
+
+const J = D.journal, isNew = e => e.ts > D.last;
+const fmtTs = s => s.replace("T", " ");
+document.getElementById("stamp").textContent = `summary #${D.n} · ${fmtTs(D.now)} · covers ${fmtTs(D.last)} → ${fmtTs(D.now)}`;
+const chip = v => `<span class="chip ${v}">${v}</span>`;
+const kept = J.filter(e => e.verdict === "kept").length, rev = J.filter(e => ["reverted", "failed"].includes(e.verdict)).length;
+const run = J.filter(e => e.verdict === "running");
+document.getElementById("facts").innerHTML = [
+  [run.length ? run.map(e => e.id).join(", ") : "—", "running now"],
+  [String(J.filter(isNew).length), "journal entries since the last summary"],
+  [String(kept), "changes kept (all time)"],
+  [String(rev), "tried and reverted or failed (all time)"],
+].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
+
+// milestones: status = latest journal verdict for that id (prefix match), else pending
+const msRows = D.milestones.map(([id, title]) => {
+  const es = J.filter(e => e.id === id || e.id.startsWith(id + "-") || e.id.startsWith(id + "."));
+  const main = es.filter(e => e.kind === "experiment").slice(-1)[0];
+  const v = main ? main.verdict : "pending";
+  return `<tr><td>${id}</td><td style="text-align:left">${title}</td><td>${chip(v)}</td><td style="text-align:left" class="small">${main && main.result ? main.result : ""}</td></tr>`;
+});
+document.getElementById("ms").innerHTML = "<thead><tr><th>id</th><th style='text-align:left'>experiment</th><th>status</th><th style='text-align:left'>result so far</th></tr></thead><tbody>" + msRows.join("") + "</tbody>";
+
+// since last summary
+document.getElementById("since-eyebrow").textContent = `${fmtTs(D.last)} → ${fmtTs(D.now)}`;
+const newE = J.filter(isNew).slice().reverse();
+let sb = newE.length ? `<ul class="tight prose">${newE.map(e => `<li>${chip(e.verdict)} <b>${e.id} · ${e.title}</b>${e.result ? " — " + e.result : e.hypothesis ? " — hypothesis: " + e.hypothesis : ""}</li>`).join("")}</ul>` : `<p class="muted">No journal entries since the previous summary.</p>`;
+sb += D.commits.length ? `<h3>Commits</h3><ul class="tight prose">${D.commits.map(c => `<li><code>${c.sha}</code> ${c.subject}</li>`).join("")}</ul>` : `<p class="small muted">No commits since the previous summary.</p>`;
+document.getElementById("since-body").innerHTML = sb;
+
+function drawRunning() {
+  for (const k in groups) delete groups[k];
+  const host = document.getElementById("running-body");
+  if (!D.running.length) { host.innerHTML = `<p class="muted">Nothing is training right now.</p>`; return; }
+  host.innerHTML = "";
+  for (const e of D.running) {
+    const box = document.createElement("div"); box.className = "panel"; host.appendChild(box);
+    box.insertAdjacentHTML("beforeend", `<h3 style="margin-top:0">${e.id} · ${e.title}</h3><p class="small muted">${e.hypothesis ? "Hypothesis: " + e.hypothesis : ""}</p>`);
+    const ch = document.createElement("div"); box.appendChild(ch);
+    const series = e.status.map(r => ({name: `${r.use_force ? "F/T" : "no F/T"} s${r.seed}`, x: r.evals.map(q => q.t / 1000), y: r.evals.map(q => q.success), color: r.use_force ? "--c-force" : "--c-noforce", dash: ["", "5 4", "2 3", "8 3 2 3", "1 3"][r.seed % 5], markers: true}));
+    const base = D.baseline.filter(r => r.use_force && r.final).map(r => r.final.success);
+    if (series.some(s => s.x.length)) lineChart(ch, {title: "Evaluation success during training", xlabel: "environment steps [k]", ylabel: "success rate", yDomain: [0, 1.05], height: 260, series});
+    else ch.innerHTML = `<p class="muted small">No evaluation yet (first one at 10k steps).</p>`;
+    let t = "<thead><tr><th>run</th><th>progress</th><th>latest eval</th><th>final (50 unseen holes)</th></tr></thead><tbody>";
+    for (const r of e.status) {
+      const last = r.evals.slice(-1)[0], pct = r.steps_total ? r.steps_done / r.steps_total : 0;
+      t += `<tr><td>${r.use_force ? "F/T" : "no F/T"} seed ${r.seed}</td><td><span class="progress-bar"><i style="width:${Math.round(pct * 100)}%"></i></span> ${Math.round(r.steps_done / 1000)}k / ${Math.round((r.steps_total || 0) / 1000)}k</td><td>${last ? Math.round(last.success * 100) + " %" : "—"}</td><td>${r.final ? Math.round(r.final.success * r.final.n) + "/" + r.final.n : "—"}</td></tr>`;
+    }
+    const w = document.createElement("div"); w.className = "table-wrap"; w.innerHTML = `<table>${t}</tbody></table>`; box.appendChild(w);
+    if (base.length) box.insertAdjacentHTML("beforeend", `<p class="small muted">Baseline TD3 with F/T (no demos), final success per seed: ${base.map(v => Math.round(v * 100) + " %").join(", ")}.</p>`);
+  }
+}
+drawRunning();
+
+// journal table
+document.getElementById("journal").innerHTML = "<thead><tr><th>when</th><th>id</th><th>what</th><th>verdict</th><th>result / note</th></tr></thead><tbody>" +
+  J.slice().reverse().map(e => `<tr><td class="mono small">${fmtTs(e.ts)}${isNew(e) ? '<span class="new">NEW</span>' : ""}</td><td>${e.id}</td><td><b>${e.title}</b>${e.hypothesis ? `<br><span class="small muted">${e.hypothesis}</span>` : ""}</td><td>${chip(e.verdict)}</td><td class="small">${e.result || ""}${e.note ? `<br><span class="muted">${e.note}</span>` : ""}${e.commit ? ` <code>${e.commit}</code>` : ""}</td></tr>`).join("") + "</tbody>";
+
+document.getElementById("next-body").textContent = D.next || "Continue the PLAN §12 queue.";
+let lastW = window.innerWidth, rt;
+window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { if (Math.abs(window.innerWidth - lastW) > 40) { lastW = window.innerWidth; drawRunning(); } }, 200); });
+})();
+</script>

@@ -91,7 +91,16 @@ class TD3:
         x = torch.as_tensor(o, dtype=torch.float32, device=self.device)[None]
         return self.actor(x)[0].cpu().numpy()
 
-    def update(self, buf: ReplayBuffer, rng: np.random.Generator) -> dict:
+    def update(
+        self,
+        buf: ReplayBuffer,
+        rng: np.random.Generator,
+        demo: ReplayBuffer | None = None,
+        bc_weight: float = 0.0,
+    ) -> dict:
+        """One critic step (+ a delayed actor step). With ``demo`` and ``bc_weight`` > 0 the actor
+        loss is TD3+BC (Fujimoto & Gu 2021): -Q / mean|Q| + bc_weight * |pi(o_d) - a_d|^2 on a
+        batch of demonstration transitions."""
         c = self.cfg
         o, a, r, o2, d = buf.sample(c.batch, rng, self.device)
         with torch.no_grad():
@@ -111,7 +120,14 @@ class TD3:
         }
         self.updates += 1
         if self.updates % c.policy_delay == 0:
-            a_loss = -self.critic(o, self.actor(o))[0].mean()
+            q = self.critic(o, self.actor(o))[0]
+            a_loss = -q.mean()
+            if demo is not None and bc_weight > 0 and demo.n > 0:
+                od, ad, *_ = demo.sample(c.batch, rng, self.device)
+                bc = ((self.actor(od) - ad) ** 2).mean()
+                # floor 1.0: a near-zero |Q| early on would blow the Q term up into noise
+                a_loss = a_loss / q.abs().mean().detach().clamp_min(1.0) + bc_weight * bc
+                out["bc_loss"] = bc.item()
             self.a_opt.zero_grad(set_to_none=True)
             a_loss.backward()
             self.a_opt.step()
