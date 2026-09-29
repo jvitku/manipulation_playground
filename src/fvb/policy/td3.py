@@ -194,9 +194,11 @@ class TD3Policy:
         self.frames: deque = deque(maxlen=int(self.meta["history"]))
         # controller settings the policy was trained with (e.g. the rim speed limit)
         tp = self.meta.get("task_params", {})
-        self.task_overrides: dict = (
-            {"rim_speed_limit": tp["rim_speed_limit"]} if tp.get("rim_speed_limit") else {}
-        )
+        self.task_overrides: dict = {}
+        if tp.get("rim_speed_limit"):
+            self.task_overrides["rim_speed_limit"] = tp["rim_speed_limit"]
+        if tp.get("action_mode", "delta") != "delta":
+            self.task_overrides["action_mode"] = tp["action_mode"]
 
     def reset(self) -> None:
         self.frames.clear()

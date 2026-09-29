@@ -127,3 +127,32 @@ def test_asymmetric_critic_learns_from_privileged_input_only():
     assert last < 0.2 * first
     assert agent.actor.net[0].in_features == 2  # actor input = observation only
     assert agent.critic.q1[0].in_features == 2 + 1 + 1  # obs + priv + action
+
+
+def test_expert_demos_through_the_env_in_xy_abs_mode():
+    """Demos encoded as xy_abs actions (lateral target) still insert, and the lateral labels are
+    persistent steps, not one-step pulses."""
+    from fvb.policy.arm_task import ArmTaskParams, ArmWorld
+    from fvb.policy.data import Norm
+    from fvb.policy.rl_env import ArmRLEnv
+    from fvb.policy.spec import ARM
+
+    p = ArmTaskParams(action_mode="xy_abs")
+    world = ArmWorld(p, seed=0)
+    norm = Norm(np.zeros(ARM.obs_dim), np.ones(ARM.obs_dim), np.zeros(3), np.ones(3))
+    try:
+        env = ArmRLEnv(p, world, norm, history=2, xy_scale=0.005)
+        env.reset(5)
+        env.world.place_hole(np.array([0.0015, 0.0]))  # beyond the clearance: needs a correction
+        env.task.hole_xy = np.array([0.0015, 0.0])
+        acts, done, info = [], False, {}
+        while not done:
+            a = np.clip(env.task.encode(env.task.expert_action()) / env.scale, -1, 1)
+            acts.append(a)
+            _, _, term, trunc, info = env.step(a)
+            done = term or trunc
+        assert info["reason"] == "success"
+        ax = np.array(acts)[:, 0]
+        assert np.count_nonzero(ax) > 0.3 * len(ax)  # a held lateral target, not a pulse
+    finally:
+        world.close()

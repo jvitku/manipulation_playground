@@ -62,7 +62,8 @@ def collect_demos(env, n: int, seed0: int, bufs) -> dict:
         o, done = env.reset(seed0 + i), False
         p, info = env.privileged(), {}
         while not done:
-            a = np.clip(env.task.expert_action() / env.scale, -1, 1).astype(np.float32)
+            a = env.task.encode(env.task.expert_action()) / env.scale  # delta or xy_abs
+            a = np.clip(a, -1, 1).astype(np.float32)
             o2, r, term, trunc, info = env.step(a)
             for b in bufs:
                 b.add(o, a, r, o2, term, p, info["priv"])
@@ -113,6 +114,16 @@ def main() -> None:
         help="cap the downward step within 5 mm of the rim (mm/step, 0 = off)",
     )
     ap.add_argument(
+        "--action-mode",
+        choices=["delta", "xy_abs"],
+        default="delta",
+        help="xy_abs: the lateral action is a target relative to the start (z stays a delta)",
+    )
+    ap.add_argument("--xy-scale-mm", type=float, default=1.0, help="lateral action scale")
+    ap.add_argument(
+        "--expl-noise-xy", type=float, default=None, help="lateral exploration noise (default: =)"
+    )
+    ap.add_argument(
         "--asym-critic",
         type=int,
         default=0,
@@ -135,12 +146,22 @@ def main() -> None:
     )
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    p = ArmTaskParams(rim_speed_limit=1e-3 * args.rim_speed_limit_mm)
+    p = ArmTaskParams(rim_speed_limit=1e-3 * args.rim_speed_limit_mm, action_mode=args.action_mode)
     rp = RewardParams()
     cfg = TD3Config()
     norm = Norm.from_json(json.loads(Path(args.norm).read_text()))
     world = ArmWorld(p, seed=args.seed)
-    env = ArmRLEnv(p, world, norm, use_force=bool(args.use_force), history=args.history, rp=rp)
+    env = ArmRLEnv(
+        p,
+        world,
+        norm,
+        use_force=bool(args.use_force),
+        history=args.history,
+        rp=rp,
+        xy_scale=1e-3 * args.xy_scale_mm,
+    )
+    nxy = args.expl_noise if args.expl_noise_xy is None else args.expl_noise_xy
+    noise_std = np.array([nxy, nxy, args.expl_noise])
     priv_dim = 3 if args.asym_critic else 0
     agent = TD3(env.obs_dim, env.act_dim, cfg, device, priv_dim=priv_dim)
     buf = ReplayBuffer(env.obs_dim, env.act_dim, min(args.buffer, args.steps), priv_dim)
@@ -189,7 +210,7 @@ def main() -> None:
         if t <= args.start_steps:
             a = rng.uniform(-1, 1, env.act_dim).astype(np.float32)
         else:
-            a = agent.act(o) + rng.normal(0, args.expl_noise, env.act_dim)
+            a = agent.act(o) + rng.normal(0, 1, env.act_dim) * noise_std
             a = np.clip(a, -1, 1).astype(np.float32)
         o2, r, term, trunc, info = env.step(a)
         buf.add(o, a, r, o2, term, p, info["priv"])
