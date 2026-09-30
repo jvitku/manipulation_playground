@@ -375,6 +375,16 @@ class SortExpert:
                 best = (score, Rc)
         return best
 
+    def _hole_goal(self) -> np.ndarray:
+        """Where the expert aims: its hole estimate plus the current point of a search spiral
+        (radius grows 0.7 mm per turn, points ~0.7 mm apart) after failed entries."""
+        k = getattr(self, "search_k", 0)
+        if k == 0:
+            return self.hole_est[:2].copy()
+        ang = 2.4 * k  # golden-angle-like spread
+        r = 0.0007 * math.sqrt(k)
+        return self.hole_est[:2] + r * np.array([math.cos(ang), math.sin(ang)])
+
     def _held(self, i: int) -> bool:
         return np.linalg.norm(self.env.part_pose(i)[0] - self.pad_point()) < 0.045
 
@@ -390,7 +400,10 @@ class SortExpert:
                 int(self.rng.integers(*self.noise.pause_steps)) if self.noise.pause_steps[1] else 0
             )
         if self.noise.action_std:
-            a[:6] = np.clip(a[:6] + self.rng.normal(0, self.noise.action_std, 6), -1, 1)
+            # an operator's hand is steadier in the precise phases than in transit
+            fine = self.phase in ("descend", "close", "hover", "enter", "let_go")
+            std = self.noise.action_std * (0.3 if fine else 1.0)
+            a[:6] = np.clip(a[:6] + self.rng.normal(0, std, 6), -1, 1)
         return a
 
     def _act(self) -> np.ndarray:
@@ -534,6 +547,7 @@ class SortExpert:
                 u_h[2] = 0.0
                 self.R_insert = self._best_insert(u_h / np.linalg.norm(u_h))[1]
             self.i_err = np.zeros(2)
+            self.search_k = 0
             # turn while moving to a fixed point between the tray and the hole: a rotation that
             # only tracked "the pad, wherever it is" let the hand drift ~20 cm outwards
             mid = 0.5 * (self.env.bin_floor[:2] + self.hole_est[:2])
@@ -553,7 +567,7 @@ class SortExpert:
         if self.phase in ("to_hole", "hover"):
             if not self._held(i):
                 return self._fail_grasp()
-            goal_xy = self.hole_est[:2]
+            goal_xy = self._hole_goal()
             top = self.hole_est[2]
             lat_err = goal_xy - tip[:2]
             lat = float(np.linalg.norm(lat_err))
@@ -596,15 +610,17 @@ class SortExpert:
                 return self._fail_grasp()
             top = self.hole_est[2]
             depth = env.hole_top[2] - tip[2]
-            tip_goal = np.r_[self.hole_est[:2], max(top - 0.010, tip[2] - 0.002)]
+            tip_goal = np.r_[self._hole_goal(), max(top - 0.010, tip[2] - 0.002)]
             pad_goal = self.pad_point() + (tip_goal - tip) + np.r_[self.i_err, 0.0]
             a, _, _ = self.track(pad_goal, self.R_insert, gain=0.3)
-            if np.linalg.norm(env.f_ext_hat()[:3]) > 20.0 and depth < 0.006:
+            caught = np.linalg.norm(env.f_ext_hat()[:3]) > 20.0 and depth < 0.006
+            if caught or (self.t_phase > 80 and depth < 0.003):
+                # the tip sits on the chamfer or the top face: the hole is not where the expert
+                # thinks. Next point of a 0.7 mm-pitch spiral around its estimate, re-hover.
+                self.search_k += 1
                 self.ok_steps = 0
-                self._go("hover")  # caught the chamfer: back to hovering and re-align
-            elif depth > 0.008:
-                self._go("let_go")
-            elif self.t_phase > 80:
+                self._go("hover")
+            elif depth > 0.008 or self.t_phase > 80:
                 self._go("let_go")
             return a
         if self.phase == "let_go":
