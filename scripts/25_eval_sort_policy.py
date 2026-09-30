@@ -25,6 +25,7 @@ def main() -> None:
     ap.add_argument("--max-steps", type=int, default=3600)
     ap.add_argument("--camera-size", type=int, default=256)
     ap.add_argument("--timeout", type=float, default=10.0)
+    ap.add_argument("--gripper-deadband", type=float, default=0.5, help="<= 0: raw output")
     args = ap.parse_args()
 
     import robosuite as suite
@@ -58,7 +59,10 @@ def main() -> None:
                 seed=seed,
                 horizon=args.max_steps,
             )
-            r = {"seed": seed, **run_episode(env, client, args.max_steps, args.task)}
+            r = {
+                "seed": seed,
+                **run_episode(env, client, args.max_steps, args.task, args.gripper_deadband),
+            }
             env.close()
             rows.append(r)
             with open(out / "results.jsonl", "a") as f:

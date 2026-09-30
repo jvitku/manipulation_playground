@@ -33,8 +33,20 @@ def policy_obs(obs: dict, task: str) -> dict:
     return out
 
 
-def run_episode(env, policy, max_steps: int = 3600, task: str | None = None) -> dict:
-    """Closed loop: obs -> policy -> action, until done. Returns outcome and latency stats."""
+def gripper_command(a: float, deadband: float = 0.5) -> float:
+    """robosuite's PandaGripper integrates sign(action) (0.2 per step), so a regressed ~0 "hold"
+    flips the gripper with the sign of the prediction noise. The expert only sends -1 / 0 / +1;
+    snap the policy's output to the same three commands."""
+    if abs(a) < deadband:
+        return 0.0
+    return float(np.sign(a))
+
+
+def run_episode(
+    env, policy, max_steps: int = 3600, task: str | None = None, gripper_deadband: float = 0.5
+) -> dict:
+    """Closed loop: obs -> policy -> action, until done. Returns outcome and latency stats.
+    ``gripper_deadband`` <= 0 passes the raw gripper output through."""
     obs = env.reset()
     policy.reset()
     task = task or env.instruction
@@ -44,7 +56,9 @@ def run_episode(env, policy, max_steps: int = 3600, task: str | None = None) -> 
     for _ in range(max_steps):
         steps += 1
         t0 = time.perf_counter()
-        a = np.asarray(policy.act(policy_obs(obs, task)), float).reshape(-1)[:7]
+        a = np.asarray(policy.act(policy_obs(obs, task)), float).reshape(-1)[:7].copy()
+        if gripper_deadband > 0:
+            a[6] = gripper_command(a[6], gripper_deadband)
         lat.append(time.perf_counter() - t0)
         obs, _, done, info = env.step(np.clip(a, -1, 1))
         if done:

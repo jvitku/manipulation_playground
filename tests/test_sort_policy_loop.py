@@ -15,7 +15,7 @@ import robosuite as suite  # noqa: E402
 
 import fvb.envs  # noqa: E402, F401
 from fvb.logging.sort_episode import LOWDIM  # noqa: E402
-from fvb.vla.sort_io import STATE_KEYS, policy_obs, run_episode  # noqa: E402
+from fvb.vla.sort_io import STATE_KEYS, gripper_command, policy_obs, run_episode  # noqa: E402
 from fvb.vla.transport import PolicyClient, PolicyServer  # noqa: E402
 
 
@@ -74,3 +74,8 @@ def test_policy_obs_without_cameras():
     o = policy_obs(obs, "t")
     assert o["observation.state"][7:10].tolist() == [1, 1, 1]
     assert "observation.images.front" not in o and o["observation.tactile"].shape == (32,)
+
+
+def test_gripper_command_snaps_to_expert_levels():
+    assert gripper_command(0.02) == 0.0 and gripper_command(-0.3) == 0.0
+    assert gripper_command(0.7) == 1.0 and gripper_command(-0.9) == -1.0
