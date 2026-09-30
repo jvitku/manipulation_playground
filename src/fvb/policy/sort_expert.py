@@ -28,7 +28,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from fvb.envs.fasteners import DEFAULT_BOLT
+from fvb.envs.fasteners import DEFAULT_BOLT, DEFAULT_HOLE
 from fvb.envs.sort_bolts_nuts import BIN_SIZE, BIN_WALL_H, BUCKET_H, BUCKET_R
 
 POS_SCALE, ROT_SCALE = 0.05, 0.5  # OSC output_max: action 1.0 = 5 cm / 0.5 rad target offset
@@ -127,8 +127,10 @@ class SortExpert:
         # pad centre in the grip-site frame (the point that should sit on the grasp point)
         self.pad_offset = R.T @ (mid - d.site_xpos[env.grip_site])
         self.R_home = R.copy()
+        self.base_xy = d.xpos[m.body("robot0_base").id][:2].copy()
         self.home_pad = d.site_xpos[env.grip_site] + R @ self.pad_offset
         self.homed = True
+        self.fail_log: list[tuple[int, int, str]] = []
         self.speed = self.rng.uniform(*self.noise.speed_range)
         self.hole_est = env.hole_top.copy()
         self.hole_est[:2] += self.rng.normal(0, self.noise.hole_xy_std, 2)
@@ -193,8 +195,13 @@ class SortExpert:
         for i, p in enumerate(env.parts):  # nearest pickable part
             if i in self.skipped or p.status in ("vanished", "in_bucket", "dropped", "seated"):
                 continue
-            # parts that left the tray (on the table, by the fixture) are not picked up again
-            if not env._in_bin(i):
+            # parts that left the tray are picked up again from the table or the fixture top,
+            # if the arm can reach them (a bolt fallen next to the fixture used to be lost)
+            ppos = env.part_pose(i)[0]
+            if not env._in_bin(i) and (
+                ppos[2] < env.table_offset[2] - 0.01
+                or np.linalg.norm(ppos[:2] - self.base_xy) > 0.78
+            ):
                 continue
             # a nut still sliding inside the bucket is sorted, not a part to pick (V4 seeds 4, 7)
             rel = env.part_pose(i)[0] - env.bucket_floor
@@ -205,25 +212,47 @@ class SortExpert:
                 best, best_d = i, dist
         return best
 
+    def _support_z(self, pos: np.ndarray) -> float:
+        """Height of the surface a part at ``pos`` lies on: tray floor, fixture top or table."""
+        env = self.env
+        rel = pos - env.bin_floor
+        if abs(rel[0]) < BIN_SIZE[0] / 2 and abs(rel[1]) < BIN_SIZE[1] / 2 and rel[2] < 0.06:
+            return float(env.bin_floor[2] + FLOOR_T)
+        top = env.hole_top
+        half = DEFAULT_HOLE.block / 2
+        if abs(pos[0] - top[0]) < half and abs(pos[1] - top[1]) < half and pos[2] > top[2] - 0.01:
+            return float(top[2])
+        return float(env.table_offset[2])
+
     def _clearance(self, point: np.ndarray, R: np.ndarray, aperture: float) -> float:
         """Smallest distance from sample points on the open fingers and the palm to the tray
-        walls (inf for points above the wall tops)."""
+        walls, the fixture block and bucket A (points above an obstacle's top are free)."""
         env = self.env
         c, a = R[:, 0], R[:, 2]
-        floor = env.bin_floor
-        lx, ly = BIN_SIZE[0] / 2 - 0.005, BIN_SIZE[1] / 2 - 0.005
         pts = []
         for side in (-1, 1):
             for s in np.linspace(-0.01, 0.045, 6):  # finger, pad bottom up to the palm
                 pts.append(point + side * c * (aperture / 2 + 0.012) - a * s)
             for s in (0.05, 0.08):  # palm corners, ~100 mm to each side along the closing axis
                 pts.append(point + side * c * 0.105 - a * s)
+        floor = env.bin_floor
+        lx, ly = BIN_SIZE[0] / 2 - 0.005, BIN_SIZE[1] / 2 - 0.005
+        top = env.hole_top
+        half = DEFAULT_HOLE.block / 2
+        bucket = env.bucket_floor
         best = np.inf
         for q in pts:
             rel = q - floor
-            if rel[2] > BIN_WALL_H + 0.005:
-                continue
-            best = min(best, lx - abs(rel[0]), ly - abs(rel[1]))
+            if rel[2] <= BIN_WALL_H + 0.005:
+                inside = abs(rel[0]) < lx + 0.01 and abs(rel[1]) < ly + 0.01
+                if inside:  # inside the tray: distance to the walls
+                    best = min(best, lx - abs(rel[0]), ly - abs(rel[1]))
+                else:  # outside the tray: distance to its outer faces
+                    best = min(best, max(abs(rel[0]) - lx - 0.01, abs(rel[1]) - ly - 0.01))
+            if q[2] <= top[2] + 0.005:  # fixture block
+                best = min(best, max(abs(q[0] - top[0]) - half, abs(q[1] - top[1]) - half))
+            if q[2] <= bucket[2] + BUCKET_H + 0.005:  # bucket A (outer radius)
+                best = min(best, float(np.hypot(*(q[:2] - bucket[:2]))) - BUCKET_R - 0.004)
         return best
 
     def _grasp_plan(self, i: int) -> tuple[np.ndarray, np.ndarray]:
@@ -263,7 +292,9 @@ class SortExpert:
                 for sign in (1, -1):
                     cands.append((point, frame(sign * _horizontal(c), DOWN)))
         # never drive the fingertips into the tray floor
-        min_z = env.bin_floor[2] + FLOOR_T + FINGER_BELOW_PAD + 0.006  # OSC overshoots ~5 mm
+        # never drive the fingertips into the surface under the part (OSC overshoots ~5 mm)
+        # 3 mm, not more: at +6 mm the pads (16 mm tall) rose above a 14.8 mm nut and missed it
+        min_z = self._support_z(pos) + FINGER_BELOW_PAD + 0.003
         cands = [(np.r_[p[:2], max(p[2], min_z)], R) for p, R in cands]
         if not self.use_ik:
             return self._grasp_plan_heuristic(cands, aperture, R_now, kind)
@@ -455,8 +486,13 @@ class SortExpert:
                 return a
 
         if self.phase == "return":
+            # climb and turn the hand back towards pointing down on the way: carrying the bolt
+            # back with the hand still horizontal locked joints 5-7 at their limits (V4 seeds 8, 11)
             above = self.env.bin_floor + [0, 0, BIN_WALL_H + 0.10]
-            a, ep, _ = self.track(np.r_[above[:2], max(above[2], self.pad_point()[2])], R)
+            rel = Rotation.from_matrix(self.R_home @ R.T).as_rotvec()
+            ang = np.linalg.norm(rel)
+            step = Rotation.from_rotvec(rel * min(1.0, 0.2 / max(ang, 1e-9))).as_matrix() @ R
+            a, ep, _ = self.track(np.r_[above[:2], max(above[2], self.pad_point()[2])], step)
             if ep < 0.03 or self.t_phase > 150:
                 self.gripper = OPEN
                 if self.t_phase > 160 or ep < 0.03:
@@ -595,6 +631,7 @@ class SortExpert:
 
     def _fail_grasp(self) -> np.ndarray:
         i = self.part
+        self.fail_log.append((self.step_i, i, self.phase))
         self.attempts[i] += 1
         if self.attempts[i] >= 3:
             self.skipped.add(i)
