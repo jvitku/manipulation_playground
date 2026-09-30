@@ -26,11 +26,13 @@ def main() -> None:
     ap.add_argument("--camera-size", type=int, default=256)
     ap.add_argument("--timeout", type=float, default=10.0)
     ap.add_argument("--gripper-deadband", type=float, default=0.5, help="<= 0: raw output")
+    ap.add_argument("--presentation", choices=("tray", "rack"), default="tray")
     args = ap.parse_args()
 
     import robosuite as suite
 
     import fvb.envs  # noqa: F401
+    from fvb.envs.sort_bolts_nuts import SortTaskParams
     from fvb.vla.sort_io import run_episode
     from fvb.vla.transport import PolicyClient
 
@@ -58,6 +60,7 @@ def main() -> None:
                 camera_widths=args.camera_size,
                 seed=seed,
                 horizon=args.max_steps,
+                task=SortTaskParams(bolt_presentation=args.presentation),
             )
             r = {
                 "seed": seed,
