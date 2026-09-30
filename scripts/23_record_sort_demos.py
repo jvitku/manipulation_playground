@@ -33,6 +33,7 @@ def main() -> None:
     ap.add_argument("--seeds", default="1000-1003")
     ap.add_argument("--out", default="outputs/sort_demos")
     ap.add_argument("--noise", action="store_true", help="human-like expert noise")
+    ap.add_argument("--action-std", type=float, default=None, help="override the noise jitter")
     ap.add_argument("--camera-size", type=int, default=256)
     ap.add_argument("--no-cameras", action="store_true")
     ap.add_argument("--max-steps", type=int, default=3600)
@@ -48,6 +49,8 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     cams = () if args.no_cameras else ("sortview", "robot0_eye_in_hand")
     noise = ExpertNoise() if args.noise else NO_NOISE
+    if args.noise and args.action_std is not None:
+        noise = ExpertNoise(action_std=args.action_std)
     for seed in parse_seeds(args.seeds):
         t0 = time.time()
         env = suite.make(

@@ -19,6 +19,13 @@ def main() -> None:
     ap.add_argument("--ckpt", required=True, help="pretrained_model directory")
     ap.add_argument("--port", type=int, default=6010)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument(
+        "--rename",
+        default="",
+        help="obs key renames as src=dst pairs, e.g. for smolvla_base: "
+        "observation.images.front=observation.images.camera1,"
+        "observation.images.wrist=observation.images.camera2",
+    )
     args = ap.parse_args()
 
     import numpy as np
@@ -32,10 +39,12 @@ def main() -> None:
     policy = get_policy_class(cfg.type).from_pretrained(args.ckpt).to(args.device).eval()
     pre, post = make_pre_post_processors(policy.config, pretrained_path=args.ckpt)
     wanted = set(policy.config.input_features)
+    rename = dict(kv.split("=", 1) for kv in args.rename.split(",") if kv)
 
     def act(obs: dict) -> np.ndarray:
         batch = {}
         for k, v in obs.items():
+            k = rename.get(k, k)
             if k == "task":
                 batch[k] = [v]
             elif k not in wanted:
