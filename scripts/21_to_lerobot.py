@@ -15,7 +15,7 @@ from pathlib import Path
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--raw", required=True, help="directory with ep_*/ episodes")
+    ap.add_argument("--raw", required=True, nargs="+", help="directories with ep_*/ episodes")
     ap.add_argument(
         "--root", required=True, help="output LeRobotDataset directory (must not exist)"
     )
@@ -26,7 +26,7 @@ def main() -> None:
 
     from fvb.vla.lerobot_convert import convert
 
-    eps = sorted(Path(args.raw).glob("ep_*"))
+    eps = sorted(e for r in args.raw for e in Path(r).glob("ep_*"))
     out = convert(eps, Path(args.root), args.repo_id, args.mode, force=not args.no_force)
     print(json.dumps({"raw_episodes": len(eps), **out}))
 
