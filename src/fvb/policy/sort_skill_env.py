@@ -19,6 +19,7 @@ and enter the hole the way Stage 1's peg did. The episode then belongs to the ag
 
 from __future__ import annotations
 
+import copy
 from collections import deque
 
 import numpy as np
@@ -38,7 +39,12 @@ class SortInsertEnv:
         max_steps: int = 150,
         rp: RewardParams | None = None,
         noise: bool = True,
+        cache: int = 0,
     ):
+        """``cache`` > 0: training seeds map onto ``cache`` set-ups, each run by the expert once
+        and then restored from a physics snapshot (one expert set-up takes 300-600 steps, the
+        skill episode ~60). With the rack every seed compiles the same model, so any set-up's
+        state restores into the one env instance."""
         self.use_force, self.history = use_force, history
         self.scale = np.array([xy_scale, xy_scale, z_scale])
         self.max_steps = max_steps
@@ -48,6 +54,8 @@ class SortInsertEnv:
         self.obs_dim = self.frame_dim * history
         self.act_dim = 3
         self.env = None
+        self.cache = cache
+        self._snap: dict = {}
         self._frames: deque = deque(maxlen=history)
 
     # -- set-up ------------------------------------------------------------------------------
@@ -133,14 +141,68 @@ class SortInsertEnv:
     def _obs(self) -> np.ndarray:
         return np.concatenate(list(self._frames))
 
+    # -- snapshots --------------------------------------------------------------------------------
+    def _save(self, key: int) -> None:
+        import mujoco
+
+        m, d = self.env.sim.model._model, self.env.sim.data._data
+        spec = mujoco.mjtState.mjSTATE_INTEGRATION
+        state = np.empty(mujoco.mj_stateSize(m, spec))
+        mujoco.mj_getState(m, d, state, spec)
+        env_ref, self.expert.env = self.expert.env, None
+        ex = copy.deepcopy(self.expert)
+        self.expert.env = env_ref
+        status = [(p.status, p.seated_since) for p in self.env.parts]
+        self._snap[key] = (state, ex, self.part, self.R.copy(), status, copy.deepcopy(self.obs))
+
+    def _restore(self, key: int) -> None:
+        import mujoco
+
+        state, ex, part, R, status, obs = self._snap[key]
+        m, d = self.env.sim.model._model, self.env.sim.data._data
+        mujoco.mj_setState(m, d, state, mujoco.mjtState.mjSTATE_INTEGRATION)
+        mujoco.mj_forward(m, d)
+        for p, (st, since) in zip(self.env.parts, status, strict=True):
+            p.status, p.seated_since = st, since
+        self.env.outcome = "running"
+        for b in (
+            self.env.tau_ext_buf,
+            self.env.tau_j_buf,
+            self.env.taxel_buf,
+            self.env.pad_force_buf,
+        ):
+            b.clear()
+        self.expert = copy.deepcopy(ex)
+        self.expert.env = self.env
+        self.part, self.R, self.obs = part, R.copy(), copy.deepcopy(obs)
+
+    def expert_action(self) -> np.ndarray:
+        """Privileged demonstrator for TD3+BC: centre the true tip over the true hole, then go
+        down (Stage 1's expert did the same with the true hole)."""
+        e = 1e3 * (self.env.hole_top[:2] - self._tip()[:2])  # mm
+        a = np.zeros(3)
+        a[:2] = np.clip(e / (1e3 * self.scale[:2]), -1, 1)
+        a[2] = -1.0 if np.hypot(*e) < 0.6 else 0.0
+        return a
+
     # -- gym-like API ----------------------------------------------------------------------------
     def reset(self, seed: int) -> np.ndarray:
-        for k in range(10):  # a set-up the expert could not finish is replaced by the next seed
-            self._make(seed * 100 + k)
-            if self._setup(seed * 100 + k):
-                break
+        key = seed % self.cache if self.cache and seed < 50_000 else seed
+        if key in self._snap:
+            self._restore(key)
         else:
-            raise RuntimeError(f"expert set-up failed for seed {seed}")
+            for k in range(10):  # a set-up the expert could not finish: the next sub-seed
+                if self.env is None or not self.cache:
+                    self._make(key * 100 + k)
+                else:
+                    self.env.seed = key * 100 + k
+                    self.env.rng = np.random.default_rng(key * 100 + k)
+                if self._setup(key * 100 + k):
+                    break
+            else:
+                raise RuntimeError(f"expert set-up failed for seed {seed}")
+            if self.cache:
+                self._save(key)
         self.t = 0
         f = self._frame()
         self._frames.clear()

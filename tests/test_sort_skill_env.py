@@ -41,3 +41,16 @@ def test_force_channels_present_with_force(env):
     e2 = SortInsertEnv(use_force=True, noise=False, max_steps=5)
     o = e2.reset(1)
     assert np.any(o.reshape(e2.history, -1)[:, 4:11] != 0)  # tau_ext carries the bolt's weight
+
+
+def test_cached_setup_restores_the_same_start():
+    e = SortInsertEnv(use_force=False, noise=True, max_steps=10, cache=4)
+    o1 = e.reset(5)
+    d1 = e.depth()
+    for _ in range(5):
+        e.step(np.array([0.5, -0.5, -1.0]))
+    o2 = e.reset(5 + 4)  # same cache slot -> restored snapshot
+    # kinematics after a step lag the integrated state by one step (~0.03 mm); 0.1 mm here
+    np.testing.assert_allclose(o1, o2, atol=0.01)
+    assert abs(e.depth() - d1) < 1e-4
+    assert e.expert._held(e.part)

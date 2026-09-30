@@ -37,7 +37,9 @@ def run_eval(env, agent, seeds: list[int]) -> dict:
                 "return": ret,
                 "steps": steps,
                 "peak_F_N": peak,
-                "hole_xy_mm": (1e3 * env.task.hole_xy).round(3).tolist(),
+                "hole_xy_mm": (1e3 * env.task.hole_xy).round(3).tolist()
+                if hasattr(env, "task")
+                else None,
                 "final_depth_mm": info["depth_mm"],
             }
         )
@@ -62,7 +64,10 @@ def collect_demos(env, n: int, seed0: int, bufs) -> dict:
         o, done = env.reset(seed0 + i), False
         p, info = env.privileged(), {}
         while not done:
-            a = env.task.encode(env.task.expert_action()) / env.scale  # delta or xy_abs
+            if hasattr(env, "expert_action"):  # SortInsertEnv: already in [-1, 1]
+                a = env.expert_action()
+            else:
+                a = env.task.encode(env.task.expert_action()) / env.scale  # delta or xy_abs
             a = np.clip(a, -1, 1).astype(np.float32)
             o2, r, term, trunc, info = env.step(a)
             for b in bufs:
@@ -129,6 +134,13 @@ def main() -> None:
         default=0,
         help="1: the critic also sees the privileged tip->hole vector and depth (actor does not)",
     )
+    ap.add_argument(
+        "--task",
+        choices=["arm", "sort_insert"],
+        default="arm",
+        help="sort_insert: the Stage 2 insertion skill (fvb.policy.sort_skill_env)",
+    )
+    ap.add_argument("--cache", type=int, default=200, help="sort_insert: cached expert set-ups")
     args = ap.parse_args()
 
     import torch
@@ -149,17 +161,29 @@ def main() -> None:
     p = ArmTaskParams(rim_speed_limit=1e-3 * args.rim_speed_limit_mm, action_mode=args.action_mode)
     rp = RewardParams()
     cfg = TD3Config()
-    norm = Norm.from_json(json.loads(Path(args.norm).read_text()))
-    world = ArmWorld(p, seed=args.seed)
-    env = ArmRLEnv(
-        p,
-        world,
-        norm,
-        use_force=bool(args.use_force),
-        history=args.history,
-        rp=rp,
-        xy_scale=1e-3 * args.xy_scale_mm,
-    )
+    world = None
+    if args.task == "sort_insert":
+        from fvb.policy.sort_skill_env import SortInsertEnv
+
+        env = SortInsertEnv(
+            use_force=bool(args.use_force),
+            history=args.history,
+            xy_scale=1e-3 * args.xy_scale_mm,
+            rp=rp,
+            cache=args.cache,
+        )
+    else:
+        norm = Norm.from_json(json.loads(Path(args.norm).read_text()))
+        world = ArmWorld(p, seed=args.seed)
+        env = ArmRLEnv(
+            p,
+            world,
+            norm,
+            use_force=bool(args.use_force),
+            history=args.history,
+            rp=rp,
+            xy_scale=1e-3 * args.xy_scale_mm,
+        )
     nxy = args.expl_noise if args.expl_noise_xy is None else args.expl_noise_xy
     noise_std = np.array([nxy, nxy, args.expl_noise])
     priv_dim = 3 if args.asym_critic else 0
@@ -167,7 +191,7 @@ def main() -> None:
     buf = ReplayBuffer(env.obs_dim, env.act_dim, min(args.buffer, args.steps), priv_dim)
     meta = {
         "algo": "td3",
-        "task": "arm",
+        "task": args.task,
         "use_force": bool(args.use_force),
         "history": args.history,
         "xy_scale": float(env.scale[0]),
@@ -283,7 +307,8 @@ def main() -> None:
         f"final ({args.final_episodes} unseen seeds, best checkpoint @ {final['best_t']}): "
         f"success {final['success_rate']:.2f} {final['reasons']}"
     )
-    world.close()
+    if world is not None:
+        world.close()
 
 
 if __name__ == "__main__":
