@@ -280,9 +280,10 @@ class SortExpert:
             # standing in the rack: top-down across two head flats (they face +-y by design),
             # pads centred on the head; the fingers reach below the plate top beside the narrow
             # rack, so no floor clamp. Insertion then needs no reorientation (hand stays down).
-            # pad centre 9 mm above the head's underside: the 16 mm pad ends 1 mm above the
-            # plate and holds 9 mm of the 10 mm head
-            point = pos + axis * (0.009 + self.grasp_noise[i])
+            # pad centre 10 mm above the head's underside: the 16 mm pad ends 2 mm above the
+            # plate. Grasp noise may only raise it (lowered by 1-3 mm the fingers closed on the
+            # rack bars: 37/50 noisy episodes force-aborted at the first lift)
+            point = pos + axis * (0.010 + abs(self.grasp_noise[i]))
             c = _horizontal(Rp @ [math.cos(math.pi / 6), math.sin(math.pi / 6), 0])
             out = []
             for sgn in (1, -1):
@@ -427,7 +428,7 @@ class SortExpert:
             )
         if self.noise.action_std:
             # an operator's hand is steadier in the precise phases than in transit
-            fine = self.phase in ("descend", "close", "hover", "enter", "let_go")
+            fine = self.phase in ("descend", "close", "lift", "hover", "enter", "let_go")
             std = self.noise.action_std * (0.3 if fine else 1.0)
             a[:6] = np.clip(a[:6] + self.rng.normal(0, std, 6), -1, 1)
         return a
@@ -501,7 +502,13 @@ class SortExpert:
                 self._go("lift")
             return a
         if self.phase == "lift":
-            a, ep, _ = self.track(np.r_[self.pad_point()[:2], safe_z], R)
+            if self.t_phase == 1:
+                self.lift_xy = self.pad_point()[:2].copy()
+            a, ep, _ = self.track(np.r_[self.lift_xy, safe_z], R)
+            if kind == "bolt" and self.pad_point()[2] < env.table_offset[2] + 0.14:
+                # out of the rack slowly and straight (1 mm clearance around the shank): a
+                # sideways pull bound the shank in the hole and tripped the 80 N abort
+                a[:3] = np.clip(a[:3], -0.12, 0.12)
             if self.t_phase > 10 and not self._held(i):
                 return self._fail_grasp()
             if ep < 0.01 or self.t_phase > 80:
