@@ -215,6 +215,12 @@ class SortExpert:
     def _support_z(self, pos: np.ndarray) -> float:
         """Height of the surface a part at ``pos`` lies on: tray floor, fixture top or table."""
         env = self.env
+        if getattr(env.task, "bolt_presentation", "tray") == "rack":
+            from fvb.envs.sort_bolts_nuts import RACK_TOP, RACK_W
+
+            c = env._table_to_world(env.task.rack_xy, RACK_TOP)
+            if abs(pos[1] - c[1]) < RACK_W and abs(pos[2] - c[2]) < 0.03:
+                return float(c[2])
         rel = pos - env.bin_floor
         if abs(rel[0]) < BIN_SIZE[0] / 2 and abs(rel[1]) < BIN_SIZE[1] / 2 and rel[2] < 0.06:
             return float(env.bin_floor[2] + FLOOR_T)
@@ -270,6 +276,26 @@ class SortExpert:
         kind = env.parts[i].kind
         aperture = 2 * (0.02 * (1 + PREGRASP_LEVEL[kind]) - 0.002)
         cands = []  # (point, R)
+        if kind == "bolt" and axis[2] > 0.95 and env._in_rack(i):
+            # standing in the rack: top-down across two head flats (they face +-y by design),
+            # pads centred on the head; the fingers reach below the plate top beside the narrow
+            # rack, so no floor clamp. Insertion then needs no reorientation (hand stays down).
+            # pad centre 9 mm above the head's underside: the 16 mm pad ends 1 mm above the
+            # plate and holds 9 mm of the 10 mm head
+            point = pos + axis * (0.009 + self.grasp_noise[i])
+            c = _horizontal(Rp @ [math.cos(math.pi / 6), math.sin(math.pi / 6), 0])
+            out = []
+            for sgn in (1, -1):
+                R = frame(sgn * c, DOWN)
+                hover = self.hole_est + [0, 0, 0.004 + DEFAULT_BOLT.length + 0.005]
+                reach = min(
+                    ik_margin(env, point, R, self.pad_offset)[1],
+                    ik_margin(env, hover, R, self.pad_offset)[1],
+                )
+                turn = np.linalg.norm(Rotation.from_matrix(R @ R_now.T).as_rotvec())
+                out.append((reach > 0.15, -turn, point, R))
+            _, _, p, R = max(out, key=lambda t: t[:2])
+            return p, R
         if kind == "bolt":
             u = _horizontal(axis)
             # by the hex head (pads on two flats): with the hand horizontal over the hole the
@@ -516,6 +542,13 @@ class SortExpert:
         pos, Rp = env.part_pose(i)
         u_world = Rp[:, 2]
         tip = pos - u_world * DEFAULT_BOLT.length
+        if self.phase == "reorient" and u_world[2] > 0.95:
+            # picked upright from the rack: already head-up with the hand pointing down
+            self.R_insert = frame(R[:, 0], DOWN)
+            self.i_err = np.zeros(2)
+            self.search_k = 0
+            self._go("to_hole")
+            return self.track(self.pad_point(), R)[0]
         if self.phase == "reorient":
             # bolt head-up, hand horizontal; of the horizontal approach directions (away from the
             # robot +-90 deg) take the one that needs the least rotation (large wrist rotations

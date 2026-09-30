@@ -67,6 +67,12 @@ BIN_WALL_H = 0.04
 BUCKET_R, BUCKET_H = 0.10, 0.12
 
 SORTED = ("vanished", "in_bucket")
+# bolt rack: a narrow steel plate on two legs with square holes the shanks hang through. The
+# plate top is 60 mm up so a 50 mm shank clears the table; it is only 22 mm wide so fingers
+# closing across it (along y) can reach below its top face beside it.
+# 22 mm wide: the bars (2 mm each) stay inside the 24 mm head's flats, so fingers closing on
+# the head never touch them (at 26 mm the pads closed on the bars)
+RACK_TOP, RACK_T, RACK_W, RACK_HOLE, RACK_PITCH = 0.060, 0.005, 0.022, 0.018, 0.050
 # front camera framing the bin, the fixture and bucket A (robosuite's agentview crops both ends)
 SORTVIEW_POS = (0.95, -0.12, 1.60)
 SORTVIEW_TARGET = (-0.05, -0.12, 0.82)
@@ -95,6 +101,10 @@ class SortTaskParams:
     bin_xy: tuple = (0.0, -0.22)  # table frame
     hole_xy: tuple = (0.05, 0.15)
     bucket_xy: tuple = (-0.26, -0.46)  # beside the tray, away from the arm at the hole (V4)
+    # "tray": bolts are dropped into the tray with the nuts. "rack": bolts stand head-up in a
+    # rack (kitting presentation) and are picked by the head from above; nuts stay in the tray.
+    bolt_presentation: str = "tray"
+    rack_xy: tuple = (-0.05, 0.01)
 
 
 @dataclass
@@ -258,6 +268,8 @@ class SortBoltsNuts(ManipulationEnv):
         )
         hole_geoms(h, "fixture")
         static.append(h)
+        if self.task.bolt_presentation == "rack":
+            static.append(self._rack_body(arena.worldbody))
         # every surface a steel part lands on is stiff too (contact parameters mix, V1)
         for body in static:
             for g in body.iter("geom"):
@@ -331,18 +343,92 @@ class SortBoltsNuts(ManipulationEnv):
         self.pads = TactilePads(m, prefix=grip.naming_prefix) if self.use_tactile else None
 
     # -- spawning ----------------------------------------
+    @property
+    def rack_holes(self) -> np.ndarray:
+        """(n, 3) world centres of the rack holes at the plate's top face."""
+        c = self._table_to_world(self.task.rack_xy, RACK_TOP)
+        k = np.arange(self.task.n_bolts) - (self.task.n_bolts - 1) / 2
+        return np.stack([c + [RACK_PITCH * j, 0.0, 0.0] for j in k])
+
+    def _rack_body(self, worldbody):
+        n = self.task.n_bolts
+        c = self._table_to_world(self.task.rack_xy)
+        b = ET.SubElement(worldbody, "body", name="rack", pos=array_to_string(c))
+        half_len = RACK_PITCH * n / 2
+        zc = RACK_TOP - RACK_T / 2
+        bar = (RACK_W - RACK_HOLE) / 2
+        rgba = "0.45 0.47 0.50 1"
+        for sgn in (-1, 1):  # the two long bars beside the holes
+            ET.SubElement(
+                b,
+                "geom",
+                name=f"rack_bar{sgn:+d}",
+                type="box",
+                rgba=rgba,
+                size=array_to_string([half_len, bar / 2, RACK_T / 2]),
+                pos=array_to_string([0, sgn * (RACK_HOLE / 2 + bar / 2), zc]),
+            )
+        xs = (np.arange(n + 1) - n / 2) * RACK_PITCH  # bridges between / beyond the holes
+        for j, x in enumerate(xs):
+            w = (RACK_PITCH - RACK_HOLE) / 2
+            ET.SubElement(
+                b,
+                "geom",
+                name=f"rack_bridge{j}",
+                type="box",
+                rgba=rgba,
+                size=array_to_string([w / 2 if 0 < j < n else w / 4, RACK_HOLE / 2, RACK_T / 2]),
+                pos=array_to_string([x, 0, zc]),
+            )
+        for sgn in (-1, 1):  # legs at the ends
+            ET.SubElement(
+                b,
+                "geom",
+                name=f"rack_leg{sgn:+d}",
+                type="box",
+                rgba=rgba,
+                size=array_to_string([0.005, RACK_W / 2, (RACK_TOP - RACK_T) / 2]),
+                pos=array_to_string([sgn * (half_len + 0.005), 0, (RACK_TOP - RACK_T) / 2]),
+            )
+        return b
+
+    def _in_rack(self, i: int) -> bool:
+        pos, _ = self.part_pose(i)
+        c = self._table_to_world(self.task.rack_xy, RACK_TOP)
+        half = RACK_PITCH * self.task.n_bolts / 2
+        return bool(
+            self.task.bolt_presentation == "rack"
+            and abs(pos[0] - c[0]) < half
+            and abs(pos[1] - c[1]) < RACK_W / 2
+            and abs(pos[2] - c[2]) < 0.02
+        )
+
     def _sample_spawn(self, rng) -> list[tuple[np.ndarray, np.ndarray]]:
-        """Rejection-sample non-overlapping poses above the bin (bounding spheres)."""
+        """Rejection-sample non-overlapping poses above the bin (bounding spheres); in rack mode
+        the bolts stand in the rack holes, two head flats facing +-y (yaw jitter +-5 deg)."""
         radius = {"bolt": 0.032, "nut": 0.017}
         lx, ly = BIN_SIZE[0] / 2 - 0.06, BIN_SIZE[1] / 2 - 0.06
         c = self.bin_floor
         poses: list[tuple[np.ndarray, np.ndarray]] = []
+        rack = self.task.bolt_presentation == "rack"
+        holes = self.rack_holes if rack else None
         for p in self.parts:
+            if rack and p.kind == "bolt":
+                k = sum(q.kind == "bolt" for q in self.parts[: len(poses)])
+                yaw = math.radians(30.0 + rng.uniform(-5, 5))  # flats at 30+60k deg -> +-y
+                poses.append(
+                    (
+                        holes[k] + [0, 0, 0.0005],
+                        np.array([math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)]),
+                    )
+                )
+                continue
             for _ in range(1000):
                 pos = c + [rng.uniform(-lx, lx), rng.uniform(-ly, ly), rng.uniform(0.03, 0.11)]
                 ok = all(
                     np.linalg.norm(pos - q[0]) > radius[p.kind] + radius[o.kind] + 0.004
                     for q, o in zip(poses, self.parts, strict=False)
+                    if not (rack and o.kind == "bolt")
                 )
                 if ok:
                     break
@@ -394,6 +480,9 @@ class SortBoltsNuts(ManipulationEnv):
         return float(np.linalg.norm(self.sim.data._data.qvel[da : da + 3]))
 
     def _in_bin(self, i: int) -> bool:
+        """In the pick-up area: the tray, or the rack in rack mode."""
+        if self._in_rack(i):
+            return True
         pos, _ = self.part_pose(i)
         rel = pos - self.bin_floor
         return bool(

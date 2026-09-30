@@ -235,3 +235,33 @@ def test_tau_ext_free_motion_is_zero_in_env():
         assert worst < 1e-3
     finally:
         e.close()
+
+
+def test_rack_presentation_spawns_bolts_upright():
+    """bolt_presentation='rack' (opt-in): bolts stand head-up in the rack, flats facing +-y."""
+    from fvb.envs.sort_bolts_nuts import SortTaskParams
+
+    e = suite.make(
+        "SortBoltsNuts",
+        robots="Panda",
+        has_renderer=False,
+        has_offscreen_renderer=False,
+        use_camera_obs=False,
+        seed=3,
+        task=SortTaskParams(bolt_presentation="rack"),
+    )
+    try:
+        e.reset()
+        holes = e.rack_holes
+        for i, p in enumerate(e.parts):
+            assert e._in_bin(i), p.body
+            if p.kind == "bolt":
+                pos, R = e.part_pose(i)
+                assert e._in_rack(i)
+                assert e.bolt_geometry(i)["tilt_deg"] < 2.0
+                assert np.min(np.linalg.norm(holes[:, :2] - pos[:2], axis=1)) < 0.002
+                assert abs(pos[2] - holes[0, 2]) < 0.002  # head resting on the plate
+            else:
+                assert not e._in_rack(i)
+    finally:
+        e.close()
