@@ -509,7 +509,15 @@ class SortExpert:
             return a
 
         if kind == "nut":
-            bucket = env.bucket_floor + [0, 0, BUCKET_H + 0.06]
+            # drop low (3 cm over the rim) and at a different spot per nut: dropped from 6 cm
+            # onto a nut already in the bucket, the steel-steel impact flung nuts out of it
+            k = sum(p.kind == "nut" and p.status == "in_bucket" for p in env.parts)
+            ang = 2 * math.pi * k / 3
+            bucket = env.bucket_floor + [
+                0.045 * math.cos(ang),
+                0.045 * math.sin(ang),
+                BUCKET_H + 0.03,
+            ]
             if self.phase == "carry":
                 a, ep, _ = self.track(bucket, frame(R[:, 0], DOWN))
                 if not self._held(i):

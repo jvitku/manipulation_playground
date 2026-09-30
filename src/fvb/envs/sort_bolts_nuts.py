@@ -65,6 +65,7 @@ BIN_SIZE = (0.36, 0.26)  # a bit wider than the plan's 300 x 220 mm: room for th
 # so reaching a part next to an 80 mm wall drove the palm into the wall (V4 expert, force abort)
 BIN_WALL_H = 0.04
 BUCKET_R, BUCKET_H = 0.10, 0.12
+BUCKET_FLOOR = "box"  # see fasteners.bucket_geoms (a disc floor ejected ~1/40 dropped nuts)
 
 SORTED = ("vanished", "in_bucket")
 # bolt rack: a narrow steel plate on two legs with square holes the shanks hang through. The
@@ -258,7 +259,7 @@ class SortBoltsNuts(ManipulationEnv):
         k = ET.SubElement(
             arena.worldbody, "body", name="bucket", pos=array_to_string(self.bucket_floor)
         )
-        bucket_geoms(k, "bucket", radius=BUCKET_R, height=BUCKET_H)
+        bucket_geoms(k, "bucket", radius=BUCKET_R, height=BUCKET_H, floor=BUCKET_FLOOR)
         static.append(k)
         h = ET.SubElement(
             arena.worldbody,

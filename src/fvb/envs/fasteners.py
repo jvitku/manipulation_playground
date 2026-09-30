@@ -307,18 +307,41 @@ def bin_geoms(parent: ET.Element, name: str, size=(0.30, 0.22), wall_h=0.08, t=0
         )
 
 
-def bucket_geoms(parent: ET.Element, name: str, radius=0.10, height=0.12, t=0.004, n=16) -> None:
-    """Round bucket: floor disc + ``n`` wall boxes, origin at the floor centre on the table."""
+def bucket_geoms(
+    parent: ET.Element,
+    name: str,
+    radius=0.10,
+    height=0.12,
+    t=0.004,
+    n=16,
+    floor: str = "cylinder",
+) -> None:
+    """Round bucket: floor + ``n`` wall boxes, origin at the floor centre on the table.
+
+    ``floor="box"`` uses a square plate under the walls instead of a disc: mesh-vs-cylinder
+    contacts occasionally threw a dropped steel nut out of the bucket (V4)."""
     rgba = "0.20 0.45 0.70 1"
-    ET.SubElement(
-        parent,
-        "geom",
-        name=f"{name}_floor",
-        type="cylinder",
-        size=_fmt([radius, t / 2]),
-        pos=_fmt([0, 0, t / 2]),
-        rgba=rgba,
-    )
+    if floor == "box":
+        size = [radius + t, radius + t, t / 2]
+        ET.SubElement(
+            parent,
+            "geom",
+            name=f"{name}_floor",
+            type="box",
+            size=_fmt(size),
+            pos=_fmt([0, 0, t / 2]),
+            rgba=rgba,
+        )
+    else:
+        ET.SubElement(
+            parent,
+            "geom",
+            name=f"{name}_floor",
+            type="cylinder",
+            size=_fmt([radius, t / 2]),
+            pos=_fmt([0, 0, t / 2]),
+            rgba=rgba,
+        )
     seg = 2 * radius * math.tan(math.pi / n)
     for i in range(n):
         a = 2 * math.pi * i / n
