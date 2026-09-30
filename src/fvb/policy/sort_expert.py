@@ -230,9 +230,13 @@ class SortExpert:
             return float(top[2])
         return float(env.table_offset[2])
 
-    def _clearance(self, point: np.ndarray, R: np.ndarray, aperture: float) -> float:
+    def _clearance(
+        self, point: np.ndarray, R: np.ndarray, aperture: float, target: int | None = None
+    ) -> float:
         """Smallest distance from sample points on the open fingers and the palm to the tray
-        walls, the fixture block and bucket A (points above an obstacle's top are free)."""
+        walls, the fixture block, bucket A and the other unsorted parts (points above an
+        obstacle's top are free). A finger landing on a neighbouring nut stopped the descent
+        11 mm short and the grasp missed (V4 seed 7020)."""
         env = self.env
         c, a = R[:, 0], R[:, 2]
         pts = []
@@ -241,6 +245,17 @@ class SortExpert:
                 pts.append(point + side * c * (aperture / 2 + 0.012) - a * s)
             for s in (0.05, 0.08):  # palm corners, ~100 mm to each side along the closing axis
                 pts.append(point + side * c * 0.105 - a * s)
+        others = []
+        for j, p in enumerate(env.parts):
+            pc, Rj = env.part_pose(j)
+            if p.status in ("vanished", "in_bucket") or np.linalg.norm(pc[:2] - point[:2]) > 0.2:
+                others.append((np.array([1e3, 1e3, -1e3]), 0.0))
+                continue
+            if p.kind == "bolt":  # centre of the bolt's length, radius half its length
+                pc = pc - Rj[:, 2] * DEFAULT_BOLT.length / 2
+                others.append((pc, 0.032))
+            else:
+                others.append((pc, 0.016))
         floor = env.bin_floor
         lx, ly = BIN_SIZE[0] / 2 - 0.005, BIN_SIZE[1] / 2 - 0.005
         top = env.hole_top
@@ -259,6 +274,9 @@ class SortExpert:
                 best = min(best, max(abs(q[0] - top[0]) - half, abs(q[1] - top[1]) - half))
             if q[2] <= bucket[2] + BUCKET_H + 0.005:  # bucket A (outer radius)
                 best = min(best, float(np.hypot(*(q[:2] - bucket[:2]))) - BUCKET_R - 0.004)
+            for j, (pc, rad) in enumerate(others):  # other parts: discs of their half-size
+                if q[2] <= pc[2] + rad and j != target:
+                    best = min(best, float(np.hypot(*(q[:2] - pc[:2]))) - rad)
         return best
 
     def _grasp_plan(self, i: int) -> tuple[np.ndarray, np.ndarray]:
@@ -336,7 +354,7 @@ class SortExpert:
         # rotation from now, tilt penalised.
         scored = []
         for p, R in cands:
-            clear = self._clearance(p, R, aperture)
+            clear = self._clearance(p, R, aperture, target=i)
             err, margin = ik_margin(env, p, R, self.pad_offset)
             reach = margin - 10.0 * err
             if kind == "bolt":
@@ -495,8 +513,12 @@ class SortExpert:
             a[:3] = np.clip(a[:3], -cap, cap)
             # touched something (a leaning part, the floor): stop pushing and grasp here
             touched = self.t_phase > 3 and np.linalg.norm(env.f_ext_hat()[:3]) > 15.0
-            if ep < 0.004 or touched or self.t_phase > 80:
+            if ep < 0.004 or touched or (self.t_phase > 160 and ep < 0.01):
                 self._go("close")
+            elif self.t_phase > 160:
+                # the slow final approach needs > 80 steps from travel height; closing at the
+                # old 80-step timeout shut the fingers 20 mm above a flat nut (3 misses, skip)
+                return self._fail_grasp()
             return a
         if self.phase == "close":
             self.gripper = CLOSE

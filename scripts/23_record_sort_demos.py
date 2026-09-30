@@ -37,11 +37,13 @@ def main() -> None:
     ap.add_argument("--camera-size", type=int, default=256)
     ap.add_argument("--no-cameras", action="store_true")
     ap.add_argument("--max-steps", type=int, default=3600)
+    ap.add_argument("--presentation", choices=("tray", "rack"), default="tray")
     args = ap.parse_args()
 
     import robosuite as suite
 
     import fvb.envs  # noqa: F401
+    from fvb.envs.sort_bolts_nuts import SortTaskParams
     from fvb.logging.sort_episode import SortEpisodeWriter, part_segments
     from fvb.policy.sort_expert import NO_NOISE, ExpertNoise, SortExpert
 
@@ -64,6 +66,7 @@ def main() -> None:
             camera_widths=args.camera_size,
             seed=seed,
             horizon=args.max_steps,
+            task=SortTaskParams(bolt_presentation=args.presentation),
         )
         obs = env.reset()
         expert = SortExpert(noise, seed)
@@ -77,6 +80,7 @@ def main() -> None:
                 "synthetic": True,
                 "expert_noise": noise.__dict__,
                 "env": "SortBoltsNuts",
+                "bolt_presentation": args.presentation,
             },
         )
         info = {"outcome": "running", "n_sorted": 0}
