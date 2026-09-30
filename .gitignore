@@ -7,3 +7,4 @@ __pycache__/
 .ruff_cache/
 /tmp/
 outputs/hf_cache/
+MUJOCO_LOG.TXT
