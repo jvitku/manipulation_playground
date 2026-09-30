@@ -24,8 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
-CAMERAS = {"sortview": "observation.images.front", "robot0_eye_in_hand": "observation.images.wrist"}
-STATE_KEYS = ("joint_pos", "eef_pos", "eef_quat", "gripper_qpos")
+from fvb.vla.sort_io import CAMERAS, STATE_KEYS  # one layout for training and evaluation
 
 
 def read_video(path: Path) -> np.ndarray:
