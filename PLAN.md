@@ -408,3 +408,35 @@ L = L_action + 0.1·L_torque. Also: ACT + force token (dropout 0 on that path, R
 | V8 | force features + seated / grasp-stable labels | offline detectors > 95 % on held-out episodes |
 | V9 | ACT + force token, TD3 + F/T obs, TA-SmolVLA | each vs its no-force twin, same seeds |
 | V10 | evaluation matrix, report, README | all cells with 95 % intervals; FINDINGS |
+
+**Status (2026-10-01 01:40).** V0–V3 done and pushed; V4 expert gate met on the rack presentation
+(below), demos recording; V5/V7 pipelines run end to end (reference results only).
+
+| id | status | deviations / notes |
+|---|---|---|
+| V0 | done | SmolVLA fine-tune: batch 16 in 5.9 GB, 126 ms per 50-step chunk; round trip < 200 ms |
+| V1 | done | pile gate refined: transient penetration < 2 mm, resting < 0.5 mm |
+| V2 | done | pads protrude 1.5 mm past the finger hull; tau_J also counts joint friction and end stops |
+| V3 | done | `sortview` camera (agentview cropped the scene); vanished bolts parked on the floor 5 m away |
+| V4 | expert gate met (rack), demos recording | see below |
+| V5 | pipeline done, reference only | ACT on per-part tray demos: 0–1 / 60 parts; policies never came within 3 cm of a part |
+| V7 | pipeline done, reference only | SmolVLA on per-part tray demos: 0 / 30 parts; same approach-phase failure |
+
+V4 findings that changed the design (all journaled):
+
+* **Bolt presentation.** With bolts dropped into the tray the scripted expert plateaued at ~58 %
+  of parts (the head-up reorientation of a lying bolt with a two-pad gripper is fragile), and
+  learned policies failed to locate parts. Opt-in `SortTaskParams(bolt_presentation="rack")`:
+  bolts stand head-up in a narrow raised rack (a kitting presentation), nuts stay in the tray.
+  Noise-free expert on 50 unseen seeds: 47/50 episodes, 297/300 parts. **Pending the user's
+  decision** to make the rack the V4 design; the tray remains the env default.
+* **Gate reading.** The ≥ 90 % gate is measured on the expert without its injected "human"
+  noise; the recorded demos carry the noise (action jitter 0.02, hole-estimate and grasp noise,
+  pauses) and training uses successful episodes / per-part segments. **Pending confirmation.**
+* **Scene.** Tray 360 × 260 × 40 mm instead of the 300 × 220 × 80 mm bin (the palm hit tall
+  walls); bucket A beside the tray at (−0.26, −0.46) with a box floor (a disc floor ejected
+  ~1/40 dropped nuts through a mesh-vs-cylinder contact artefact).
+* **Insertion.** Hover over the hole, lower the tip 8 mm, release; spiral search over missed
+  entries (no contact-driven push-in: a pushed bolt pivoted in the grasp).
+* **Gripper.** Finger gain 4000 (~45 N grip, under the Hand's 70 N); learned policies'
+  gripper output is snapped to the expert's −1 / 0 / +1 because robosuite integrates sign(a).
