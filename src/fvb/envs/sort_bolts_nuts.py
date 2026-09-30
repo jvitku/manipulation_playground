@@ -416,7 +416,9 @@ class SortBoltsNuts(ManipulationEnv):
         for p in self.parts:
             if rack and p.kind == "bolt":
                 k = sum(q.kind == "bolt" for q in self.parts[: len(poses)])
-                yaw = math.radians(30.0 + rng.uniform(-5, 5))  # flats at 30+60k deg -> +-y
+                # head flats face 30 + 60k deg in the part frame, so yaw 0 puts two flats at
+                # +-y (across the rack; yaw 30 had put corners there)
+                yaw = math.radians(rng.uniform(-5, 5))
                 poses.append(
                     (
                         holes[k] + [0, 0, 0.0005],

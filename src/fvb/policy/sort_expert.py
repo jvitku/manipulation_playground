@@ -284,7 +284,10 @@ class SortExpert:
             # plate. Grasp noise may only raise it (lowered by 1-3 mm the fingers closed on the
             # rack bars: 37/50 noisy episodes force-aborted at the first lift)
             point = pos + axis * (0.010 + abs(self.grasp_noise[i]))
-            c = _horizontal(Rp @ [math.cos(math.pi / 6), math.sin(math.pi / 6), 0])
+            # the pair of flats facing across the rack (closest to world y): the fingers then
+            # sit beside the rack's bars; across another pair their width overlapped the bars
+            flats = [Rp @ [math.cos(t), math.sin(t), 0] for t in np.deg2rad(30 + 60 * np.arange(3))]
+            c = _horizontal(max(flats, key=lambda f: abs(f[1])))
             out = []
             for sgn in (1, -1):
                 R = frame(sgn * c, DOWN)
