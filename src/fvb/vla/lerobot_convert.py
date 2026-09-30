@@ -60,6 +60,7 @@ def convert(
     repo_id: str = "local/sort_synth",
     mode: str = "segments",
     force: bool = True,
+    only_success: bool = False,
 ) -> dict:
     """Write a LeRobotDataset at ``root``; returns counts."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -69,6 +70,8 @@ def convert(
     n_eps = n_frames = 0
     for ep in sorted(Path(p) for p in episode_dirs):
         meta = json.loads((ep / "meta.json").read_text())
+        if only_success and meta.get("outcome") != "success":
+            continue
         data = np.load(ep / "data.npz")
         cams = [c for c in meta["cameras"] if c in CAMERAS]
         videos = {c: read_video(ep / f"{c}.mp4") for c in cams}

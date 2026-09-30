@@ -22,12 +22,20 @@ def main() -> None:
     ap.add_argument("--repo-id", default="local/sort_synth")
     ap.add_argument("--mode", choices=("episode", "segments"), default="segments")
     ap.add_argument("--no-force", action="store_true", help="phase 1: drop torque/tactile")
+    ap.add_argument("--only-success", action="store_true", help="skip failed episodes")
     args = ap.parse_args()
 
     from fvb.vla.lerobot_convert import convert
 
     eps = sorted(e for r in args.raw for e in Path(r).glob("ep_*"))
-    out = convert(eps, Path(args.root), args.repo_id, args.mode, force=not args.no_force)
+    out = convert(
+        eps,
+        Path(args.root),
+        args.repo_id,
+        args.mode,
+        force=not args.no_force,
+        only_success=args.only_success,
+    )
     print(json.dumps({"raw_episodes": len(eps), **out}))
 
 
