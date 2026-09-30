@@ -78,3 +78,13 @@ def test_convert_and_load(tmp_path, mode, eps, frames):
     assert item["observation.images.front"].shape == (3, 32, 32)
     want = "put the nut in bucket A" if mode == "segments" else "sort the parts"
     assert item["task"].startswith(want)
+
+
+def test_convert_without_force(tmp_path):
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    raw = [tmp_path / "raw" / "ep_0"]
+    _fake_episode(raw[0])
+    convert(raw, tmp_path / "ds", "local/test", "segments", force=False)
+    ds = LeRobotDataset("local/test", root=tmp_path / "ds")
+    assert "observation.torque_hist" not in ds.features and "observation.state" in ds.features

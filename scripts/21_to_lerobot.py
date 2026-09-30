@@ -21,12 +21,13 @@ def main() -> None:
     )
     ap.add_argument("--repo-id", default="local/sort_synth")
     ap.add_argument("--mode", choices=("episode", "segments"), default="segments")
+    ap.add_argument("--no-force", action="store_true", help="phase 1: drop torque/tactile")
     args = ap.parse_args()
 
     from fvb.vla.lerobot_convert import convert
 
     eps = sorted(Path(args.raw).glob("ep_*"))
-    out = convert(eps, Path(args.root), args.repo_id, args.mode)
+    out = convert(eps, Path(args.root), args.repo_id, args.mode, force=not args.no_force)
     print(json.dumps({"raw_episodes": len(eps), **out}))
 
 

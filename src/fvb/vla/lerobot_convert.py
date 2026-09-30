@@ -34,7 +34,10 @@ def read_video(path: Path) -> np.ndarray:
         return np.stack([f.to_ndarray(format="rgb24") for f in c.decode(video=0)])
 
 
-def features(image_hw: tuple[int, int], cameras: list[str]) -> dict:
+FORCE_KEYS = ("observation.tau_ext", "observation.torque_hist", "observation.tactile")
+
+
+def features(image_hw: tuple[int, int], cameras: list[str], force: bool = True) -> dict:
     h, w = image_hw
     f = {
         CAMERAS[c]: {"dtype": "video", "shape": (h, w, 3), "names": ["height", "width", "channels"]}
@@ -45,11 +48,18 @@ def features(image_hw: tuple[int, int], cameras: list[str]) -> dict:
     f["observation.torque_hist"] = {"dtype": "float32", "shape": (150,), "names": None}
     f["observation.tactile"] = {"dtype": "float32", "shape": (32,), "names": None}
     f["action"] = {"dtype": "float32", "shape": (7,), "names": None}
+    if not force:  # phase 1: LeRobot types every extra observation.* key as robot state
+        for k in FORCE_KEYS:
+            del f[k]
     return f
 
 
 def convert(
-    episode_dirs: list[Path], root: Path, repo_id: str = "local/sort_synth", mode: str = "segments"
+    episode_dirs: list[Path],
+    root: Path,
+    repo_id: str = "local/sort_synth",
+    mode: str = "segments",
+    force: bool = True,
 ) -> dict:
     """Write a LeRobotDataset at ``root``; returns counts."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -67,7 +77,7 @@ def convert(
             ds = LeRobotDataset.create(
                 repo_id=repo_id,
                 fps=meta.get("fps", 20),
-                features=features(hw, cams),
+                features=features(hw, cams, force),
                 root=root,
                 robot_type="panda",
                 use_videos=True,
@@ -91,6 +101,9 @@ def convert(
                     "action": data["action"][i].astype(np.float32),
                     "task": task,
                 }
+                if not force:
+                    for k in FORCE_KEYS:
+                        del frame[k]
                 for c in cams:
                     frame[CAMERAS[c]] = videos[c][i]
                 ds.add_frame(frame)
