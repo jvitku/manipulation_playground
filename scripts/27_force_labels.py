@@ -8,8 +8,8 @@ fixture top). Physics decides the outcome. Events recorded:
 
 * ``grasp``: features at the end of the "close" phase; label 1 if the part is still held when
   the lift finishes (the expert does not fail the grasp), else 0;
-* ``release``: features at the step the bolt is let go; label 1 if it is seated / vanished within
-  2 s, else 0.
+* ``release``: features at the step the bolt is let go; label 1 if the tip is inside the hole at
+  that moment (> 2 mm deep, within the hole radius), else 0.
 
 Features: torque_hist (10 x 15 = tau_ext + tactile summary over 2 s), tactile (2 x 4 x 4, max over
 the step), tau_ext (7). Writes <out>/events.npz (X, y, kind, seed).
@@ -82,7 +82,12 @@ def main() -> None:
             if prev == "close" and ex.phase == "lift":
                 pending.append(["grasp", k, feats, ex.part, n_fail])
             if prev == "enter" and ex.phase == "let_go":
-                pending.append(["release", k, feats, ex.part, None])
+                # label at the moment of release: is the tip inside the hole (> 2 mm deep, within
+                # the hole radius)? "Seated later" also depended on the chamfer guiding a blocked
+                # bolt in after release, which no sensor can know at release (round 3: 78 %)
+                g = env.bolt_geometry(ex.part)
+                in_hole = g["depth"] > 0.002 and g["tip_lat"] < 0.0085
+                X.append(feats), y.append(int(in_hole)), kind.append(1), sd.append(seed)
             # resolve pending events
             for ev in list(pending):
                 knd, k0, f, part, nf0 = ev
@@ -92,14 +97,7 @@ def main() -> None:
                         label = 0 if failed else 1
                         X.append(f), y.append(label), kind.append(0), sd.append(seed)
                         pending.remove(ev)
-                else:
-                    st = env.parts[part].status
-                    if st in ("seated", "vanished"):
-                        X.append(f), y.append(1), kind.append(1), sd.append(seed)
-                        pending.remove(ev)
-                    elif k - k0 > 40:
-                        X.append(f), y.append(0), kind.append(1), sd.append(seed)
-                        pending.remove(ev)
+
             n_fail = len(ex.fail_log)
             if done or ex.phase == "done":
                 break

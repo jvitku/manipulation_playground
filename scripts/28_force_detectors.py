@@ -39,7 +39,7 @@ def fit_logreg(X, y, l2=1e-2, iters=3000, lr=0.5):
     return w, b
 
 
-def fit_mlp(X, y, hidden=64, iters=3000, lr=3e-3, l2=1e-3, seed=0):
+def fit_mlp(X, y, hidden=128, iters=6000, lr=3e-3, l2=1e-3, seed=0):
     """One hidden layer (tanh), class-balanced logistic loss, full-batch Adam (numpy)."""
     rng = np.random.default_rng(seed)
     p = {
