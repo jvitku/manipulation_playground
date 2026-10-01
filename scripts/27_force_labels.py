@@ -12,7 +12,8 @@ fixture top). Physics decides the outcome. Events recorded:
   that moment (> 2 mm deep, within the hole radius), else 0.
 
 Features: torque_hist (10 x 15 = tau_ext + tactile summary over 2 s), tactile (2 x 4 x 4, max over
-the step), tau_ext (7). Writes <out>/events.npz (X, y, kind, seed).
+the step), tau_ext (7), wrench history (10 x 6, Cartesian at the grip site).
+Writes <out>/events.npz (X, y, kind, seed).
 """
 
 from __future__ import annotations
@@ -57,6 +58,7 @@ def main() -> None:
         ex = SortExpert(ExpertNoise(), seed)
         ex.reset(env)
         ex.hole_est0 = ex.hole_est.copy()
+        site = env.sim.model._model.site(env.grip_site).name
         pending: list = []  # (kind, step, features, part)
         n_fail = 0
         for k in range(3600):
@@ -77,7 +79,12 @@ def main() -> None:
                     ex.hole_est = env.hole_top + [0.003 * np.cos(ang), 0.003 * np.sin(ang), 0.0]
                 else:
                     ex.hole_est = ex.hole_est0.copy()
-            feats = np.concatenate([obs["torque_hist"], obs["tactile"], obs["tau_ext"]])
+            # + the wrench history: each tau_ext frame mapped through pinv(J^T) at this step (the
+            # arm is quasi-static over the 2 s window) - Cartesian, unlike pose-dependent joint
+            # torques, which a simple classifier cannot undo
+            jt = np.linalg.pinv(env.jts.jacobian(env.sim.data._data, site).T)
+            wrench = (jt @ obs["torque_hist"].reshape(10, 15)[:, :7].T).T.ravel()
+            feats = np.concatenate([obs["torque_hist"], obs["tactile"], obs["tau_ext"], wrench])
             obs, _, done, info = env.step(a)
             if prev == "close" and ex.phase == "lift":
                 pending.append(["grasp", k, feats, ex.part, n_fail])

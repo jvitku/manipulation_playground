@@ -383,3 +383,36 @@ class SortPickEnv(SortInsertEnv):
     def reset(self, seed: int) -> np.ndarray:
         self.held_up = 0
         return super().reset(seed)
+
+
+def _attach_common(skill, env, expert, obs) -> None:
+    skill.env, skill.expert, skill.obs = env, expert, obs
+    skill.part = expert.part
+    skill.t = 0
+
+
+def attach_insert(skill: SortInsertEnv, env, expert, obs) -> np.ndarray:
+    """Hand a live episode to the insert skill (expert hovering a bolt <= 3 cm above the hole)."""
+    _attach_common(skill, env, expert, obs)
+    skill.R = expert.R_insert
+    f = skill._frame()
+    skill._frames.clear()
+    for _ in range(skill.history):
+        skill._frames.append(f)
+    skill._depth, skill._phi_prev = skill.depth(), skill._phi()
+    return skill._obs()
+
+
+def attach_pick(skill: SortPickEnv, env, expert, obs, rng) -> np.ndarray:
+    """Hand a live episode to the pick skill (expert about to descend onto its planned grasp)."""
+    _attach_common(skill, env, expert, obs)
+    skill.held_up = 0
+    skill.grasp_point, skill.R = expert.plan[0].copy(), expert.plan[1].copy()
+    skill.grasp_est = skill.grasp_point + np.r_[rng.normal(0, 0.003, 2), 0.0]
+    skill.start_z = float(expert.pad_point()[2])
+    f = skill._frame()
+    skill._frames.clear()
+    for _ in range(skill.history):
+        skill._frames.append(f)
+    skill._depth, skill._phi_prev = skill.depth(), skill._phi()
+    return skill._obs()

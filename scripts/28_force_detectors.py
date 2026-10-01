@@ -21,6 +21,8 @@ import numpy as np
 HIST = np.arange(150).reshape(10, 15)
 GROUPS = {
     "all": np.arange(189),
+    "all+wrench": np.arange(249),
+    "wrench": np.arange(189, 249),
     "torque": np.r_[HIST[:, :7].ravel(), np.arange(182, 189)],
     "tactile": np.r_[HIST[:, 7:].ravel(), np.arange(150, 182)],
 }
@@ -115,7 +117,7 @@ def main() -> None:
             w, b = fit_logreg((X[tr][:, cols] - mu) / sd, y[tr])
             p = 1 / (1 + np.exp(-(((X[te][:, cols] - mu) / sd) @ w + b)))
             res[g] = scores(y[te], (p > 0.5).astype(float))
-            if g == "all":
+            if g == "all+wrench":
                 net = fit_mlp((X[tr][:, cols] - mu) / sd, y[tr])
                 res["mlp"] = scores(y[te], (net((X[te][:, cols] - mu) / sd) > 0.5).astype(float))
         out[name] = res
