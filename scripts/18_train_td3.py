@@ -144,6 +144,9 @@ def main() -> None:
     ap.add_argument(
         "--grasp-rand", type=int, default=0, help="sort_insert: randomised in-hand bolt offsets"
     )
+    ap.add_argument(
+        "--centred", type=int, default=0, help="sort_pick: bolt picks must be centred to count"
+    )
     args = ap.parse_args()
 
     import torch
@@ -176,6 +179,7 @@ def main() -> None:
             rp=rp,
             cache=args.cache,
             **({"grasp_rand": bool(args.grasp_rand)} if args.task == "sort_insert" else {}),
+            **({"centred": bool(args.centred)} if args.task == "sort_pick" else {}),
         )
     else:
         norm = Norm.from_json(json.loads(Path(args.norm).read_text()))

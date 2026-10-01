@@ -272,9 +272,15 @@ class SortPickEnv(SortInsertEnv):
     a lift bonus, time cost, force penalty, success bonus / abort penalty.
     """
 
-    def __init__(self, *args, z_scale: float = 0.006, xy_scale: float = 0.003, **kw):
+    def __init__(
+        self, *args, z_scale: float = 0.006, xy_scale: float = 0.003, centred: bool = False, **kw
+    ):
         super().__init__(*args, z_scale=z_scale, xy_scale=xy_scale, **kw)
         self.act_dim = 4
+        # centred: a bolt pick only counts when the head sits within 2.5 mm of the pad centre
+        # along the pad and tilts < 5 deg - the in-hand pose the insert skill needs (an
+        # unconstrained learned pick left bolts 3-7 mm off centre and the sequencer failed)
+        self.centred = centred
         self.max_steps = kw.get("max_steps", 200)
 
     def _setup(self, seed: int, max_setup_steps: int = 700, start_h: float = 0.0) -> bool:
@@ -332,6 +338,13 @@ class SortPickEnv(SortInsertEnv):
     def depth(self) -> float:  # used by the base reset; the lift height for this skill
         return float(self.expert.pad_point()[2] - self.start_z)
 
+    def grasp_quality_ok(self) -> bool:
+        pos, Rp = self.env.part_pose(self.part)
+        _, R = self.expert.grip_pose()
+        off = R.T @ (pos - self.expert.pad_point())
+        tilt = np.degrees(np.arccos(np.clip(Rp[2, 2], -1, 1)))
+        return abs(off[1]) < 0.0025 and tilt < 5.0
+
     def expert_action(self) -> np.ndarray:
         """Privileged demonstrator: to the true grasp point, close, lift."""
         ex = self.expert
@@ -361,6 +374,8 @@ class SortPickEnv(SortInsertEnv):
         phi = self._phi()
         f = float(np.linalg.norm(self.env.f_ext_hat()[:3]))
         held = ex._held(self.part) and self.env.parts[self.part].status == "grasped"
+        if held and self.centred and self.env.parts[self.part].kind == "bolt":
+            held = self.grasp_quality_ok()
         lift = self.depth()
         self.held_up = getattr(self, "held_up", 0) + 1 if held and lift > 0.05 else 0
         abort = self.env.outcome == "force_abort" or f > self.env.task.force_abort_N
