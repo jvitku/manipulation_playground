@@ -39,6 +39,37 @@ def fit_logreg(X, y, l2=1e-2, iters=3000, lr=0.5):
     return w, b
 
 
+def fit_mlp(X, y, hidden=64, iters=3000, lr=3e-3, l2=1e-3, seed=0):
+    """One hidden layer (tanh), class-balanced logistic loss, full-batch Adam (numpy)."""
+    rng = np.random.default_rng(seed)
+    p = {
+        "W1": rng.normal(0, 1 / np.sqrt(X.shape[1]), (X.shape[1], hidden)),
+        "b1": np.zeros(hidden),
+        "w2": rng.normal(0, 1 / np.sqrt(hidden), hidden),
+        "b2": np.zeros(1),
+    }
+    m = {k: np.zeros_like(v) for k, v in p.items()}
+    v = {k: np.zeros_like(v) for k, v in p.items()}
+    pos = max(y.mean(), 1e-3)
+    sw = np.where(y == 1, 0.5 / pos, 0.5 / max(1 - pos, 1e-3))
+    for t in range(1, iters + 1):
+        h = np.tanh(X @ p["W1"] + p["b1"])
+        q = 1 / (1 + np.exp(-(h @ p["w2"] + p["b2"])))
+        g = sw * (q - y) / len(y)
+        dh = np.outer(g, p["w2"]) * (1 - h**2)
+        grads = {
+            "w2": h.T @ g + l2 * p["w2"],
+            "b2": np.array([g.sum()]),
+            "W1": X.T @ dh + l2 * p["W1"],
+            "b1": dh.sum(0),
+        }
+        for k in p:
+            m[k] = 0.9 * m[k] + 0.1 * grads[k]
+            v[k] = 0.999 * v[k] + 0.001 * grads[k] ** 2
+            p[k] -= lr * (m[k] / (1 - 0.9**t)) / (np.sqrt(v[k] / (1 - 0.999**t)) + 1e-8)
+    return lambda Z: 1 / (1 + np.exp(-(np.tanh(Z @ p["W1"] + p["b1"]) @ p["w2"] + p["b2"])))
+
+
 def scores(y, pred):
     acc = float(np.mean(pred == y))
     tpr = float(np.mean(pred[y == 1] == 1)) if np.any(y == 1) else float("nan")
@@ -50,9 +81,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dir", default="outputs/v8_labels")
     ap.add_argument("--test-frac", type=float, default=0.3)
+    ap.add_argument("--glob", default="part*/events.npz")
     args = ap.parse_args()
 
-    parts = sorted(Path(args.dir).glob("part*/events.npz"))
+    parts = sorted(Path(args.dir).glob(args.glob))
     d = [np.load(p) for p in parts]
     X = np.concatenate([e["X"] for e in d])
     y = np.concatenate([e["y"] for e in d]).astype(float)
@@ -83,10 +115,13 @@ def main() -> None:
             w, b = fit_logreg((X[tr][:, cols] - mu) / sd, y[tr])
             p = 1 / (1 + np.exp(-(((X[te][:, cols] - mu) / sd) @ w + b)))
             res[g] = scores(y[te], (p > 0.5).astype(float))
+            if g == "all":
+                net = fit_mlp((X[tr][:, cols] - mu) / sd, y[tr])
+                res["mlp"] = scores(y[te], (net((X[te][:, cols] - mu) / sd) > 0.5).astype(float))
         out[name] = res
         print(
             name,
-            json.dumps({g: round(res[g]["acc"], 3) for g in ("majority", *GROUPS)}),
+            json.dumps({g: round(res[g]["acc"], 3) for g in ("majority", *GROUPS, "mlp")}),
             f"(test n={res['n_test']}, positives {res['pos_rate_test']:.2f})",
         )
     (Path(args.dir) / "detectors.json").write_text(json.dumps(out, indent=2))

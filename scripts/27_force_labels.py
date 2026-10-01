@@ -56,6 +56,7 @@ def main() -> None:
         obs = env.reset()
         ex = SortExpert(ExpertNoise(), seed)
         ex.reset(env)
+        ex.hole_est0 = ex.hole_est.copy()
         pending: list = []  # (kind, step, features, part)
         n_fail = 0
         for k in range(3600):
@@ -68,6 +69,14 @@ def main() -> None:
                 # blocked on the chamfer / top face) leaves a contact signature. Releasing above
                 # the top (tried: -4 mm) gave labels no force sensor can see (75 % detector).
                 ex.release_depth = float(rng.uniform(0.001, 0.010))
+                # half the bolt attempts aim 3 mm off and let go where the tip is blocked: the
+                # negatives a seated detector must catch (with the default expert ~95 % seat)
+                ex.release_on_block = bool(rng.random() < 0.5)
+                if ex.release_on_block:
+                    ang = rng.uniform(0, 2 * np.pi)
+                    ex.hole_est = env.hole_top + [0.003 * np.cos(ang), 0.003 * np.sin(ang), 0.0]
+                else:
+                    ex.hole_est = ex.hole_est0.copy()
             feats = np.concatenate([obs["torque_hist"], obs["tactile"], obs["tau_ext"]])
             obs, _, done, info = env.step(a)
             if prev == "close" and ex.phase == "lift":

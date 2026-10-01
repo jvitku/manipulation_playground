@@ -115,6 +115,7 @@ class SortExpert:
         # extra grasp-height offset (m) and the tip depth at which a bolt is released (m)
         self.grasp_dz = 0.0
         self.release_depth = 0.008
+        self.release_on_block = False  # V8: let go where the tip is blocked instead of retrying
         self.rng = np.random.default_rng(seed)
 
     # -- env access ----------------------------------------
@@ -691,7 +692,9 @@ class SortExpert:
             pad_goal = self.pad_point() + (tip_goal - tip) + np.r_[self.i_err, 0.0]
             a, _, _ = self.track(pad_goal, self.R_insert, gain=0.3)
             caught = np.linalg.norm(env.f_ext_hat()[:3]) > 20.0 and depth < 0.006
-            if caught or (self.t_phase > 80 and depth < 0.003):
+            if self.release_on_block and (caught or (self.t_phase > 40 and depth < 0.003)):
+                self._go("let_go")
+            elif caught or (self.t_phase > 80 and depth < 0.003):
                 # the tip sits on the chamfer or the top face: the hole is not where the expert
                 # thinks. Next point of a 0.7 mm-pitch spiral around its estimate, re-hover.
                 self.search_k += 1
