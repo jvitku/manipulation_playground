@@ -64,6 +64,8 @@ def main() -> None:
 
     from fvb.policy.sort_skill_env import SortInsertEnv
 
+    torch.set_num_threads(2)  # 10 parallel runs with torch's default (all cores) pushed the
+    # 24-core host to a load of ~137 and stalled every run
     torch.manual_seed(args.seed)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
