@@ -3,7 +3,7 @@
 
 The rack expert (with human-like noise) runs SortBoltsNuts without cameras. Per attempt it is
 perturbed so both outcomes occur: a random extra grasp height (pads -6 ... +12 mm off their
-normal height) and, for bolts, a random release depth (-4 ... +10 mm of the tip relative to the
+normal height) and, for bolts, a random release depth (+1 ... +10 mm of the tip below the
 fixture top). Physics decides the outcome. Events recorded:
 
 * ``grasp``: features at the end of the "close" phase; label 1 if the part is still held when
@@ -64,7 +64,10 @@ def main() -> None:
                 ex.grasp_dz = float(rng.uniform(-0.006, 0.012))
             a = ex.act()
             if ex.phase == "enter" and prev != "enter":
-                ex.release_depth = float(rng.uniform(-0.004, 0.010))
+                # >= 1 mm: the tip must reach the top-face level, so the outcome (entered freely vs
+                # blocked on the chamfer / top face) leaves a contact signature. Releasing above
+                # the top (tried: -4 mm) gave labels no force sensor can see (75 % detector).
+                ex.release_depth = float(rng.uniform(0.001, 0.010))
             feats = np.concatenate([obs["torque_hist"], obs["tactile"], obs["tau_ext"]])
             obs, _, done, info = env.step(a)
             if prev == "close" and ex.phase == "lift":
