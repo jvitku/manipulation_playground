@@ -409,18 +409,20 @@ L = L_action + 0.1·L_torque. Also: ACT + force token (dropout 0 on that path, R
 | V9 | ACT + force token, TD3 + F/T obs, TA-SmolVLA | each vs its no-force twin, same seeds |
 | V10 | evaluation matrix, report, README | all cells with 95 % intervals; FINDINGS |
 
-**Status (2026-10-01 01:40).** V0–V3 done and pushed; V4 expert gate met on the rack presentation
-(below), demos recording; V5/V7 pipelines run end to end (reference results only).
+**Status (2026-10-01 13:30).** V0–V4 done (V4 on the rack presentation, pushed); V6 skills
+trained, sequencer under repair; V8 gate not met; V5/V7 whole-task policies fail.
 
-| id | status | deviations / notes |
+| id | status | result / notes |
 |---|---|---|
 | V0 | done | SmolVLA fine-tune: batch 16 in 5.9 GB, 126 ms per 50-step chunk; round trip < 200 ms |
 | V1 | done | pile gate refined: transient penetration < 2 mm, resting < 0.5 mm |
 | V2 | done | pads protrude 1.5 mm past the finger hull; tau_J also counts joint friction and end stops |
 | V3 | done | `sortview` camera (agentview cropped the scene); vanished bolts parked on the floor 5 m away |
-| V4 | expert gate met (rack), demos recording | see below |
-| V5 | pipeline done, reference only | ACT on per-part tray demos: 0–1 / 60 parts; policies never came within 3 cm of a part |
-| V7 | pipeline done, reference only | SmolVLA on per-part tray demos: 0 / 30 parts; same approach-phase failure |
+| V4 | done (rack) | expert 47/50 unseen seeds (noise-free reading); 200 noisy demos validate (104 complete) |
+| V5 | fails (reference) | ACT on tray per-part demos 1/60 parts, on 104 rack episodes 0/36 - never reaches a part |
+| V6 | insert + pick done; sequencer failing | insert TD3+BC 10 seeds: **force 74.8 % vs no force 56.2 % (p = 0.0005)**; pick 99.0 % vs 99.6 % (ceiling); sequencer 0/10: learned picks leave the bolt 3-7 mm off centre, the insert skill only saw centred grasps - retraining on randomised in-hand offsets |
+| V7 | fails (reference) | SmolVLA on 104 rack episodes 0/36 parts (closest approach 30-35 mm) |
+| V8 | gate not met | grasp-stable 94-95 % (MLP, tactile-driven), tip-in-hole at release 91 % (torque-driven); 5 data rounds |
 
 V4 findings that changed the design (all journaled):
 
