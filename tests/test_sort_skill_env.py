@@ -54,3 +54,19 @@ def test_cached_setup_restores_the_same_start():
     np.testing.assert_allclose(o1, o2, atol=0.01)
     assert abs(e.depth() - d1) < 1e-4
     assert e.expert._held(e.part)
+
+
+def test_pick_env_demonstrator_lifts_the_part():
+    from fvb.policy.sort_skill_env import SortPickEnv
+
+    e = SortPickEnv(use_force=True, noise=False, max_steps=200)
+    o = e.reset(2)
+    assert o.shape == (e.obs_dim,) and e.act_dim == 4
+    assert not e.expert._held(e.part) or e.expert.gripper <= 0
+    reason = None
+    for _ in range(200):
+        _, _, term, trunc, info = e.step(e.expert_action())
+        if term or trunc:
+            reason = info["reason"]
+            break
+    assert reason == "success", info

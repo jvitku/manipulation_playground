@@ -136,7 +136,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--task",
-        choices=["arm", "sort_insert"],
+        choices=["arm", "sort_insert", "sort_pick"],
         default="arm",
         help="sort_insert: the Stage 2 insertion skill (fvb.policy.sort_skill_env)",
     )
@@ -162,13 +162,14 @@ def main() -> None:
     rp = RewardParams()
     cfg = TD3Config()
     world = None
-    if args.task == "sort_insert":
-        from fvb.policy.sort_skill_env import SortInsertEnv
+    if args.task in ("sort_insert", "sort_pick"):
+        from fvb.policy.sort_skill_env import SortInsertEnv, SortPickEnv
 
-        env = SortInsertEnv(
+        env_cls = SortPickEnv if args.task == "sort_pick" else SortInsertEnv
+        env = env_cls(
             use_force=bool(args.use_force),
             history=args.history,
-            xy_scale=1e-3 * args.xy_scale_mm,
+            **({"xy_scale": 1e-3 * args.xy_scale_mm} if args.task == "sort_insert" else {}),
             rp=rp,
             cache=args.cache,
         )
@@ -185,7 +186,7 @@ def main() -> None:
             xy_scale=1e-3 * args.xy_scale_mm,
         )
     nxy = args.expl_noise if args.expl_noise_xy is None else args.expl_noise_xy
-    noise_std = np.array([nxy, nxy, args.expl_noise])
+    noise_std = np.array([nxy, nxy, args.expl_noise] + [args.expl_noise] * (env.act_dim - 3))
     priv_dim = 3 if args.asym_critic else 0
     agent = TD3(env.obs_dim, env.act_dim, cfg, device, priv_dim=priv_dim)
     buf = ReplayBuffer(env.obs_dim, env.act_dim, min(args.buffer, args.steps), priv_dim)

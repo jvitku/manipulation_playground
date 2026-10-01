@@ -250,3 +250,136 @@ class SortInsertEnv:
             "priv": self.privileged(),
         }
         return self._obs(), rp.reward_scale * r, terminated, truncated, info
+
+
+class SortPickEnv(SortInsertEnv):
+    """V6: the pick skill (grasp one given part and lift it), same API as ``SortInsertEnv``.
+
+    Set-up: the expert (rack presentation, noise) selects the nearest part and brings the open,
+    yawed hand ~16 cm above it (its "above" phase); the agent takes over. It sees the pad point
+    relative to a noisy estimate of the grasp point (+-3 mm, a vision estimate), the gripper
+    width and the force channels; it acts with a pad delta (+-xy_scale, +-z_scale) and a gripper
+    command (> 0.5 close, < -0.5 open, else hold). Success: the part is held 5 cm above the
+    start height for 10 steps. Reward: progress of the pad towards the true grasp point [mm],
+    a lift bonus, time cost, force penalty, success bonus / abort penalty.
+    """
+
+    def __init__(self, *args, z_scale: float = 0.006, xy_scale: float = 0.003, **kw):
+        super().__init__(*args, z_scale=z_scale, xy_scale=xy_scale, **kw)
+        self.act_dim = 4
+        self.max_steps = kw.get("max_steps", 200)
+
+    def _setup(self, seed: int, max_setup_steps: int = 700, start_h: float = 0.0) -> bool:
+        from fvb.policy.sort_expert import NO_NOISE, ExpertNoise, SortExpert
+
+        self.env.reset()
+        ex = SortExpert(ExpertNoise() if self.noise else NO_NOISE, seed)
+        ex.reset(self.env)
+        self.expert = ex
+        for _ in range(max_setup_steps):
+            if ex.phase == "descend":
+                break
+            self.obs, _, _, self.info = self.env.step(ex.act())
+        if ex.phase != "descend":
+            return False
+        self.part = ex.part
+        self.grasp_point, self.R = ex.plan[0].copy(), ex.plan[1].copy()
+        rng = np.random.default_rng(seed)
+        self.grasp_est = self.grasp_point + np.r_[rng.normal(0, 0.003, 2), 0.0]
+        self.start_z = float(ex.pad_point()[2])
+        return True
+
+    def _save(self, key: int) -> None:
+        super()._save(key)
+        self._snap[key] = (
+            *self._snap[key],
+            self.grasp_point.copy(),
+            self.grasp_est.copy(),
+            self.start_z,
+        )
+
+    def _restore(self, key: int) -> None:
+        *base, gp, ge, sz = self._snap[key]
+        saved = self._snap[key]
+        self._snap[key] = tuple(base)
+        super()._restore(key)
+        self._snap[key] = saved
+        self.grasp_point, self.grasp_est, self.start_z = gp.copy(), ge.copy(), sz
+
+    def _dist_mm(self) -> float:
+        return 1e3 * float(np.linalg.norm(self.expert.pad_point() - self.grasp_point))
+
+    def privileged(self) -> np.ndarray:
+        e = 1e3 * (self.grasp_point - self.expert.pad_point()) / 20.0
+        return e.astype(np.float32)
+
+    def _phi(self) -> float:
+        return -0.5 * self._dist_mm()
+
+    def _frame(self) -> np.ndarray:
+        f = super()._frame()
+        f[:3] = (self.expert.pad_point() - self.grasp_est) * 100.0
+        return f
+
+    def depth(self) -> float:  # used by the base reset; the lift height for this skill
+        return float(self.expert.pad_point()[2] - self.start_z)
+
+    def expert_action(self) -> np.ndarray:
+        """Privileged demonstrator: to the true grasp point, close, lift."""
+        ex = self.expert
+        a = np.zeros(4)
+        held = ex._held(self.part) and ex.gripper > 0
+        if not held and ex.gripper <= 0:
+            e = (self.grasp_point - ex.pad_point()) / self.scale
+            a[:3] = np.clip(e, -1, 1)
+            a[3] = 1.0 if self._dist_mm() < 4.0 else -1.0
+        else:
+            a[2] = 1.0
+            a[3] = 1.0
+        return a
+
+    def step(self, action: np.ndarray):
+        a = np.clip(np.asarray(action, dtype=np.float64), -1.0, 1.0)
+        ex = self.expert
+        if a[3] > 0.5:
+            ex.gripper = 1.0
+        elif a[3] < -0.5:
+            ex.gripper = -0.2  # pre-grasp opening level
+        target = ex.pad_point() + a[:3] * self.scale
+        act, _, _ = ex.track(target, self.R, gain=1.0)
+        self.obs, _, _, self.info = self.env.step(act)
+        self.t += 1
+        rp = self.rp
+        phi = self._phi()
+        f = float(np.linalg.norm(self.env.f_ext_hat()[:3]))
+        held = ex._held(self.part) and self.env.parts[self.part].status == "grasped"
+        lift = self.depth()
+        self.held_up = getattr(self, "held_up", 0) + 1 if held and lift > 0.05 else 0
+        abort = self.env.outcome == "force_abort" or f > self.env.task.force_abort_N
+        r = 0.0 if held else rp.gamma * phi - self._phi_prev
+        r += 20.0 * max(0.0, lift - self._depth) * 1e2 if held else 0.0
+        r -= rp.time_cost + rp.force_coef * max(0.0, f - rp.force_free_N)
+        reason = None
+        if self.held_up >= 10:
+            r += rp.success_bonus
+            reason = "success"
+        elif abort:
+            r -= rp.abort_penalty
+            reason = "force_abort"
+        elif self.t >= self.max_steps:
+            reason = "timeout"
+        self._depth, self._phi_prev = lift, phi
+        self._frames.append(self._frame())
+        terminated = reason in ("success", "force_abort")
+        truncated = reason == "timeout"
+        info = {
+            "reason": reason,
+            "force_N": f,
+            "depth_mm": 1e3 * lift,
+            "priv": self.privileged(),
+        }
+        return self._obs(), rp.reward_scale * r, terminated, truncated, info
+
+    def reset(self, seed: int) -> np.ndarray:
+        self.held_up = 0
+        return super().reset(seed)
