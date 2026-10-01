@@ -810,3 +810,41 @@ stronger and closer to the decision, which is why the same architecture worked t
 What this means for a force-aware policy: for this task, behaviour cloning with the right
 regularisation (50/50) is far more reliable than TD3 from reward (half the seeds); and a rare,
 sharp contact cue is exactly the kind of signal generic regularisers remove.
+
+## Stage 2 - bolt/nut sorting (2026-09-29 ... 2026-10-01, in progress)
+
+Panda + tactile Franka Hand (4x4 taxels per pad, 70 N), joint-torque sensing (tau_ext from one
+forward pass), ISO M16 bolts / nuts, 17 mm ISO 273 hole. Details per step in the journal.
+
+**What worked**
+
+* **Force/tactile help the insertion skill.** TD3 + 100 privileged demos (BC 2.5 -> floor 1.0),
+  10 seeds per condition, 50 unseen set-ups each: with force 74.8 % +- 11.2, without 56.2 % +-
+  7.4 (Welch p = 0.0005; 5/10 vs 0/10 seeds >= 80 %). The gain comes from fewer timeouts (58 vs
+  170 of 500): with contact sensing the agent finds the hole instead of searching blind.
+* **Picking is at the ceiling** with or without force (99.0 vs 99.6 %), so it shows no effect.
+* **Presentation decides the scripted expert.** Bolts dropped in the tray: the noise-free expert
+  plateaued at ~58 % of parts (reorienting a lying bolt with a two-pad gripper is fragile).
+  Bolts upright in a rack (opt-in, pending the user's decision): 47/50 unseen episodes.
+
+**What did not work (yet)**
+
+* **Whole-task imitation (ACT, SmolVLA) on 104-460 demos never reaches a part** (0-1 parts of
+  36-60): ACT averages the multimodal "which part next" target into a hover, SmolVLA moves but
+  does not home in from 256^2 views (closest 30-35 mm); the gripper output must also be snapped to
+  the expert's -1/0/+1 because robosuite integrates sign(a).
+* **Learned skills trained in isolation do not compose.** The learned pick leaves the bolt 3-7 mm
+  off centre and up to 12 deg tilted; the insert skill, trained only on the expert's centred
+  grasps, then fails every time (sequencer 0/10). Retraining on randomised in-hand offsets is in
+  progress.
+* **Snapshot detectors plateau below 95 %**: grasp-stable ~94-95 % (tactile-driven), tip in the
+  hole at release ~91 % (torque-driven); Cartesian wrench history did not help.
+
+**Simulation lessons**
+
+* Sample joint torque after the full physics step (robosuite's lite_physics splits it); count
+  joint friction and end stops as joint-internal.
+* Mesh-vs-cylinder contact ejected ~1/40 dropped steel nuts from a disc-floored bucket; a box
+  floor fixed it. Stiff steel contacts need matched parameters on both geoms.
+* Tune on unseen seeds: the rack expert scored 15/16 on development seeds and 35/50 on unseen ones
+  until a head-orientation bug showed up.
