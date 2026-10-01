@@ -141,6 +141,9 @@ def main() -> None:
         help="sort_insert: the Stage 2 insertion skill (fvb.policy.sort_skill_env)",
     )
     ap.add_argument("--cache", type=int, default=200, help="sort_insert: cached expert set-ups")
+    ap.add_argument(
+        "--grasp-rand", type=int, default=0, help="sort_insert: randomised in-hand bolt offsets"
+    )
     args = ap.parse_args()
 
     import torch
@@ -172,6 +175,7 @@ def main() -> None:
             **({"xy_scale": 1e-3 * args.xy_scale_mm} if args.task == "sort_insert" else {}),
             rp=rp,
             cache=args.cache,
+            **({"grasp_rand": bool(args.grasp_rand)} if args.task == "sort_insert" else {}),
         )
     else:
         norm = Norm.from_json(json.loads(Path(args.norm).read_text()))

@@ -114,6 +114,7 @@ class SortExpert:
         # perturbation knobs for the V8 label collection (defaults = the normal expert): an
         # extra grasp-height offset (m) and the tip depth at which a bolt is released (m)
         self.grasp_dz = 0.0
+        self.grasp_dy = 0.0  # sideways along the pad (hand y), rack grasps only
         self.release_depth = 0.008
         self.release_on_block = False  # V8: let go where the tip is blocked instead of retrying
         self.rng = np.random.default_rng(seed)
@@ -322,7 +323,7 @@ class SortExpert:
                 turn = np.linalg.norm(Rotation.from_matrix(R @ R_now.T).as_rotvec())
                 out.append((reach > 0.15, -turn, point, R))
             _, _, p, R = max(out, key=lambda t: t[:2])
-            return p + [0, 0, self.grasp_dz], R
+            return p + [0, 0, self.grasp_dz] + R[:, 1] * self.grasp_dy, R
         if kind == "bolt":
             u = _horizontal(axis)
             # by the hex head (pads on two flats): with the hand horizontal over the hole the

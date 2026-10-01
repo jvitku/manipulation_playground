@@ -40,6 +40,7 @@ class SortInsertEnv:
         rp: RewardParams | None = None,
         noise: bool = True,
         cache: int = 0,
+        grasp_rand: bool = False,
     ):
         """``cache`` > 0: training seeds map onto ``cache`` set-ups, each run by the expert once
         and then restored from a physics snapshot (one expert set-up takes 300-600 steps, the
@@ -54,6 +55,7 @@ class SortInsertEnv:
         self.obs_dim = self.frame_dim * history
         self.act_dim = 3
         self.env = None
+        self.grasp_rand = grasp_rand
         self.cache = cache
         self._snap: dict = {}
         self._frames: deque = deque(maxlen=history)
@@ -86,6 +88,12 @@ class SortInsertEnv:
         self.env.reset()
         ex = SortExpert(ExpertNoise() if self.noise else NO_NOISE, seed)
         ex.reset(self.env)
+        if self.grasp_rand:
+            # in-hand poses like the learned pick leaves them (3-7 mm off centre, tilted):
+            # sideways +-7 mm along the pad, 0 ... +4 mm higher on the head
+            r = np.random.default_rng(seed + 12345)
+            ex.grasp_dy = float(r.uniform(-0.007, 0.007))
+            ex.grasp_dz = float(r.uniform(0.0, 0.004))
         self.expert = ex
         ready = False
         for _ in range(max_setup_steps):
