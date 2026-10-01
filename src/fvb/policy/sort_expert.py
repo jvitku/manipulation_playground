@@ -111,6 +111,10 @@ class SortExpert:
     def __init__(self, noise: ExpertNoise = NO_NOISE, seed: int = 0, use_ik: bool = True) -> None:
         self.noise = noise
         self.use_ik = use_ik
+        # perturbation knobs for the V8 label collection (defaults = the normal expert): an
+        # extra grasp-height offset (m) and the tip depth at which a bolt is released (m)
+        self.grasp_dz = 0.0
+        self.release_depth = 0.008
         self.rng = np.random.default_rng(seed)
 
     # -- env access ----------------------------------------
@@ -317,7 +321,7 @@ class SortExpert:
                 turn = np.linalg.norm(Rotation.from_matrix(R @ R_now.T).as_rotvec())
                 out.append((reach > 0.15, -turn, point, R))
             _, _, p, R = max(out, key=lambda t: t[:2])
-            return p, R
+            return p + [0, 0, self.grasp_dz], R
         if kind == "bolt":
             u = _horizontal(axis)
             # by the hex head (pads on two flats): with the hand horizontal over the hole the
@@ -343,7 +347,7 @@ class SortExpert:
         # never drive the fingertips into the surface under the part (OSC overshoots ~5 mm)
         # 3 mm, not more: at +6 mm the pads (16 mm tall) rose above a 14.8 mm nut and missed it
         min_z = self._support_z(pos) + FINGER_BELOW_PAD + 0.003
-        cands = [(np.r_[p[:2], max(p[2], min_z)], R) for p, R in cands]
+        cands = [(np.r_[p[:2], max(p[2], min_z) + self.grasp_dz], R) for p, R in cands]
         if not self.use_ik:
             return self._grasp_plan_heuristic(cands, aperture, R_now, kind)
         # choose by reachability: the arm's joint margin at the grasp pose and, for bolts, at
@@ -693,7 +697,7 @@ class SortExpert:
                 self.search_k += 1
                 self.ok_steps = 0
                 self._go("hover")
-            elif depth > 0.008 or self.t_phase > 80:
+            elif depth > self.release_depth or self.t_phase > 80:
                 self._go("let_go")
             return a
         if self.phase == "let_go":
