@@ -1,0 +1,390 @@
+{
+  "rows": [
+    {
+      "label": "TD3+BC insert, centred grasps",
+      "metric": "insert success",
+      "force": {
+        "seeds": 10,
+        "rates": [
+          0.86,
+          0.48,
+          0.76,
+          0.8,
+          0.68,
+          0.68,
+          0.76,
+          0.82,
+          0.84,
+          0.8
+        ],
+        "mean": 0.748,
+        "seed_boot95": [
+          0.6739999999999999,
+          0.804
+        ],
+        "episodes": 500,
+        "successes": 374,
+        "wilson95": [
+          0.7081514126701541,
+          0.7840667765385178
+        ]
+      },
+      "noforce": {
+        "seeds": 10,
+        "rates": [
+          0.52,
+          0.68,
+          0.6,
+          0.6,
+          0.4,
+          0.58,
+          0.54,
+          0.58,
+          0.6,
+          0.52
+        ],
+        "mean": 0.5619999999999999,
+        "seed_boot95": [
+          0.516,
+          0.602
+        ],
+        "episodes": 500,
+        "successes": 281,
+        "wilson95": [
+          0.5182021184950548,
+          0.6048524288071132
+        ]
+      },
+      "welch_p": 0.0004915497063076462,
+      "mannwhitney_p": 0.002704395529366935
+    },
+    {
+      "label": "TD3+BC insert, randomised in-hand offsets",
+      "metric": "insert success",
+      "force": {
+        "seeds": 6,
+        "rates": [
+          0.74,
+          0.56,
+          0.66,
+          0.5,
+          0.62,
+          0.64
+        ],
+        "mean": 0.62,
+        "seed_boot95": [
+          0.5599999999999999,
+          0.68
+        ],
+        "episodes": 300,
+        "successes": 186,
+        "wilson95": [
+          0.5638833924466087,
+          0.6730821843539347
+        ]
+      },
+      "noforce": {
+        "seeds": 6,
+        "rates": [
+          0.44,
+          0.54,
+          0.52,
+          0.6,
+          0.6,
+          0.46
+        ],
+        "mean": 0.5266666666666667,
+        "seed_boot95": [
+          0.4766666666666666,
+          0.5766666666666667
+        ],
+        "episodes": 300,
+        "successes": 158,
+        "wilson95": [
+          0.47018700866487334,
+          0.5824720084019139
+        ]
+      },
+      "welch_p": 0.05960373721244056,
+      "mannwhitney_p": 0.06508095865779158
+    },
+    {
+      "label": "TD3+BC pick (held + lifted)",
+      "metric": "pick success",
+      "force": {
+        "seeds": 10,
+        "rates": [
+          0.98,
+          0.96,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.98,
+          0.98
+        ],
+        "mean": 0.99,
+        "seed_boot95": [
+          0.9800000000000001,
+          0.998
+        ],
+        "episodes": 500,
+        "successes": 495,
+        "wilson95": [
+          0.976806564621235,
+          0.9957213092184797
+        ]
+      },
+      "noforce": {
+        "seeds": 10,
+        "rates": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.98,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          0.98
+        ],
+        "mean": 0.9960000000000001,
+        "seed_boot95": [
+          0.99,
+          1.0
+        ],
+        "episodes": 500,
+        "successes": 498,
+        "wilson95": [
+          0.9855339859585811,
+          0.9989023924587627
+        ]
+      },
+      "welch_p": 0.26760314525706946,
+      "mannwhitney_p": 0.3221988061625817
+    },
+    {
+      "label": "TD3+BC pick (centred grasp)",
+      "metric": "pick success",
+      "force": {
+        "seeds": 6,
+        "rates": [
+          0.54,
+          0.6,
+          0.5,
+          0.48,
+          0.36,
+          0.44
+        ],
+        "mean": 0.48666666666666664,
+        "seed_boot95": [
+          0.42333333333333334,
+          0.5466666666666667
+        ],
+        "episodes": 300,
+        "successes": 146,
+        "wilson95": [
+          0.43063348243848176,
+          0.5430370090281246
+        ]
+      },
+      "noforce": {
+        "seeds": 6,
+        "rates": [
+          0.5,
+          0.36,
+          0.3,
+          0.48,
+          0.46,
+          0.48
+        ],
+        "mean": 0.43,
+        "seed_boot95": [
+          0.36666666666666664,
+          0.48333333333333334
+        ],
+        "episodes": 300,
+        "successes": 129,
+        "wilson95": [
+          0.3752101984887211,
+          0.4865598817109618
+        ]
+      },
+      "welch_p": 0.2572610604617051,
+      "mannwhitney_p": 0.29283365264601635
+    },
+    {
+      "label": "BC (MLP) insert, randomised offsets",
+      "metric": "insert success",
+      "force": {
+        "seeds": 5,
+        "rates": [
+          0.24,
+          0.32,
+          0.3,
+          0.28,
+          0.3
+        ],
+        "mean": 0.28800000000000003,
+        "seed_boot95": [
+          0.264,
+          0.308
+        ],
+        "episodes": 250,
+        "successes": 72,
+        "wilson95": [
+          0.2354089145467806,
+          0.3470078366870597
+        ]
+      },
+      "noforce": {
+        "seeds": 5,
+        "rates": [
+          0.08,
+          0.12,
+          0.06,
+          0.06,
+          0.02
+        ],
+        "mean": 0.068,
+        "seed_boot95": [
+          0.039999999999999994,
+          0.1
+        ],
+        "episodes": 250,
+        "successes": 17,
+        "wilson95": [
+          0.04288555795457601,
+          0.1061900860690986
+        ]
+      },
+      "welch_p": 8.00673858739264e-06,
+      "mannwhitney_p": 0.011667312343319386
+    }
+  ],
+  "sequencer": [
+    {
+      "name": "sequencer, unconstrained picks, force",
+      "episodes": 10,
+      "success": 0,
+      "parts": 0,
+      "pick": [
+        12,
+        12
+      ],
+      "insert": [
+        12,
+        0
+      ],
+      "pick_ckpt": "outputs/td3_pick/force_s2/best.pt",
+      "insert_ckpt": "outputs/td3_sort/force_s0/best.pt",
+      "episode_wilson95": [
+        -2.7755575615628914e-17,
+        0.2775401687666166
+      ],
+      "insert_wilson95": [
+        0.0,
+        0.2425007574992425
+      ]
+    },
+    {
+      "name": "sequencer, unconstrained pick + offset-robust insert, no force",
+      "episodes": 10,
+      "success": 1,
+      "parts": 14,
+      "pick": [
+        43,
+        34
+      ],
+      "insert": [
+        31,
+        11
+      ],
+      "pick_ckpt": "outputs/td3_pick/noforce_s0/best.pt",
+      "insert_ckpt": "outputs/td3_sort_grand/noforce_s3/best.pt",
+      "episode_wilson95": [
+        0.01787574951572113,
+        0.4041563854975721
+      ],
+      "insert_wilson95": [
+        0.21116447741565816,
+        0.530523619571851
+      ]
+    },
+    {
+      "name": "sequencer, unconstrained pick + offset-robust insert, force",
+      "episodes": 10,
+      "success": 0,
+      "parts": 7,
+      "pick": [
+        20,
+        20
+      ],
+      "insert": [
+        19,
+        7
+      ],
+      "pick_ckpt": "outputs/td3_pick/force_s2/best.pt",
+      "insert_ckpt": "outputs/td3_sort_grand/force_s0/best.pt",
+      "episode_wilson95": [
+        -2.7755575615628914e-17,
+        0.2775401687666166
+      ],
+      "insert_wilson95": [
+        0.19149272376273843,
+        0.5896084250184328
+      ]
+    },
+    {
+      "name": "sequencer, centred pick + offset-robust insert, force",
+      "episodes": 10,
+      "success": 0,
+      "parts": 12,
+      "pick": [
+        28,
+        19
+      ],
+      "insert": [
+        18,
+        11
+      ],
+      "pick_ckpt": "outputs/td3_pick_centred/force_s1/best.pt",
+      "insert_ckpt": "outputs/td3_sort_grand/force_s0/best.pt",
+      "episode_wilson95": [
+        -2.7755575615628914e-17,
+        0.2775401687666166
+      ],
+      "insert_wilson95": [
+        0.3861866858065617,
+        0.7969500807306884
+      ]
+    },
+    {
+      "name": "sequencer, centred pick + offset-robust insert, no force",
+      "episodes": 10,
+      "success": 0,
+      "parts": 14,
+      "pick": [
+        42,
+        37
+      ],
+      "insert": [
+        32,
+        9
+      ],
+      "pick_ckpt": "outputs/td3_pick_centred/noforce_s0/best.pt",
+      "insert_ckpt": "outputs/td3_sort_grand/noforce_s3/best.pt",
+      "episode_wilson95": [
+        -2.7755575615628914e-17,
+        0.2775401687666166
+      ],
+      "insert_wilson95": [
+        0.15564406845647866,
+        0.4537483693811179
+      ]
+    }
+  ]
+}
