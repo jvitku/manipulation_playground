@@ -1,0 +1,13 @@
+{
+  "expert": {
+    "outcome": "success",
+    "steps": 1449,
+    "sim_s": 72.45
+  },
+  "insert_td3": [
+    "success",
+    "timeout",
+    "success",
+    "success"
+  ]
+}

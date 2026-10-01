@@ -41,6 +41,7 @@ class SortInsertEnv:
         noise: bool = True,
         cache: int = 0,
         grasp_rand: bool = False,
+        offscreen: bool = False,
     ):
         """``cache`` > 0: training seeds map onto ``cache`` set-ups, each run by the expert once
         and then restored from a physics snapshot (one expert set-up takes 300-600 steps, the
@@ -56,6 +57,7 @@ class SortInsertEnv:
         self.act_dim = 3
         self.env = None
         self.grasp_rand = grasp_rand
+        self.offscreen = offscreen  # an offscreen renderer for videos (scripts/32_stage2_media.py)
         self.cache = cache
         self._snap: dict = {}
         self._frames: deque = deque(maxlen=history)
@@ -73,7 +75,7 @@ class SortInsertEnv:
             "SortBoltsNuts",
             robots="Panda",
             has_renderer=False,
-            has_offscreen_renderer=False,
+            has_offscreen_renderer=self.offscreen,
             use_camera_obs=False,
             seed=seed,
             ignore_done=True,

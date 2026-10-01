@@ -1,0 +1,166 @@
+<title>Bolt Sorting with Touch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #f2f4f1; --surface: #ffffff; --sunk: #e8ebe6; --ink: #1a1f22; --muted: #5a6468;
+  --rule: #d5dad3; --accent: #0d6a72; --accent-soft: #d6ebec; --force: #1f67c9; --noforce: #d0561c;
+  --ok: #2c7d4f; --bad: #b93a2c;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark; --ground: #121618; --surface: #1a1f22; --sunk: #0d1012; --ink: #e5e9e6;
+    --muted: #98a2a5; --rule: #2d3538; --accent: #55b6bd; --accent-soft: #1b3437;
+    --force: #5f9cf0; --noforce: #f08a55; --ok: #57b77f; --bad: #e0725f;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark; --ground: #121618; --surface: #1a1f22; --sunk: #0d1012; --ink: #e5e9e6;
+  --muted: #98a2a5; --rule: #2d3538; --accent: #55b6bd; --accent-soft: #1b3437;
+  --force: #5f9cf0; --noforce: #f08a55; --ok: #57b77f; --bad: #e0725f;
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font: 15.5px/1.6 var(--body); padding-inline: 20px; padding-block: 0 64px; margin: 0; }
+.wrap { max-width: 1080px; margin: 0 auto; }
+h1, h2 { font-family: var(--display); font-weight: 600; line-height: 1.08; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2.4rem, 6vw, 3.8rem); font-weight: 700; }
+h2 { font-size: 1.9rem; margin-bottom: 0.5rem; }
+p { margin: 0.6rem 0; max-width: 70ch; }
+.eyebrow { font: 500 0.74rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.muted { color: var(--muted); }
+header { padding-block: 40px 24px; border-bottom: 1px solid var(--rule); }
+header .lede { font-size: 1.1rem; color: var(--muted); max-width: 66ch; margin-top: 12px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-top: 22px; }
+.facts div { background: var(--surface); padding: 14px 16px; }
+.facts b { display: block; font: 600 1.7rem/1.1 var(--display); font-variant-numeric: tabular-nums; }
+.facts span { font-size: 0.84rem; color: var(--muted); }
+section { padding-block: 36px 8px; border-bottom: 1px solid var(--rule); }
+.table-wrap { overflow-x: auto; margin-top: 12px; }
+table { border-collapse: collapse; font-size: 0.9rem; min-width: 100%; }
+th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--rule); font-variant-numeric: tabular-nums; white-space: nowrap; }
+th { font: 600 0.76rem var(--body); color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+th:first-child, td:first-child { text-align: left; white-space: normal; }
+td.f { color: var(--force); font-weight: 600; } td.n { color: var(--noforce); font-weight: 600; }
+td.sig { color: var(--ok); font-weight: 600; } td.ns { color: var(--muted); }
+.ci { font: 0.78rem var(--mono); color: var(--muted); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-top: 16px; align-items: start; }
+figure { margin: 0; }
+figure img, figure video { width: 100%; max-width: 100%; display: block; border: 1px solid var(--rule); background: var(--sunk); }
+figcaption { font-size: 0.85rem; color: var(--muted); margin-top: 6px; }
+.chart { background: var(--surface); border: 1px solid var(--rule); padding: 12px; }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart text { fill: var(--muted); font: 11px var(--mono); }
+.legend { display: flex; gap: 16px; font-size: 0.85rem; color: var(--muted); margin-top: 6px; }
+.legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; }
+ul { padding-left: 1.2em; max-width: 72ch; } li { margin: 0.35rem 0; }
+.decide { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 12px 16px; margin-top: 14px; max-width: 72ch; }
+code { font-family: var(--mono); font-size: 0.88em; }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">Stage 2 · manipulation_playground</div>
+  <h1>Bolt sorting with touch</h1>
+  <p class="lede">A Panda with a tactile Franka Hand sorts ISO M16 bolts into a 17&nbsp;mm hole and M16 nuts into a bucket. The question: where do joint torque and fingertip touch actually help a learned policy?</p>
+  <div class="facts">
+    <div><b>74.8 % vs 56.2 %</b><span>TD3+BC insertion with vs without force (p = 0.0005)</span></div>
+    <div><b>28.8 % vs 6.8 %</b><span>imitation (BC) insertion with vs without force</span></div>
+    <div><b>99 % vs 99.6 %</b><span>picking: no difference, already at the ceiling</span></div>
+    <div><b>≤ 1 / 10</b><span>full sorts with learned skills chained</span></div>
+  </div>
+</header>
+
+<section>
+  <h2>The setup</h2>
+  <div class="grid2">
+    <figure><img src="media/scene.png" alt="Front and wrist camera views of the tray, fixture and bucket"><figcaption>Front and wrist cameras. Parts: ISO 4017 M16×50 bolts (118 g), ISO 4032 M16 nuts; fixture hole Ø 17 mm with a 1 mm chamfer (0.5 mm radial clearance).</figcaption></figure>
+    <div>
+      <ul>
+        <li><b>Touch:</b> each finger pad is a 4×4 grid of taxels (4 mm pitch) plus a pad force sensor.</li>
+        <li><b>Joint torque:</b> τ<sub>ext</sub> = τ<sub>J</sub> − (M q̈ + bias) per joint, with noise and a per-episode bias, as on a real Panda.</li>
+        <li><b>Bolt presentation:</b> bolts stand head-up in a rack (opt-in). Dropped loose in the tray, even the scripted expert managed only ~58 % of parts; with the rack it sorts 47 of 50 unseen episodes.</li>
+        <li><b>Skills:</b> pick (grasp and lift a part) and insert (find the hole from a noisy estimate and push the bolt 8 mm in), each trained with and without the 15 force/touch channels.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Where force helps</h2>
+  <p>Mean success over training seeds, 50 unseen set-ups per seed, seed-level bootstrap 95 % interval.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>skill · learner</th><th>with force</th><th>without force</th><th>seeds</th><th>Welch p</th></tr></thead>
+    <tbody>
+      <tr><td>Insert · TD3+BC · centred grasps</td><td class="f">74.8 % <span class="ci">[67.4, 80.4]</span></td><td class="n">56.2 % <span class="ci">[51.6, 60.2]</span></td><td>10 + 10</td><td class="sig">0.0005</td></tr>
+      <tr><td>Insert · TD3+BC · bolt off-centre in hand</td><td class="f">62.0 % <span class="ci">[56.0, 68.0]</span></td><td class="n">52.7 % <span class="ci">[47.7, 57.7]</span></td><td>6 + 6</td><td class="ns">0.06</td></tr>
+      <tr><td>Insert · imitation (BC) · off-centre</td><td class="f">28.8 % <span class="ci">[26.4, 30.8]</span></td><td class="n">6.8 % <span class="ci">[4.0, 10.0]</span></td><td>5 + 5</td><td class="sig">&lt; 0.0001</td></tr>
+      <tr><td>Pick · TD3+BC · held and lifted</td><td class="f">99.0 % <span class="ci">[98.0, 99.8]</span></td><td class="n">99.6 % <span class="ci">[99.0, 100]</span></td><td>10 + 10</td><td class="ns">0.27</td></tr>
+      <tr><td>Pick · TD3+BC · centred grasp required</td><td class="f">48.7 % <span class="ci">[42.3, 54.7]</span></td><td class="n">43.0 % <span class="ci">[36.7, 48.3]</span></td><td>6 + 6</td><td class="ns">0.26</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted">Force earns its keep where contact carries the information: finding the hole. Without it the agent searches blind and times out (TD3: 170 vs 58 timeouts in 500 episodes; BC: 229 vs 174 in 250).</p>
+  <div class="grid2">
+    <div class="chart" id="curve"><svg viewBox="0 0 520 260" role="img" aria-label="Insertion learning curves"></svg>
+      <div class="legend"><span><i style="background:var(--force)"></i>with force</span><span><i style="background:var(--noforce)"></i>without force</span></div>
+    </div>
+    <p>TD3+BC insertion: held-out success during training, mean of 10 seeds per condition. Both start from the same 100 demonstrations; the force runs keep improving as the behaviour-cloning weight decays, the force-blind runs stall near 40–50 %.</p>
+  </div>
+</section>
+
+<section>
+  <h2>In motion</h2>
+  <div class="grid2">
+    <figure><video src="media/expert.mp4" controls muted loop playsinline preload="metadata"></video><figcaption>Scripted expert, one episode: three bolts from the rack into the hole (each vanishes 1 s after seating), three nuts into the bucket. 72 s of sim time, shown at 2× speed.</figcaption></figure>
+    <figure><video src="media/insert_td3.mp4" controls muted loop playsinline preload="metadata"></video><figcaption>TD3+BC insertion on the same set-ups: with force (left pair of views) and without (right). Top row: force inserts, the force-blind policy searches until it times out.</figcaption></figure>
+  </div>
+</section>
+
+<section>
+  <h2>What did not work</h2>
+  <ul>
+    <li><b>Whole-task imitation never reached a part.</b> ACT and SmolVLA trained on 104–460 demos sorted 0–1 of 36–60 parts; the closest approach was 30–35 mm. ACT averages the "which part next" choice into a hover.</li>
+    <li><b>Separately trained skills do not compose.</b> The learned pick leaves bolts 3–7 mm off centre and up to 12° tilted; an insert skill trained on centred grasps then fails every time. Training insert on random offsets and rewarding centred picks lifted insertion after a learned pick to 61 % with force (28 % without), but full sorts stayed at 0–1 of 10.</li>
+    <li><b>Snapshot detectors plateau below 95 %.</b> "Grasp is stable" reaches ~94–95 % (touch-driven), "tip is in the hole at release" ~91 % (torque-driven).</li>
+    <li><b>The TA-SmolVLA torque token</b> is built and tested but not trained: its no-force twin would compare 0 against 0 on the whole task.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Open decisions</h2>
+  <div class="decide">
+    <p><b>1. Rack or tray.</b> Bolts upright in a rack make the expert and the skills work; the tray is still the environment default.</p>
+    <p><b>2. Gate reading.</b> The V4 expert gate (≥ 90 %) is met by the expert without its injected human-like noise (47/50); with noise it was 30/50 before the last fixes.</p>
+  </div>
+  <p class="muted">Numbers: <code>docs/stage2/matrix.md</code> · details per experiment: <code>docs/progress/journal.jsonl</code> · lessons: <code>docs/FINDINGS.md</code>.</p>
+</section>
+</div>
+
+<script>
+const D = {"insert_force": {"t": [10000, 20000, 30000, 40000, 50000, 60000], "mean": [0.44, 0.5, 0.58, 0.61, 0.75, 0.65]}, "insert_noforce": {"t": [10000, 20000, 30000, 40000, 50000, 60000], "mean": [0.44, 0.365, 0.425, 0.355, 0.435, 0.535]}};
+(function () {
+  const svg = document.querySelector('#curve svg');
+  const W = 520, H = 260, L = 48, R = 16, T = 14, B = 34;
+  const x = t => L + (t - 0) / 60000 * (W - L - R);
+  const y = v => T + (1 - v) * (H - T - B);
+  const ns = 'http://www.w3.org/2000/svg';
+  const el = (n, a) => { const e = document.createElementNS(ns, n); for (const k in a) e.setAttribute(k, a[k]); svg.appendChild(e); return e; };
+  for (const v of [0, 0.25, 0.5, 0.75, 1]) {
+    el('line', {x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: 'var(--rule)', 'stroke-width': 1});
+    el('text', {x: L - 8, y: y(v) + 4, 'text-anchor': 'end'}).textContent = (v * 100) + '%';
+  }
+  for (const t of [0, 20000, 40000, 60000]) {
+    el('text', {x: x(t), y: H - 12, 'text-anchor': 'middle'}).textContent = (t / 1000) + 'k';
+  }
+  el('text', {x: W - R, y: H - 12, 'text-anchor': 'end'}).textContent = '';
+  for (const [k, c] of [['insert_force', 'var(--force)'], ['insert_noforce', 'var(--noforce)']]) {
+    const d = D[k];
+    el('polyline', {points: d.t.map((t, i) => x(t) + ',' + y(d.mean[i])).join(' '), fill: 'none', stroke: c, 'stroke-width': 2.5});
+    d.t.forEach((t, i) => el('circle', {cx: x(t), cy: y(d.mean[i]), r: 3.5, fill: c}));
+  }
+  el('text', {x: (L + W - R) / 2, y: H - 0, 'text-anchor': 'middle'}).textContent = 'environment steps';
+})();
+</script>
