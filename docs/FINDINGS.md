@@ -823,6 +823,15 @@ forward pass), ISO M16 bolts / nuts, 17 mm ISO 273 hole. Details per step in the
   7.4 (Welch p = 0.0005; 5/10 vs 0/10 seeds >= 80 %). The gain comes from fewer timeouts (58 vs
   170 of 500): with contact sensing the agent finds the hole instead of searching blind.
 * **Picking is at the ceiling** with or without force (99.0 vs 99.6 %), so it shows no effect.
+* **Force helps imitation even more (V9, skill level).** BC (MLP) on 300 expert insertions whose
+  demos contain contact-driven search: with force/tactile 28.8 % vs 6.8 % without (5 seeds each,
+  Welch p < 0.001); the force-blind imitator times out searching (229 of 250 episodes).
+* **TA-SmolVLA torque token** (one token from the 10 x 15 torque history, prepended to the action
+  expert's suffix) is implemented and tested on smolvla_base; not trained, because whole-task
+  SmolVLA reaches no part.
+* **Composition improves with grasp quality.** Rewarding centred picks (head < 2.5 mm off the pad
+  centre, tilt < 5 deg) lifted the learned insert after a learned pick from 37 % to 61 % with force
+  (28 % without); full sorts stay at 0-1 of 10 episodes.
 * **Presentation decides the scripted expert.** Bolts dropped in the tray: the noise-free expert
   plateaued at ~58 % of parts (reorienting a lying bolt with a two-pad gripper is fragile).
   Bolts upright in a rack (opt-in, pending the user's decision): 47/50 unseen episodes.
