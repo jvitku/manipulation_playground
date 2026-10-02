@@ -32,6 +32,12 @@ def main() -> None:
         default="off",
         help="TA-SmolVLA checkpoints (scripts/34_train_ta_smolvla.py): rebuild the torque token",
     )
+    ap.add_argument(
+        "--n-action-steps",
+        type=int,
+        default=0,
+        help="> 0: execute only this many steps of each predicted chunk (re-plan more often)",
+    )
     args = ap.parse_args()
 
     if args.ta != "off":
@@ -53,9 +59,21 @@ def main() -> None:
     from fvb.vla.transport import PolicyServer
 
     cfg = PreTrainedConfig.from_pretrained(args.ckpt)
-    policy = get_policy_class(cfg.type).from_pretrained(args.ckpt).to(args.device).eval()
-    pre, post = make_pre_post_processors(policy.config, pretrained_path=args.ckpt)
+    cfg.device = args.device
+    policy = get_policy_class(cfg.type).from_pretrained(args.ckpt, config=cfg).to(args.device).eval()
+    dev = {"device_processor": {"device": args.device}}
+    pre, post = make_pre_post_processors(
+        policy.config,
+        pretrained_path=args.ckpt,
+        preprocessor_overrides=dev,
+        postprocessor_overrides=dev,
+    )
+    if args.n_action_steps > 0:
+        policy.config.n_action_steps = args.n_action_steps
+        policy.reset()
     wanted = set(policy.config.input_features)
+    if args.ta != "off":  # the torque token reads it outside the config's input features
+        wanted.add("observation.torque_hist")
     rename = dict(kv.split("=", 1) for kv in args.rename.split(",") if kv)
 
     def act(obs: dict) -> np.ndarray:

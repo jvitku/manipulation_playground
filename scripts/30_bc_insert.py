@@ -13,7 +13,8 @@ matters: the insertion skill (``SortInsertEnv`` with randomised in-hand offsets)
   tactile channels in training and evaluation.
 * Evaluation: closed loop in the skill env on ``--eval`` unseen set-ups.
 
-    python scripts/30_bc_insert.py --demos 300 --use-force 1 --seed 0 --out outputs/bc_insert/force_s0
+    python scripts/30_bc_insert.py --demos 300 --use-force 1 --seed 0 \
+        --out outputs/bc_insert/force_s0
 """
 
 from __future__ import annotations
@@ -106,7 +107,7 @@ def main() -> None:
     )
     opt = torch.optim.Adam(net.parameters(), lr=3e-4)
     g = torch.Generator().manual_seed(args.seed)
-    for step in range(args.steps):
+    for _step in range(args.steps):
         idx = torch.randint(0, len(X), (256,), generator=g)
         loss = torch.nn.functional.mse_loss(net(X[idx]), Y[idx])
         opt.zero_grad()
