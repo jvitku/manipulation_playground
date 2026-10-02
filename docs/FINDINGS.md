@@ -826,9 +826,6 @@ forward pass), ISO M16 bolts / nuts, 17 mm ISO 273 hole. Details per step in the
 * **Force helps imitation even more (V9, skill level).** BC (MLP) on 300 expert insertions whose
   demos contain contact-driven search: with force/tactile 28.8 % vs 6.8 % without (5 seeds each,
   Welch p < 0.001); the force-blind imitator times out searching (229 of 250 episodes).
-* **TA-SmolVLA torque token** (one token from the 10 x 15 torque history, prepended to the action
-  expert's suffix) is implemented and tested on smolvla_base; not trained, because whole-task
-  SmolVLA reaches no part.
 * **Composition improves with grasp quality.** Rewarding centred picks (head < 2.5 mm off the pad
   centre, tilt < 5 deg) lifted the learned insert after a learned pick from 37 % to 61 % with force
   (28 % without); full sorts stay at 0-1 of 10 episodes.
@@ -846,6 +843,18 @@ forward pass), ISO M16 bolts / nuts, 17 mm ISO 273 hole. Details per step in the
   off centre and up to 12 deg tilted; the insert skill, trained only on the expert's centred
   grasps, then fails every time (sequencer 0/10). Retraining on randomised in-hand offsets is in
   progress.
+* **TA-SmolVLA's torque token hurts the insertion skill** (V9). SmolVLA fine-tuned on 158 expert
+  insertions with front + wrist images (10k steps, batch 8, re-plan every 10 steps), 100 held-out
+  set-ups each: plain 61 %, torque token with its input zeroed 66 %, raw torque token 53 %,
+  z-scored torque token 43 % (Wilson 95 %: [51, 70], [56, 75], [43, 62], [34, 53]). Paired by
+  set-up, the z-scored token loses to the zeroed twin 4 vs 27 discordant successes (sign test
+  p < 0.001) and the raw token 3 vs 16 (p = 0.004); zeroed vs plain is a wash (12 vs 7, p = 0.36),
+  so the extra token itself is harmless and *feeding it force* is what hurts. Every failure is a
+  timeout (no force aborts, no drops). The same demos in a small BC MLP gain from force (28.8 vs
+  6.8 %), so the signal is there; one hypothesis is that with 158 demos the 450M model latches
+  onto the torque history as a shortcut, which normalisation (amplifying joint-torque detail)
+  made worse. Not tried: TA-VLA's auxiliary torque-prediction loss, more demos, more training
+  seeds (one run per arm). The token stays off (``TA_MODE=off``).
 * **Snapshot detectors plateau below 95 %**: grasp-stable ~94-95 % (tactile-driven), tip in the
   hole at release ~91 % (torque-driven); Cartesian wrench history did not help.
 

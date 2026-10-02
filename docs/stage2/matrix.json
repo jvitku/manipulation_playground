@@ -386,5 +386,63 @@
         0.4537483693811179
       ]
     }
+  ],
+  "ta_smolvla_insert": [
+    {
+      "mode": "off",
+      "name": "SmolVLA (plain)",
+      "episodes": 100,
+      "success": 61,
+      "success_rate": 0.61,
+      "force_abort": 0,
+      "dropped": 0,
+      "timeout": 39,
+      "wilson95": [
+        0.5120283616749817,
+        0.699832780680298
+      ]
+    },
+    {
+      "mode": "ta_zero",
+      "name": "TA-SmolVLA, token input zeroed (no-force twin)",
+      "episodes": 100,
+      "success": 66,
+      "success_rate": 0.66,
+      "force_abort": 0,
+      "dropped": 0,
+      "timeout": 34,
+      "wilson95": [
+        0.5627754565831095,
+        0.74538620502457
+      ]
+    },
+    {
+      "mode": "ta",
+      "name": "TA-SmolVLA, raw torque token",
+      "episodes": 100,
+      "success": 53,
+      "success_rate": 0.53,
+      "force_abort": 0,
+      "dropped": 0,
+      "timeout": 47,
+      "wilson95": [
+        0.4328868313724773,
+        0.6248934801789626
+      ]
+    },
+    {
+      "mode": "ta_norm",
+      "name": "TA-SmolVLA, z-scored torque token",
+      "episodes": 100,
+      "success": 43,
+      "success_rate": 0.43,
+      "force_abort": 0,
+      "dropped": 0,
+      "timeout": 57,
+      "wilson95": [
+        0.3373313900052838,
+        0.5278478830413564
+      ]
+    }
   ]
 }

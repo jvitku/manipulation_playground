@@ -409,8 +409,9 @@ L = L_action + 0.1·L_torque. Also: ACT + force token (dropout 0 on that path, R
 | V9 | ACT + force token, TD3 + F/T obs, TA-SmolVLA | each vs its no-force twin, same seeds |
 | V10 | evaluation matrix, report, README | all cells with 95 % intervals; FINDINGS |
 
-**Status (2026-10-01 13:30).** V0–V4 done (V4 on the rack presentation, pushed); V6 skills
-trained, sequencer under repair; V8 gate not met; V5/V7 whole-task policies fail.
+**Status (2026-10-02 08:30).** V0–V4 done (V4 on the rack presentation); V6 skills trained,
+sequencer ≤ 1/10 full sorts; V8 gate not met; V5/V7 whole-task policies fail; V9 done (force helps
+TD3/BC insertion, the TA-SmolVLA torque token hurts); V10 matrix + report done.
 
 | id | status | result / notes |
 |---|---|---|
@@ -423,6 +424,7 @@ trained, sequencer under repair; V8 gate not met; V5/V7 whole-task policies fail
 | V6 | insert + pick done; sequencer failing | insert TD3+BC 10 seeds: **force 74.8 % vs no force 56.2 % (p = 0.0005)**; pick 99.0 % vs 99.6 % (ceiling); sequencer 0/10: learned picks leave the bolt 3-7 mm off centre, the insert skill only saw centred grasps - retraining on randomised in-hand offsets |
 | V7 | fails (reference) | SmolVLA on 104 rack episodes 0/36 parts (closest approach 30-35 mm) |
 | V8 | gate not met | grasp-stable 94-95 % (MLP, tactile-driven), tip-in-hole at release 91 % (torque-driven); 5 data rounds |
+| V9 | done (mixed) | force helps TD3 insert (74.8 vs 56.2 %) and BC insert (28.8 vs 6.8 %); TA-SmolVLA torque token hurts the insertion skill: raw 53 %, z-scored 43 % vs zeroed twin 66 %, plain 61 % (100 held-out set-ups each); token stays off |
 
 V4 findings that changed the design (all journaled):
 

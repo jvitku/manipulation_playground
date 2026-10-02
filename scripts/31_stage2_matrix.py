@@ -121,6 +121,30 @@ def main() -> None:
             f"{s['pick'][1]}/{s['pick'][0]} | {s['insert'][1]}/{s['insert'][0]} "
             f"[{100 * lo:.0f}-{100 * hi:.0f} %] |"
         )
+    vla = []
+    for m, name in (
+        ("off", "SmolVLA (plain)"),
+        ("ta_zero", "TA-SmolVLA, token input zeroed (no-force twin)"),
+        ("ta", "TA-SmolVLA, raw torque token"),
+        ("ta_norm", "TA-SmolVLA, z-scored torque token"),
+    ):
+        f = Path(f"outputs/eval_ta_insert/{m}/final.json")
+        if f.exists():
+            r = json.loads(f.read_text())
+            vla.append(
+                {"mode": m, "name": name, **r, "wilson95": wilson(r["success"], r["episodes"])}
+            )
+    out["ta_smolvla_insert"] = vla
+    md += [
+        "",
+        "| insert skill from images (SmolVLA, 158 demos, 100 held-out set-ups) | success | 95 % |",
+        "|---|---|---|",
+    ]
+    for r in vla:
+        lo, hi = r["wilson95"]
+        md.append(
+            f"| {r['name']} | {r['success']}/{r['episodes']} | {100 * lo:.0f}-{100 * hi:.0f} % |"
+        )
     d = Path("docs/stage2")
     d.mkdir(parents=True, exist_ok=True)
     (d / "matrix.json").write_text(json.dumps(out, indent=2))
