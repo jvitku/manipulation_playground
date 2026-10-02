@@ -13,7 +13,10 @@ with identical parameters (the plan's ablation).
 ``normalize=True`` z-scores the history first (per-dim ``mean`` / ``std`` buffers, saved with the
 checkpoint): unnormalised, the tactile grip force (~47 N) swamps the joint torques (~1 N).
 
-Not yet included: TA-VLA's auxiliary torque-prediction loss (L = L_action + 0.1 L_torque).
+``aux_weight > 0`` adds TA-VLA's auxiliary torque prediction, L = L_action + w * L_torque: a
+linear head on the mean of the action expert's chunk outputs predicts the (z-scored) torque
+history ``future`` steps ahead (``observation.torque_future``, from the converter's
+``future_torque``), so the expert's representation has to model the coming contact forces.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ import torch
 from torch import nn
 
 TORQUE_KEY = "observation.torque_hist"
+FUTURE_KEY = "observation.torque_future"
 
 
 class TorqueNorm(nn.Module):
@@ -37,7 +41,12 @@ class TorqueNorm(nn.Module):
 
 
 def make_ta_smolvla(
-    policy, torque_dim: int = 150, zero_token: bool = False, normalize: bool = False, stats=None
+    policy,
+    torque_dim: int = 150,
+    zero_token: bool = False,
+    normalize: bool = False,
+    stats=None,
+    aux_weight: float = 0.0,
 ):
     """Turn a loaded ``SmolVLAPolicy`` into TA-SmolVLA in place and return it.
     ``stats``: ``(mean, std)`` for ``normalize`` (training); at load time the checkpoint's buffers
@@ -51,6 +60,16 @@ def make_ta_smolvla(
     if normalize:
         mean, std = stats if stats is not None else (None, None)
         model.torque_norm = TorqueNorm(torque_dim, mean, std).to(dev)
+    if aux_weight > 0:
+        mean, std = stats if stats is not None else (None, None)
+        model.torque_target_norm = TorqueNorm(torque_dim, mean, std).to(dev)
+        model.torque_head = nn.Linear(width, torque_dim).to(dev)
+        model._aux = {}
+
+        def keep_chunk_out(_mod, args):  # input of action_out_proj = the chunk's expert outputs
+            model._aux["h"] = args[0]
+
+        model.action_out_proj.register_forward_pre_hook(keep_chunk_out)
     model._torque = None
     model._zero_token = zero_token
     base_embed_suffix = model.embed_suffix
@@ -87,7 +106,26 @@ def make_ta_smolvla(
 
         return wrapped
 
-    policy.forward = with_torque(policy.forward)
+    fwd = with_torque(policy.forward)
+    if aux_weight > 0:
+
+        def fwd_aux(batch, *args, **kwargs):
+            model._aux.clear()
+            loss, out = fwd(batch, *args, **kwargs)
+            target = batch.get(FUTURE_KEY)
+            if target is None or "h" not in model._aux:
+                return loss, out
+            h = model._aux["h"].float().mean(dim=1)
+            pred = model.torque_head(h)
+            tgt = model.torque_target_norm(target.to(pred.device, torch.float32).flatten(1))
+            aux = torch.nn.functional.mse_loss(pred, tgt)
+            out = dict(out or {})
+            out["torque_aux_loss"] = float(aux.detach())
+            return loss + aux_weight * aux, out
+
+        policy.forward = fwd_aux
+    else:
+        policy.forward = fwd
     policy.predict_action_chunk = with_torque(policy.predict_action_chunk)
     policy.select_action = with_torque(policy.select_action)
     return policy

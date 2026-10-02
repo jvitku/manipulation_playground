@@ -5,6 +5,8 @@
     TA_MODE=ta_zero ...   (same architecture, torque token input zeroed: the no-force twin)
     TA_MODE=ta_norm TA_STATS=outputs/lerobot/insert_ta/meta/stats.json ...
                     (torque history z-scored with the dataset stats before the token MLP)
+    TA_MODE=ta_aux  TA_STATS=... (raw token + TA-VLA's auxiliary torque prediction, weight 0.1;
+                    needs a dataset converted with --future-torque K)
     TA_MODE=off     ...   (plain SmolVLA, for reference)
 
 Every ``SmolVLAPolicy`` built in this process gets the torque token (``fvb.vla.ta_smolvla``);
@@ -24,7 +26,7 @@ def patch(mode: str, stats_path: str | None = None) -> None:
     if mode == "off":
         return
     stats = None
-    if mode == "ta_norm" and stats_path:
+    if mode in ("ta_norm", "ta_aux") and stats_path:
         import json
 
         st = json.load(open(stats_path))["observation.torque_hist"]
@@ -38,7 +40,11 @@ def patch(mode: str, stats_path: str | None = None) -> None:
     def init(self, *a, **k):
         orig(self, *a, **k)
         make_ta_smolvla(
-            self, zero_token=(mode == "ta_zero"), normalize=(mode == "ta_norm"), stats=stats
+            self,
+            zero_token=(mode == "ta_zero"),
+            normalize=(mode == "ta_norm"),
+            stats=stats,
+            aux_weight=0.1 if mode == "ta_aux" else 0.0,
         )
 
     m.SmolVLAPolicy.__init__ = init

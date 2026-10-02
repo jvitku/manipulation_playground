@@ -58,3 +58,27 @@ def test_token_trains_and_changes_actions(setup):
             outs.append(policy.predict_action_chunk(b, noise=noise))
     assert (outs[0] - outs[1]).abs().max() > 1e-4  # the token reaches the actions
     assert policy.model._torque is None  # cleared after every call
+
+
+def test_aux_torque_loss_trains_the_head(setup):
+    from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+
+    from fvb.vla.ta_smolvla import make_ta_smolvla
+
+    _, pre = setup
+    policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base").to("cuda")
+    make_ta_smolvla(policy, aux_weight=0.1)
+    torch.manual_seed(0)
+    t1 = torch.randn(1, 150)
+    batch = pre(_batch(policy, t1))
+    batch["observation.torque_hist"] = t1.cuda()
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        base, _ = policy.forward(batch)  # no target in the batch: plain loss
+        batch["observation.torque_future"] = torch.randn(1, 150).cuda()
+        loss, out = policy.forward(batch)
+    assert "torque_aux_loss" in out and out["torque_aux_loss"] > 0
+    loss.backward()
+    g = policy.model.torque_head.weight.grad
+    assert g is not None and g.abs().sum() > 0
+    sd = policy.state_dict()
+    assert {"model.torque_head.weight", "model.torque_target_norm.mean"} <= set(sd)

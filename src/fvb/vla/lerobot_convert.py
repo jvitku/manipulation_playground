@@ -37,7 +37,9 @@ def read_video(path: Path) -> np.ndarray:
 FORCE_KEYS = ("observation.tau_ext", "observation.torque_hist", "observation.tactile")
 
 
-def features(image_hw: tuple[int, int], cameras: list[str], force: bool = True) -> dict:
+def features(
+    image_hw: tuple[int, int], cameras: list[str], force: bool = True, future: bool = False
+) -> dict:
     h, w = image_hw
     f = {
         CAMERAS[c]: {"dtype": "video", "shape": (h, w, 3), "names": ["height", "width", "channels"]}
@@ -48,6 +50,8 @@ def features(image_hw: tuple[int, int], cameras: list[str], force: bool = True) 
     f["observation.torque_hist"] = {"dtype": "float32", "shape": (150,), "names": None}
     f["observation.tactile"] = {"dtype": "float32", "shape": (32,), "names": None}
     f["action"] = {"dtype": "float32", "shape": (7,), "names": None}
+    if force and future:  # TA-VLA auxiliary target: the torque history K steps ahead
+        f["observation.torque_future"] = {"dtype": "float32", "shape": (150,), "names": None}
     if not force:  # phase 1: LeRobot types every extra observation.* key as robot state
         for k in FORCE_KEYS:
             del f[k]
@@ -61,8 +65,11 @@ def convert(
     mode: str = "segments",
     force: bool = True,
     only_success: bool = False,
+    future_torque: int = 0,
 ) -> dict:
-    """Write a LeRobotDataset at ``root``; returns counts."""
+    """Write a LeRobotDataset at ``root``; returns counts. ``future_torque`` = K > 0 adds
+    ``observation.torque_future`` = the torque history K steps later (clamped to the span's last
+    frame), the target of TA-VLA's auxiliary torque-prediction loss."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     assert mode in ("episode", "segments")
@@ -80,7 +87,7 @@ def convert(
             ds = LeRobotDataset.create(
                 repo_id=repo_id,
                 fps=meta.get("fps", 20),
-                features=features(hw, cams, force),
+                features=features(hw, cams, force, future_torque > 0),
                 root=root,
                 robot_type="panda",
                 use_videos=True,
@@ -104,6 +111,9 @@ def convert(
                     "action": data["action"][i].astype(np.float32),
                     "task": task,
                 }
+                if force and future_torque > 0:
+                    j = min(i + future_torque, b - 1)
+                    frame["observation.torque_future"] = data["torque_hist"][j].astype(np.float32)
                 if not force:
                     for k in FORCE_KEYS:
                         del frame[k]

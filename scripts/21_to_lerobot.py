@@ -23,6 +23,12 @@ def main() -> None:
     ap.add_argument("--mode", choices=("episode", "segments"), default="segments")
     ap.add_argument("--no-force", action="store_true", help="phase 1: drop torque/tactile")
     ap.add_argument("--only-success", action="store_true", help="skip failed episodes")
+    ap.add_argument(
+        "--future-torque",
+        type=int,
+        default=0,
+        help="K > 0: add observation.torque_future (TA-VLA auxiliary target, K steps ahead)",
+    )
     args = ap.parse_args()
 
     from fvb.vla.lerobot_convert import convert
@@ -35,6 +41,7 @@ def main() -> None:
         args.mode,
         force=not args.no_force,
         only_success=args.only_success,
+        future_torque=args.future_torque,
     )
     print(json.dumps({"raw_episodes": len(eps), **out}))
 

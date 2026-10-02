@@ -28,7 +28,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--ta",
-        choices=("off", "ta", "ta_zero", "ta_norm"),
+        choices=("off", "ta", "ta_zero", "ta_norm", "ta_aux"),
         default="off",
         help="TA-SmolVLA checkpoints (scripts/34_train_ta_smolvla.py): rebuild the torque token",
     )

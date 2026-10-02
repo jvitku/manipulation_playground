@@ -88,3 +88,17 @@ def test_convert_without_force(tmp_path):
     convert(raw, tmp_path / "ds", "local/test", "segments", force=False)
     ds = LeRobotDataset("local/test", root=tmp_path / "ds")
     assert "observation.torque_hist" not in ds.features and "observation.state" in ds.features
+
+
+def test_future_torque_target_is_shifted_within_the_span(tmp_path):
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    raw = [tmp_path / "raw" / "ep_0"]
+    _fake_episode(raw[0])
+    convert(raw, tmp_path / "ds", "local/test", "segments", future_torque=3)
+    ds = LeRobotDataset("local/test", root=tmp_path / "ds")
+    th = np.load(raw[0] / "data.npz")["torque_hist"].astype(np.float32)
+    # segment 0 spans raw frames 2..11: frame k -> torque_hist[min(2 + k + 3, 11)]
+    for k in (0, 5, 9):
+        got = ds[k]["observation.torque_future"].numpy()
+        np.testing.assert_allclose(got, th[min(2 + k + 3, 11)], rtol=1e-6)
