@@ -26,7 +26,24 @@ def main() -> None:
         "observation.images.front=observation.images.camera1,"
         "observation.images.wrist=observation.images.camera2",
     )
+    ap.add_argument(
+        "--ta",
+        choices=("off", "ta", "ta_zero"),
+        default="off",
+        help="TA-SmolVLA checkpoints (scripts/34_train_ta_smolvla.py): rebuild the torque token",
+    )
     args = ap.parse_args()
+
+    if args.ta != "off":
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "ta_train", Path(__file__).with_name("34_train_ta_smolvla.py")
+        )
+        ta_train = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ta_train)
+        ta_train.patch(args.ta)
 
     import numpy as np
     import torch
