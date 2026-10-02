@@ -3,6 +3,8 @@
 
     TA_MODE=ta      python scripts/34_train_ta_smolvla.py --policy.path=lerobot/smolvla_base ...
     TA_MODE=ta_zero ...   (same architecture, torque token input zeroed: the no-force twin)
+    TA_MODE=ta_norm TA_STATS=outputs/lerobot/insert_ta/meta/stats.json ...
+                    (torque history z-scored with the dataset stats before the token MLP)
     TA_MODE=off     ...   (plain SmolVLA, for reference)
 
 Every ``SmolVLAPolicy`` built in this process gets the torque token (``fvb.vla.ta_smolvla``);
@@ -16,9 +18,17 @@ import os
 import sys
 
 
-def patch(mode: str) -> None:
+def patch(mode: str, stats_path: str | None = None) -> None:
+    """``stats_path``: the dataset's meta/stats.json (training ``ta_norm``); serving reads the
+    normalisation from the checkpoint instead."""
     if mode == "off":
         return
+    stats = None
+    if mode == "ta_norm" and stats_path:
+        import json
+
+        st = json.load(open(stats_path))["observation.torque_hist"]
+        stats = (st["mean"], st["std"])
     from lerobot.policies.smolvla import modeling_smolvla as m
 
     from fvb.vla.ta_smolvla import make_ta_smolvla
@@ -27,13 +37,15 @@ def patch(mode: str) -> None:
 
     def init(self, *a, **k):
         orig(self, *a, **k)
-        make_ta_smolvla(self, zero_token=(mode == "ta_zero"))
+        make_ta_smolvla(
+            self, zero_token=(mode == "ta_zero"), normalize=(mode == "ta_norm"), stats=stats
+        )
 
     m.SmolVLAPolicy.__init__ = init
 
 
 if __name__ == "__main__":
-    patch(os.environ.get("TA_MODE", "ta"))
+    patch(os.environ.get("TA_MODE", "ta"), os.environ.get("TA_STATS"))
     from lerobot.scripts.lerobot_train import main
 
     sys.exit(main())

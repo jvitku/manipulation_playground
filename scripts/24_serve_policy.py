@@ -28,7 +28,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--ta",
-        choices=("off", "ta", "ta_zero"),
+        choices=("off", "ta", "ta_zero", "ta_norm"),
         default="off",
         help="TA-SmolVLA checkpoints (scripts/34_train_ta_smolvla.py): rebuild the torque token",
     )
@@ -60,7 +60,9 @@ def main() -> None:
 
     cfg = PreTrainedConfig.from_pretrained(args.ckpt)
     cfg.device = args.device
-    policy = get_policy_class(cfg.type).from_pretrained(args.ckpt, config=cfg).to(args.device).eval()
+    policy = (
+        get_policy_class(cfg.type).from_pretrained(args.ckpt, config=cfg).to(args.device).eval()
+    )
     dev = {"device_processor": {"device": args.device}}
     pre, post = make_pre_post_processors(
         policy.config,
