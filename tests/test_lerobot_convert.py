@@ -102,3 +102,16 @@ def test_future_torque_target_is_shifted_within_the_span(tmp_path):
     for k in (0, 5, 9):
         got = ds[k]["observation.torque_future"].numpy()
         np.testing.assert_allclose(got, th[min(2 + k + 3, 11)], rtol=1e-6)
+
+
+def test_env_state_mode_keeps_only_the_torque_history(tmp_path):
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    raw = [tmp_path / "raw" / "ep_0"]
+    _fake_episode(raw[0])
+    convert(raw, tmp_path / "ds", "local/test", "segments", env_state=True)
+    ds = LeRobotDataset("local/test", root=tmp_path / "ds")
+    assert "observation.torque_hist" not in ds.features
+    assert "observation.tactile" not in ds.features
+    th = np.load(raw[0] / "data.npz")["torque_hist"].astype(np.float32)
+    np.testing.assert_allclose(ds[0]["observation.environment_state"].numpy(), th[2], rtol=1e-6)

@@ -1,0 +1,8 @@
+--exp t4 --horizon 8 --n-exec 4 --steps 30000 --eval-every 3000 --demos 1600 --torque zero --seed 0 --out outputs/ta_tutorial/t4/zero_s0
+--exp t4 --horizon 8 --n-exec 4 --steps 30000 --eval-every 3000 --demos 1600 --torque suffix --seed 0 --out outputs/ta_tutorial/t4/suffix_s0
+--exp t4 --horizon 8 --n-exec 4 --steps 30000 --eval-every 3000 --demos 1600 --torque prefix --seed 0 --out outputs/ta_tutorial/t4/prefix_s0
+--exp t4 --horizon 8 --n-exec 4 --steps 30000 --eval-every 3000 --demos 1600 --torque suffix --aux 0.1 --seed 0 --out outputs/ta_tutorial/t4/aux_s0
+--exp t4 --horizon 8 --n-exec 4 --steps 30000 --eval-every 3000 --demos 1600 --torque zero --seed 1 --out outputs/ta_tutorial/t4/zero_s1
+--exp t4 --horizon 8 --n-exec 4 --steps 30000 --eval-every 3000 --demos 1600 --torque suffix --seed 1 --out outputs/ta_tutorial/t4/suffix_s1
+--exp t4 --horizon 8 --n-exec 4 --steps 30000 --eval-every 3000 --demos 1600 --torque prefix --seed 1 --out outputs/ta_tutorial/t4/prefix_s1
+--exp t4 --horizon 8 --n-exec 4 --steps 30000 --eval-every 3000 --demos 1600 --torque suffix --aux 0.1 --seed 1 --out outputs/ta_tutorial/t4/aux_s1

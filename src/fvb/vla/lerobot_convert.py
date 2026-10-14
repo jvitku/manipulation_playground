@@ -34,11 +34,16 @@ def read_video(path: Path) -> np.ndarray:
         return np.stack([f.to_ndarray(format="rgb24") for f in c.decode(video=0)])
 
 
+ENV_KEY = "observation.environment_state"
 FORCE_KEYS = ("observation.tau_ext", "observation.torque_hist", "observation.tactile")
 
 
 def features(
-    image_hw: tuple[int, int], cameras: list[str], force: bool = True, future: bool = False
+    image_hw: tuple[int, int],
+    cameras: list[str],
+    force: bool = True,
+    future: bool = False,
+    env_state: bool = False,
 ) -> dict:
     h, w = image_hw
     f = {
@@ -52,6 +57,11 @@ def features(
     f["action"] = {"dtype": "float32", "shape": (7,), "names": None}
     if force and future:  # TA-VLA auxiliary target: the torque history K steps ahead
         f["observation.torque_future"] = {"dtype": "float32", "shape": (150,), "names": None}
+    if env_state:  # ACT force token: LeRobot ACT embeds observation.environment_state as one token
+        for k in FORCE_KEYS:
+            del f[k]
+        f[ENV_KEY] = {"dtype": "float32", "shape": (150,), "names": None}
+        return f
     if not force:  # phase 1: LeRobot types every extra observation.* key as robot state
         for k in FORCE_KEYS:
             del f[k]
@@ -66,10 +76,12 @@ def convert(
     force: bool = True,
     only_success: bool = False,
     future_torque: int = 0,
+    env_state: bool = False,
 ) -> dict:
     """Write a LeRobotDataset at ``root``; returns counts. ``future_torque`` = K > 0 adds
     ``observation.torque_future`` = the torque history K steps later (clamped to the span's last
-    frame), the target of TA-VLA's auxiliary torque-prediction loss."""
+    frame), the target of TA-VLA's auxiliary torque-prediction loss. ``env_state`` stores only the
+    torque history, as ``observation.environment_state`` (the ACT force token)."""
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     assert mode in ("episode", "segments")
@@ -87,7 +99,7 @@ def convert(
             ds = LeRobotDataset.create(
                 repo_id=repo_id,
                 fps=meta.get("fps", 20),
-                features=features(hw, cams, force, future_torque > 0),
+                features=features(hw, cams, force, future_torque > 0, env_state),
                 root=root,
                 robot_type="panda",
                 use_videos=True,
@@ -114,9 +126,11 @@ def convert(
                 if force and future_torque > 0:
                     j = min(i + future_torque, b - 1)
                     frame["observation.torque_future"] = data["torque_hist"][j].astype(np.float32)
-                if not force:
+                if not force or env_state:
                     for k in FORCE_KEYS:
                         del frame[k]
+                if env_state:
+                    frame[ENV_KEY] = data["torque_hist"][i].astype(np.float32)
                 for c in cams:
                     frame[CAMERAS[c]] = videos[c][i]
                 ds.add_frame(frame)

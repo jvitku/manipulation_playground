@@ -1,0 +1,58 @@
+--exp t1 --gen flow --steps 20000 --lr 1e-3 --eval-every 500 --seed 0 --out outputs/ta_tutorial/t1/flow_s0
+--exp t1 --gen ddpm --steps 20000 --lr 1e-3 --eval-every 500 --seed 0 --out outputs/ta_tutorial/t1/ddpm_s0
+--exp t1 --gen mse --steps 20000 --lr 1e-3 --eval-every 500 --seed 0 --out outputs/ta_tutorial/t1/mse_s0
+--exp t1 --gen flow --steps 20000 --lr 1e-3 --eval-every 500 --seed 1 --out outputs/ta_tutorial/t1/flow_s1
+--exp t1 --gen ddpm --steps 20000 --lr 1e-3 --eval-every 500 --seed 1 --out outputs/ta_tutorial/t1/ddpm_s1
+--exp t1 --gen mse --steps 20000 --lr 1e-3 --eval-every 500 --seed 1 --out outputs/ta_tutorial/t1/mse_s1
+--exp t1 --gen flow --steps 20000 --lr 1e-3 --eval-every 500 --seed 2 --out outputs/ta_tutorial/t1/flow_s2
+--exp t1 --gen ddpm --steps 20000 --lr 1e-3 --eval-every 500 --seed 2 --out outputs/ta_tutorial/t1/ddpm_s2
+--exp t1 --gen mse --steps 20000 --lr 1e-3 --eval-every 500 --seed 2 --out outputs/ta_tutorial/t1/mse_s2
+--exp t1 --gen flow --steps 20000 --lr 3e-4 --eval-every 500 --seed 0 --out outputs/ta_tutorial/t1/flow_lr3e-4_s0
+--exp t1 --gen ddpm --steps 20000 --lr 3e-4 --eval-every 500 --seed 0 --out outputs/ta_tutorial/t1/ddpm_lr3e-4_s0
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 200 --seed 0 --out outputs/ta_tutorial/t2/flow_h16_d200_s0
+--exp t2 --gen ddpm --horizon 16 --n-exec 8 --demos 200 --seed 0 --out outputs/ta_tutorial/t2/ddpm_h16_d200_s0
+--exp t2 --gen mse --horizon 16 --n-exec 8 --demos 200 --seed 0 --out outputs/ta_tutorial/t2/mse_h16_d200_s0
+--exp t2 --gen flow --horizon 1 --n-exec 1 --demos 200 --seed 0 --out outputs/ta_tutorial/t2/flow_h1_d200_s0
+--exp t2 --gen flow --horizon 4 --n-exec 2 --demos 200 --seed 0 --out outputs/ta_tutorial/t2/flow_h4_d200_s0
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 10 --seed 0 --out outputs/ta_tutorial/t2/flow_h16_d10_s0
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 30 --seed 0 --out outputs/ta_tutorial/t2/flow_h16_d30_s0
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 100 --seed 0 --out outputs/ta_tutorial/t2/flow_h16_d100_s0
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 600 --seed 0 --out outputs/ta_tutorial/t2/flow_h16_d600_s0
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 200 --seed 1 --out outputs/ta_tutorial/t2/flow_h16_d200_s1
+--exp t2 --gen ddpm --horizon 16 --n-exec 8 --demos 200 --seed 1 --out outputs/ta_tutorial/t2/ddpm_h16_d200_s1
+--exp t2 --gen mse --horizon 16 --n-exec 8 --demos 200 --seed 1 --out outputs/ta_tutorial/t2/mse_h16_d200_s1
+--exp t2 --gen flow --horizon 1 --n-exec 1 --demos 200 --seed 1 --out outputs/ta_tutorial/t2/flow_h1_d200_s1
+--exp t2 --gen flow --horizon 4 --n-exec 2 --demos 200 --seed 1 --out outputs/ta_tutorial/t2/flow_h4_d200_s1
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 10 --seed 1 --out outputs/ta_tutorial/t2/flow_h16_d10_s1
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 30 --seed 1 --out outputs/ta_tutorial/t2/flow_h16_d30_s1
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 100 --seed 1 --out outputs/ta_tutorial/t2/flow_h16_d100_s1
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 600 --seed 1 --out outputs/ta_tutorial/t2/flow_h16_d600_s1
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 200 --seed 2 --out outputs/ta_tutorial/t2/flow_h16_d200_s2
+--exp t2 --gen ddpm --horizon 16 --n-exec 8 --demos 200 --seed 2 --out outputs/ta_tutorial/t2/ddpm_h16_d200_s2
+--exp t2 --gen mse --horizon 16 --n-exec 8 --demos 200 --seed 2 --out outputs/ta_tutorial/t2/mse_h16_d200_s2
+--exp t2 --gen flow --horizon 1 --n-exec 1 --demos 200 --seed 2 --out outputs/ta_tutorial/t2/flow_h1_d200_s2
+--exp t2 --gen flow --horizon 4 --n-exec 2 --demos 200 --seed 2 --out outputs/ta_tutorial/t2/flow_h4_d200_s2
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 10 --seed 2 --out outputs/ta_tutorial/t2/flow_h16_d10_s2
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 30 --seed 2 --out outputs/ta_tutorial/t2/flow_h16_d30_s2
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 100 --seed 2 --out outputs/ta_tutorial/t2/flow_h16_d100_s2
+--exp t2 --gen flow --horizon 16 --n-exec 8 --demos 600 --seed 2 --out outputs/ta_tutorial/t2/flow_h16_d600_s2
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque zero --demos 400 --seed 0 --out outputs/ta_tutorial/t3/zero_d400_s0
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque suffix --demos 400 --seed 0 --out outputs/ta_tutorial/t3/suffix_d400_s0
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque prefix --demos 400 --seed 0 --out outputs/ta_tutorial/t3/prefix_d400_s0
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque suffix --aux 0.1 --demos 400 --seed 0 --out outputs/ta_tutorial/t3/aux_d400_s0
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque zero --demos 400 --seed 1 --out outputs/ta_tutorial/t3/zero_d400_s1
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque suffix --demos 400 --seed 1 --out outputs/ta_tutorial/t3/suffix_d400_s1
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque prefix --demos 400 --seed 1 --out outputs/ta_tutorial/t3/prefix_d400_s1
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque suffix --aux 0.1 --demos 400 --seed 1 --out outputs/ta_tutorial/t3/aux_d400_s1
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque zero --demos 400 --seed 2 --out outputs/ta_tutorial/t3/zero_d400_s2
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque suffix --demos 400 --seed 2 --out outputs/ta_tutorial/t3/suffix_d400_s2
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque prefix --demos 400 --seed 2 --out outputs/ta_tutorial/t3/prefix_d400_s2
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque suffix --aux 0.1 --demos 400 --seed 2 --out outputs/ta_tutorial/t3/aux_d400_s2
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque zero --demos 100 --seed 0 --out outputs/ta_tutorial/t3/zero_d100_s0
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque suffix --demos 100 --seed 0 --out outputs/ta_tutorial/t3/suffix_d100_s0
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque zero --demos 1500 --seed 0 --out outputs/ta_tutorial/t3/zero_d1500_s0
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque suffix --demos 1500 --seed 0 --out outputs/ta_tutorial/t3/suffix_d1500_s0
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque zero --demos 100 --seed 1 --out outputs/ta_tutorial/t3/zero_d100_s1
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque suffix --demos 100 --seed 1 --out outputs/ta_tutorial/t3/suffix_d100_s1
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque zero --demos 1500 --seed 1 --out outputs/ta_tutorial/t3/zero_d1500_s1
+--exp t3 --horizon 8 --n-exec 4 --steps 15000 --eval-every 1500 --torque suffix --demos 1500 --seed 1 --out outputs/ta_tutorial/t3/suffix_d1500_s1

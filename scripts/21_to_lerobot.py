@@ -24,6 +24,11 @@ def main() -> None:
     ap.add_argument("--no-force", action="store_true", help="phase 1: drop torque/tactile")
     ap.add_argument("--only-success", action="store_true", help="skip failed episodes")
     ap.add_argument(
+        "--env-state",
+        action="store_true",
+        help="store only the torque history, as observation.environment_state (ACT force token)",
+    )
+    ap.add_argument(
         "--future-torque",
         type=int,
         default=0,
@@ -42,6 +47,7 @@ def main() -> None:
         force=not args.no_force,
         only_success=args.only_success,
         future_torque=args.future_torque,
+        env_state=args.env_state,
     )
     print(json.dumps({"raw_episodes": len(eps), **out}))
 
