@@ -257,6 +257,7 @@ loss += aux_w * ((extra["aux"] - future_torque)**2).mean()   # TA-VLA auxiliary 
 <section id="t5">
 <h2>7 · T5 — the same recipe on the MuJoCo insertion skill</h2>
 <div class="col"><p><code>SortInsertEnv</code> holds an M16 bolt with a random offset in the hand above a 17 mm hole, using the Panda's joint-torque sensing and fingertip taxels. The demonstrations, recorded with the scripted expert, and the 50 evaluation set-ups are the same ones the BC-MLP experiment used. The state is 16-D, the torque history is 60-D (4 frames of τ_ext 7 plus a tactile summary of 8), and actions are 3-D pad motions.</p></div>
+<div class="col"><p><b>Result.</b> Over 3 seeds × 50 set-ups the force token did not measurably help here: zeroed 35 %, suffix 35 %, suffix + aux 40 % (aux vs zeroed, Fisher p = 0.40). Almost every failure is a timeout, the bolt not finding the hole in time, rather than a force abort, so the decision the token informs in T3/T4 (when contact happened, how hard to press) is not this task's bottleneck. The BC-MLP's large gap (29 vs 7 %) was measured with a single-step MSE head; with chunked flow policies the no-force arm is already above the BC-MLP's force arm (35 vs 29 %). Which of the two differences closes the gap was not tested.</p></div>
 <figure><div class="fig" id="t5-bars"></div><figcaption id="t5-cap">Insertion success on 50 held-out set-ups per seed. The BC-MLP bars are the earlier V9 result (5 seeds, single-step MSE). The TA arms are flow-matching <code>TAVLAMini</code> policies with 8-action chunks.</figcaption></figure>
 </section>
 
