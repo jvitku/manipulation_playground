@@ -853,8 +853,11 @@ forward pass), ISO M16 bolts / nuts, 17 mm ISO 273 hole. Details per step in the
   timeout (no force aborts, no drops). The same demos in a small BC MLP gain from force (28.8 vs
   6.8 %), so the signal is there; one hypothesis is that with 158 demos the 450M model latches
   onto the torque history as a shortcut, which normalisation (amplifying joint-torque detail)
-  made worse. Not tried: TA-VLA's auxiliary torque-prediction loss, more demos, more training
-  seeds (one run per arm). The token stays off (``TA_MODE=off``).
+  made worse. A second seed confirms it (zeroed 61 %, raw 48 %; pooled 127/200 vs 101/200,
+  Fisher p = 0.011), and TA-VLA's auxiliary future-torque loss (weight 0.1) does not fix it
+  (50 %). ACT with the torque history as one extra encoder token gains nothing either: 129/200
+  with force vs 123/200 without (2 seeds, p = 0.60). Not tried: more demos. The token stays off
+  (``TA_MODE=off``).
 * **Snapshot detectors plateau below 95 %**: grasp-stable ~94-95 % (tactile-driven), tip in the
   hole at release ~91 % (torque-driven); Cartesian wrench history did not help.
 

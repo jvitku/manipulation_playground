@@ -424,7 +424,7 @@ TD3/BC insertion, the TA-SmolVLA torque token hurts); V10 matrix + report done.
 | V6 | insert + pick done; sequencer failing | insert TD3+BC 10 seeds: **force 74.8 % vs no force 56.2 % (p = 0.0005)**; pick 99.0 % vs 99.6 % (ceiling); sequencer 0/10: learned picks leave the bolt 3-7 mm off centre, the insert skill only saw centred grasps - retraining on randomised in-hand offsets |
 | V7 | fails (reference) | SmolVLA on 104 rack episodes 0/36 parts (closest approach 30-35 mm) |
 | V8 | gate not met (closed) | grasp-stable 95.4 % [94.2, 96.6] (CNN ensemble over the history; interval straddles the gate), tip-in-hole at release 91.8 % (MLP ensemble); 5 data rounds + a temporal/ensemble model round |
-| V9 | done (mixed) | force helps TD3 insert (74.8 vs 56.2 %) and BC insert (28.8 vs 6.8 %); TA-SmolVLA torque token hurts the insertion skill: raw 53 %, z-scored 43 % vs zeroed twin 66 %, plain 61 % (100 held-out set-ups each); token stays off |
+| V9 | done (mixed) | force helps TD3 insert (74.8 vs 56.2 %) and BC insert (28.8 vs 6.8 %); TA-SmolVLA torque token hurts the insertion skill: raw 53/48 %, z-scored 43 % vs zeroed twin 66/61 %, plain 61 % (100 held-out set-ups each, 2 seeds where two numbers; raw vs zeroed p = 0.011); + future-torque aux loss 50 %; ACT force token 64.5 vs 61.5 % without (2 seeds, p = 0.60); token stays off |
 
 V4 findings that changed the design (all journaled):
 

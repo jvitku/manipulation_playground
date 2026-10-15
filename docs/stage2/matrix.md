@@ -14,9 +14,16 @@
 | sequencer, centred pick + offset-robust insert, force | 0/10 | 12/60 | 19/28 | 11/18 [39-80 %] |
 | sequencer, centred pick + offset-robust insert, no force | 0/10 | 14/60 | 37/42 | 9/32 [16-45 %] |
 
-| insert skill from images (SmolVLA, 158 demos, 100 held-out set-ups) | success | 95 % |
+| insert skill from images (SmolVLA / ACT, 158 demos, 100 held-out set-ups) | success | 95 % |
 |---|---|---|
 | SmolVLA (plain) | 61/100 | 51-70 % |
 | TA-SmolVLA, token input zeroed (no-force twin) | 66/100 | 56-75 % |
 | TA-SmolVLA, raw torque token | 53/100 | 43-62 % |
 | TA-SmolVLA, z-scored torque token | 43/100 | 34-53 % |
+| TA-SmolVLA, token input zeroed, seed 2 | 61/100 | 51-70 % |
+| TA-SmolVLA, raw torque token, seed 2 | 48/100 | 38-58 % |
+| TA-SmolVLA, raw token + future-torque loss | 50/100 | 40-60 % |
+| ACT, torque history as a token, seed 0 | 68/100 | 58-76 % |
+| ACT, torque history as a token, seed 1 | 61/100 | 51-70 % |
+| ACT, no force, seed 0 | 64/100 | 54-73 % |
+| ACT, no force, seed 1 | 59/100 | 49-68 % |

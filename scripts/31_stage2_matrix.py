@@ -127,6 +127,13 @@ def main() -> None:
         ("ta_zero", "TA-SmolVLA, token input zeroed (no-force twin)"),
         ("ta", "TA-SmolVLA, raw torque token"),
         ("ta_norm", "TA-SmolVLA, z-scored torque token"),
+        ("ta_zero_s2", "TA-SmolVLA, token input zeroed, seed 2"),
+        ("ta_s2", "TA-SmolVLA, raw torque token, seed 2"),
+        ("ta_aux", "TA-SmolVLA, raw token + future-torque loss"),
+        ("act_f_s0", "ACT, torque history as a token, seed 0"),
+        ("act_f_s1", "ACT, torque history as a token, seed 1"),
+        ("act_nf_s0", "ACT, no force, seed 0"),
+        ("act_nf_s1", "ACT, no force, seed 1"),
     ):
         f = Path(f"outputs/eval_ta_insert/{m}/final.json")
         if f.exists():
@@ -137,7 +144,8 @@ def main() -> None:
     out["ta_smolvla_insert"] = vla
     md += [
         "",
-        "| insert skill from images (SmolVLA, 158 demos, 100 held-out set-ups) | success | 95 % |",
+        "| insert skill from images (SmolVLA / ACT, 158 demos, 100 held-out set-ups) "
+        "| success | 95 % |",
         "|---|---|---|",
     ]
     for r in vla:

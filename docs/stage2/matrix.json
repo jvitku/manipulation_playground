@@ -443,6 +443,104 @@
         0.3373313900052838,
         0.5278478830413564
       ]
+    },
+    {
+      "mode": "ta_zero_s2",
+      "name": "TA-SmolVLA, token input zeroed, seed 2",
+      "episodes": 100,
+      "success": 61,
+      "success_rate": 0.61,
+      "force_abort": 1,
+      "dropped": 0,
+      "timeout": 38,
+      "wilson95": [
+        0.5120283616749817,
+        0.699832780680298
+      ]
+    },
+    {
+      "mode": "ta_s2",
+      "name": "TA-SmolVLA, raw torque token, seed 2",
+      "episodes": 100,
+      "success": 48,
+      "success_rate": 0.48,
+      "force_abort": 0,
+      "dropped": 0,
+      "timeout": 52,
+      "wilson95": [
+        0.38464384320080547,
+        0.5768359490982345
+      ]
+    },
+    {
+      "mode": "ta_aux",
+      "name": "TA-SmolVLA, raw token + future-torque loss",
+      "episodes": 100,
+      "success": 50,
+      "success_rate": 0.5,
+      "force_abort": 0,
+      "dropped": 0,
+      "timeout": 50,
+      "wilson95": [
+        0.40382982859014716,
+        0.5961701714098528
+      ]
+    },
+    {
+      "mode": "act_f_s0",
+      "name": "ACT, torque history as a token, seed 0",
+      "episodes": 100,
+      "success": 68,
+      "success_rate": 0.68,
+      "force_abort": 1,
+      "dropped": 1,
+      "timeout": 30,
+      "wilson95": [
+        0.5833719774632081,
+        0.7633098918454312
+      ]
+    },
+    {
+      "mode": "act_f_s1",
+      "name": "ACT, torque history as a token, seed 1",
+      "episodes": 100,
+      "success": 61,
+      "success_rate": 0.61,
+      "force_abort": 0,
+      "dropped": 1,
+      "timeout": 38,
+      "wilson95": [
+        0.5120283616749817,
+        0.699832780680298
+      ]
+    },
+    {
+      "mode": "act_nf_s0",
+      "name": "ACT, no force, seed 0",
+      "episodes": 100,
+      "success": 64,
+      "success_rate": 0.64,
+      "force_abort": 0,
+      "dropped": 0,
+      "timeout": 36,
+      "wilson95": [
+        0.542352199811621,
+        0.7272892540950986
+      ]
+    },
+    {
+      "mode": "act_nf_s1",
+      "name": "ACT, no force, seed 1",
+      "episodes": 100,
+      "success": 59,
+      "success_rate": 0.59,
+      "force_abort": 0,
+      "dropped": 2,
+      "timeout": 39,
+      "wilson95": [
+        0.4920125056109662,
+        0.6813284290433533
+      ]
     }
   ]
 }
