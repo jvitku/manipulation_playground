@@ -93,7 +93,7 @@ contact.
 | T2 | point mass around an obstacle, closed loop | MLP, chunks | chunk length, demo count, sampling steps; loss vs success |
 | T3 | 2-D peg-in-hole, hole known to ±3 cm, unknown surface height and stiffness | TAVLAMini (state + torque) | torque token: suffix vs prefix vs zeroed; auxiliary loss; demos |
 | T4 | 4 language-conditioned tasks from 32×32 images: insert into the red / blue hole, press gently (2 N) / firmly (6 N) | TAVLAMini (image + language + state + torque) | the full TA-VLA layout; per-task value of force |
-| T5 | MuJoCo insertion, zeroed / suffix / suffix + aux (3 seeds × 50 set-ups) | 34.7 / 35.3 / 40.0 % (aux vs zeroed p = 0.40: no measurable force benefit) |
+| T5 | MuJoCo insertion (robosuite), state + torque | TAVLAMini | whether the toy-world benefit carries over to a physics simulator |
 
 The contact world (`contact2d.py`) is built so that force is *necessary* for some decisions and
 *not* for others: the impedance-controlled peg rests on the surface while the controller's spring
@@ -147,7 +147,7 @@ seed ranges and the full curves).
 | T3 | suffix vs zeroed at 100 / 1500 demos | 80.7 vs 62.7 % / 85.3 vs 63.5 % |
 | T4 | zeroed / prefix / suffix / suffix + aux (4 tasks, 400 episodes, 2 seeds) | 62.9 / 91.3 / 91.4 / 91.8 % |
 | T4 | press 2 N, zeroed vs suffix | 31 % vs 98 %; the insertion tasks are equal (96–97 %) |
-| T5 | MuJoCo insertion, zeroed / suffix / suffix + aux (seed 0, 50 set-ups) | 26 / 36 / 44 % (seeds 1–2 running; one seed is within noise) |
+| T5 | MuJoCo insertion, zeroed / suffix / suffix + aux (3 seeds × 50 set-ups) | 34.7 / 35.3 / 40.0 % (aux vs zeroed p = 0.40) |
 | SmolVLA | plain / zeroed (2 seeds) / raw token (2 seeds) / z-scored / + aux loss (100 set-ups each) | 61 / 63.5 / 50.5 / 43 / 50 % (zeroed vs raw p = 0.011) |
 
 What the numbers say:
