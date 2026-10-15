@@ -15,7 +15,12 @@ import robosuite as suite  # noqa: E402
 
 import fvb.envs  # noqa: E402, F401
 from fvb.envs.fasteners import DEFAULT_HOLE  # noqa: E402
-from fvb.envs.sort_bolts_nuts import BUCKET_H, BUCKET_R, INSTRUCTION  # noqa: E402
+from fvb.envs.sort_bolts_nuts import (  # noqa: E402
+    BUCKET_H,
+    BUCKET_R,
+    INSTRUCTION,
+    SortTaskParams,
+)
 
 OPEN = np.r_[np.zeros(6), -1.0]
 
@@ -29,6 +34,8 @@ def env():
         has_offscreen_renderer=False,
         use_camera_obs=False,
         seed=0,
+        # the success-logic tests teleport parts around the tray; all parts start in it
+        task=SortTaskParams(bolt_presentation="tray"),
     )
     yield e
     e.close()
@@ -238,7 +245,7 @@ def test_tau_ext_free_motion_is_zero_in_env():
 
 
 def test_rack_presentation_spawns_bolts_upright():
-    """bolt_presentation='rack' (opt-in): bolts stand head-up in the rack, flats facing +-y."""
+    """bolt_presentation='rack' (the default): bolts stand head-up in the rack, flats facing +-y."""
     from fvb.envs.sort_bolts_nuts import SortTaskParams
 
     e = suite.make(
@@ -265,3 +272,8 @@ def test_rack_presentation_spawns_bolts_upright():
                 assert not e._in_rack(i)
     finally:
         e.close()
+
+
+def test_default_presentation_is_rack():
+    """User decision 2026-10-15: bolts in the rack by default; the tray stays an option."""
+    assert SortTaskParams().bolt_presentation == "rack"

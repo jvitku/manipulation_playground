@@ -37,7 +37,7 @@ def main() -> None:
     ap.add_argument("--camera-size", type=int, default=256)
     ap.add_argument("--no-cameras", action="store_true")
     ap.add_argument("--max-steps", type=int, default=3600)
-    ap.add_argument("--presentation", choices=("tray", "rack"), default="tray")
+    ap.add_argument("--presentation", choices=("tray", "rack"), default="rack")
     args = ap.parse_args()
 
     import robosuite as suite

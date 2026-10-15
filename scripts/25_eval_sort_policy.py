@@ -26,7 +26,7 @@ def main() -> None:
     ap.add_argument("--camera-size", type=int, default=256)
     ap.add_argument("--timeout", type=float, default=10.0)
     ap.add_argument("--gripper-deadband", type=float, default=0.5, help="<= 0: raw output")
-    ap.add_argument("--presentation", choices=("tray", "rack"), default="tray")
+    ap.add_argument("--presentation", choices=("tray", "rack"), default="rack")
     args = ap.parse_args()
 
     import robosuite as suite

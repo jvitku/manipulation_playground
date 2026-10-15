@@ -221,7 +221,7 @@ class SortExpert:
     def _support_z(self, pos: np.ndarray) -> float:
         """Height of the surface a part at ``pos`` lies on: tray floor, fixture top or table."""
         env = self.env
-        if getattr(env.task, "bolt_presentation", "tray") == "rack":
+        if getattr(env.task, "bolt_presentation", "rack") == "rack":
             from fvb.envs.sort_bolts_nuts import RACK_TOP, RACK_W
 
             c = env._table_to_world(env.task.rack_xy, RACK_TOP)

@@ -102,9 +102,11 @@ class SortTaskParams:
     bin_xy: tuple = (0.0, -0.22)  # table frame
     hole_xy: tuple = (0.05, 0.15)
     bucket_xy: tuple = (-0.26, -0.46)  # beside the tray, away from the arm at the hole (V4)
-    # "tray": bolts are dropped into the tray with the nuts. "rack": bolts stand head-up in a
-    # rack (kitting presentation) and are picked by the head from above; nuts stay in the tray.
-    bolt_presentation: str = "tray"
+    # "rack" (default, user decision 2026-10-15): bolts stand head-up in a rack (kitting
+    # presentation) and are picked by the head from above; nuts stay in the tray. "tray": bolts
+    # are dropped into the tray with the nuts (the plan's original design; the scripted expert
+    # plateaus at ~60 % of parts there, see FINDINGS).
+    bolt_presentation: str = "rack"
     rack_xy: tuple = (-0.05, 0.01)
 
 
