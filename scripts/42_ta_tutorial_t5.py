@@ -129,8 +129,8 @@ def train_eval(a) -> None:
         return {"success": c["success"] / n, **{f"n_{k}": v for k, v in c.items()}}, rows
 
     t0 = time.time()
-    hist, ema = train(model, gen, ds, Cfg(steps=a.steps, lr=a.lr, aux_weight=a.aux, seed=a.seed,
-                      eval_every=a.eval_every), vds, lambda m: evaluate(m, a.eval_mid)[0])  # fmt: skip
+    cfg = Cfg(steps=a.steps, lr=a.lr, aux_weight=a.aux, seed=a.seed, eval_every=a.eval_every)
+    hist, ema = train(model, gen, ds, cfg, vds, lambda m: evaluate(m, a.eval_mid)[0])
     final, rows = evaluate(ema, a.eval)
     final.update(
         demo_episodes=len(eps), demo_pairs=int(ds.n), wall_min=round((time.time() - t0) / 60, 1)

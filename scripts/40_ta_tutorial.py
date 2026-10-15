@@ -55,7 +55,9 @@ def run_t1(a, dev, out):
     vds = ChunkDataset(va, 1, device=dev, norm=ds.norm)
     gen = generative.make(a.gen)
     model = MLPDenoiser(2, 1, 1, hidden=256, depth=3)
-    ce = torch.as_tensor(np.random.default_rng(99).uniform(-1, 1, (2000, 1)), dtype=torch.float32)
+    ce = torch.as_tensor(
+        np.random.default_rng(99).uniform(-0.4, 0.4, (2000, 1)), dtype=torch.float32
+    )
 
     def sample(m, cc, steps, trace=False, seed=0):
         g = torch.Generator(device=dev).manual_seed(seed)
@@ -71,14 +73,14 @@ def run_t1(a, dev, out):
     for s in (1, 2, 4, 8, 16, 32, 64):
         x = sample(ema, ce, s)
         extras["sweep"][s] = toy.t1_metrics(ce[:, 0].numpy(), x[:, 0].cpu().numpy())
-    for cv in (-0.5, 0.0, 0.5):
+    for cv in (-0.3, 0.0, 0.3):
         cc = torch.full((400, 1), cv)
         x, tr_ = sample(ema, cc, a.sample_steps, trace=True)
         extras[f"samples_c{cv}"] = x[:, 0].cpu().numpy().round(4).tolist()
         if cv == 0.0:
             extras["trace_c0"] = tr_[:, :48, 0].cpu().numpy().round(4).tolist()  # (steps+1, 48, 2)
     if a.gen == "flow":  # the learned velocity field at three noise levels, for c = 0
-        gx = torch.linspace(-2, 2, 17)
+        gx = torch.linspace(-2, 2, 13)
         X, Y = torch.meshgrid(gx, gx, indexing="xy")
         pts = torch.stack([X.flatten(), Y.flatten()], 1)[:, None].to(dev)
         cond = ds.cond({"obs": torch.zeros(len(pts), 1, device=dev)})

@@ -1,9 +1,11 @@
 """T1 and T2: tasks without force, to learn what a generative action head buys you.
 
-T1 - two modes. Observation c in [-1, 1] (where an obstacle is); the expert's action is a 2-D
-waypoint that passes the obstacle on the LEFT or on the RIGHT with equal probability:
-``a = (c -/+ 0.6, 0.5) + noise``. A regression head predicts the mean ``(c, 0.5)``: straight
-into the obstacle. A flow / diffusion head samples both modes.
+T1 - two modes. Observation c in [-0.4, 0.4] (where an obstacle is); the expert's action is a
+2-D waypoint that passes the obstacle on the LEFT or on the RIGHT with equal probability:
+``a = (c -/+ 0.5, 0.5) + noise`` - inside [-1, 1], the range DDPM's sampler clips to (an
+unnormalised target is silently clipped and looks like a worse model). A regression head
+predicts the mean ``(c, 0.5)``: straight into the obstacle. A flow / diffusion head samples
+both modes.
 
 T2 - point mass around an obstacle (closed loop, action chunks). The mass starts near (0, -1)
 and must reach a goal near (0, 1) without touching a disc of radius 0.3 near the origin. The
@@ -16,12 +18,12 @@ from __future__ import annotations
 import numpy as np
 
 # ---------------------------------------------------------------- T1
-T1_HALF_GAP = 0.6
-T1_OBSTACLE = 0.3  # half-width: |a_x - c| < this is a collision
+T1_HALF_GAP = 0.5
+T1_OBSTACLE = 0.25  # half-width: |a_x - c| < this is a collision
 
 
 def t1_data(n: int, rng: np.random.Generator, noise: float = 0.05):
-    c = rng.uniform(-1, 1, n)
+    c = rng.uniform(-0.4, 0.4, n)
     side = rng.choice([-1.0, 1.0], n)
     a = np.stack([c + side * T1_HALF_GAP, np.full(n, 0.5)], 1) + rng.normal(0, noise, (n, 2))
     return c[:, None].astype(np.float32), a.astype(np.float32)
@@ -29,7 +31,7 @@ def t1_data(n: int, rng: np.random.Generator, noise: float = 0.05):
 
 def t1_metrics(c: np.ndarray, a: np.ndarray) -> dict:
     """``c`` (n,), ``a`` (n, 2) sampled actions: collision rate, mode balance and the distance to
-    the nearest expert mode (0 for a perfect sampler, ~0.6 for the regression mean)."""
+    the nearest expert mode (0 for a perfect sampler, ~0.5 for the regression mean)."""
     dx = a[:, 0] - c
     left = dx < 0
     modes = np.stack([c - T1_HALF_GAP, c + T1_HALF_GAP], 1)

@@ -120,6 +120,9 @@ Measured numbers are in the report; the general lessons:
   more where modes split; DDIM with very few steps degrades more.
 * **Chunks.** H = 1 with a generative head can switch modes between consecutive steps (left,
   right, left... into the obstacle); chunks fix it; executing half a chunk keeps reactivity.
+* **Action range.** DDPM's sampler clips its clean-action estimate to [-1, 1] (as Diffusion
+  Policy does); our first T1 used waypoints up to ±1.6 and DDPM looked 8× worse than flow
+  matching for that reason alone. Normalise actions to the sampler's range.
 * **Normalisation.** Z-score every input including the torque history; mixing a 47 N grip force
   with 1 N joint torques (our first SmolVLA runs) makes the token hard to use.
 * **Data.** Measure success against the number of demonstrations; the force token's benefit

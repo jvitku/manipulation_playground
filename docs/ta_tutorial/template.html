@@ -1,0 +1,524 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TA-VLA Diffusion Workbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a single reading column (~70ch) with figures allowed to run wider; lab-notebook tone. */
+:root{
+  --bg:#f6f7f5; --panel:#ffffff; --ink:#15181c; --ink-2:#4a4f57; --ink-3:#7b818a;
+  --rule:#dfe2de; --grid:#e8ebe7; --band:rgba(42,120,214,.12);
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --data:#9aa0a6; --hit:#e34948; --ok:#1baf7a; --code-bg:#eef1ee;
+  --prefix:#2a78d6; --expert:#eb6834; --torque:#1baf7a;
+  --f-display:"Newsreader", Georgia, "Times New Roman", serif;
+  --f-body:"Public Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+  --f-mono:"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#141615; --panel:#1b1e1c; --ink:#eef0ec; --ink-2:#b8bdb6; --ink-3:#868c85;
+  --rule:#2d312e; --grid:#262a27; --band:rgba(57,135,229,.18);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --data:#6d736c; --hit:#e66767; --ok:#199e70; --code-bg:#202422;
+  --prefix:#3987e5; --expert:#d95926; --torque:#199e70; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#141615; --panel:#1b1e1c; --ink:#eef0ec; --ink-2:#b8bdb6; --ink-3:#868c85;
+  --rule:#2d312e; --grid:#262a27; --band:rgba(57,135,229,.18);
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --data:#6d736c; --hit:#e66767; --ok:#199e70; --code-bg:#202422;
+  --prefix:#3987e5; --expert:#d95926; --torque:#199e70; color-scheme:dark}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.6}
+.wrap{max-width:980px;margin:0 auto;padding-inline:20px;padding-block:40px 80px}
+.col{max-width:70ch}
+h1,h2,h3{font-family:var(--f-display);font-weight:600;text-wrap:balance;line-height:1.15;margin:0}
+h1{font-size:clamp(2rem,4.6vw,3.1rem);letter-spacing:-.01em}
+h2{font-size:1.75rem;margin-top:3.2rem;padding-top:1.4rem;border-top:1px solid var(--rule)}
+h3{font-size:1.2rem;margin-top:2rem}
+p{margin:.8rem 0}
+.eyebrow{font-family:var(--f-mono);font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.lede{font-size:1.12rem;color:var(--ink-2);max-width:66ch}
+code,.mono{font-family:var(--f-mono);font-size:.86em}
+code{background:var(--code-bg);padding:.08em .32em;border-radius:3px}
+pre{background:var(--code-bg);padding:14px 16px;border-radius:6px;overflow-x:auto;font-family:var(--f-mono);font-size:.8rem;line-height:1.55;margin:1rem 0}
+nav.toc{display:flex;flex-wrap:wrap;gap:6px 16px;margin:1.6rem 0 0;font-size:.88rem}
+nav.toc a{color:var(--ink-2);text-decoration:none;border-bottom:1px solid var(--rule)}
+nav.toc a:hover{color:var(--ink);border-color:var(--ink-2)}
+figure{margin:1.6rem 0;min-width:0}
+figcaption{font-size:.86rem;color:var(--ink-2);margin-top:.5rem;max-width:72ch}
+.fig{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:14px 14px 10px;position:relative}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.grid2>*,.grid3>*{min-width:0}
+.ctitle{font-size:.9rem;font-weight:600;margin:0 0 4px}
+.csub{font-size:.78rem;color:var(--ink-3);margin:0 0 6px}
+svg.chart{width:100%;height:auto;display:block;overflow:visible}
+svg text{font-family:var(--f-body)}
+.axis text{fill:var(--ink-3);font-size:11px}
+.axis line,.axis path{stroke:var(--rule)}
+.gridline{stroke:var(--grid)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.8rem;color:var(--ink-2);margin-top:6px}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+.tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:6px 8px;font-size:.76rem;line-height:1.4;box-shadow:0 4px 14px rgba(0,0,0,.12);white-space:nowrap;z-index:5}
+.tip b{font-weight:600}
+table{border-collapse:collapse;width:100%;font-size:.86rem;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font-weight:600;color:var(--ink-2);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}
+td.num,th.num{text-align:right}
+.tablewrap{overflow-x:auto}
+.steps{counter-reset:s;list-style:none;padding:0;margin:1rem 0}
+.steps li{counter-increment:s;position:relative;padding-left:2.2rem;margin:.6rem 0}
+.steps li::before{content:counter(s);position:absolute;left:0;top:.1rem;width:1.5rem;height:1.5rem;border-radius:50%;background:var(--code-bg);font-family:var(--f-mono);font-size:.78rem;display:grid;place-items:center;color:var(--ink-2)}
+.callout{border-left:3px solid var(--s1);background:var(--panel);padding:10px 14px;border-radius:0 6px 6px 0;margin:1.2rem 0;font-size:.95rem}
+.callout.warn{border-color:var(--s2)}
+.kpis{display:flex;flex-wrap:wrap;gap:10px;margin:1rem 0}
+.kpi{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:10px 14px;min-width:150px;flex:1}
+.kpi .v{font-family:var(--f-display);font-size:1.6rem;font-variant-numeric:tabular-nums}
+.kpi .l{font-size:.78rem;color:var(--ink-2)}
+.pending{color:var(--ink-3);font-style:italic;font-size:.88rem;padding:20px 0}
+.diagram text{fill:currentColor}
+.diagram{color:var(--ink)}
+@media (prefers-reduced-motion:no-preference){.fig{transition:border-color .2s}.fig:hover{border-color:var(--ink-3)}}
+</style>
+
+<div class="wrap">
+<header class="col">
+  <div class="eyebrow">manipulation_playground · Stage 2 · learning notes</div>
+  <h1>TA-VLA Diffusion Workbook</h1>
+  <p class="lede">How a torque-aware vision-language-action policy is trained, built up from a two-mode toy to a MuJoCo insertion skill. Every number on this page was measured by the code in <code>src/fvb/ta_tutorial</code>; the curves are means over training seeds, with the min–max range across seeds shaded.</p>
+  <nav class="toc">
+    <a href="#arch">1 · Architecture</a><a href="#train">2 · Training step</a><a href="#t1">3 · T1 modes</a><a href="#t2">4 · T2 chunks</a><a href="#t3">5 · T3 force</a><a href="#t4">6 · T4 mini-VLA</a><a href="#t5">7 · T5 MuJoCo</a><a href="#vla">8 · Real SmolVLA</a><a href="#lessons">9 · Convergence</a><a href="#run">10 · Run it</a>
+  </nav>
+</header>
+
+<section id="arch">
+<h2>1 · The model: a VLM prefix, an action expert, a torque token</h2>
+<div class="col">
+<p>pi0 and SmolVLA process one attention sequence with two sets of weights. The <b>prefix</b> holds the observation (image patches, instruction, robot state) and runs through the vision-language model. The <b>suffix</b> holds an action chunk, H future actions with noise mixed in, and runs through a smaller <b>action expert</b>. In every layer, each stream computes its own queries, keys and values. Attention is joint under a block mask: prefix tokens see only the prefix; suffix tokens see the prefix and the whole suffix.</p>
+<p>TA-VLA adds one token built from the recent force/torque history. Its ablation found the token works best in the <b>decoder</b>, next to the actions being denoised. An optional auxiliary head predicts the <i>future</i> torques from the expert's action outputs.</p>
+</div>
+<figure>
+<div class="fig diagram">
+<svg class="chart" viewBox="0 0 940 430" role="img" aria-label="TA-VLA architecture: prefix tokens through VLM layers produce keys and values per layer; the suffix of a torque token and noisy action tokens goes through action-expert layers that attend to the prefix keys and values; outputs are a velocity per action token and an auxiliary torque prediction.">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+    <marker id="arP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--prefix)"/></marker>
+  </defs>
+  <!-- inputs row -->
+  <g font-size="12">
+    <text x="20" y="22" font-weight="600" font-size="13">observation</text>
+    <rect x="20" y="34" width="120" height="44" rx="6" fill="none" stroke="var(--prefix)"/><text x="80" y="54" text-anchor="middle">camera 32×32</text><text x="80" y="70" text-anchor="middle" fill="var(--ink-3)" font-size="11">CNN → 16 patches</text>
+    <rect x="152" y="34" width="120" height="44" rx="6" fill="none" stroke="var(--prefix)"/><text x="212" y="54" text-anchor="middle">instruction</text><text x="212" y="70" text-anchor="middle" fill="var(--ink-3)" font-size="11">"press firmly"</text>
+    <rect x="284" y="34" width="100" height="44" rx="6" fill="none" stroke="var(--prefix)"/><text x="334" y="54" text-anchor="middle">state</text><text x="334" y="70" text-anchor="middle" fill="var(--ink-3)" font-size="11">x, z</text>
+    <text x="520" y="22" font-weight="600" font-size="13">to generate</text>
+    <rect x="520" y="34" width="130" height="44" rx="6" fill="none" stroke="var(--torque)"/><text x="585" y="54" text-anchor="middle">torque history</text><text x="585" y="70" text-anchor="middle" fill="var(--ink-3)" font-size="11">10 frames × (Fx, Fz)</text>
+    <rect x="662" y="34" width="150" height="44" rx="6" fill="none" stroke="var(--expert)"/><text x="737" y="54" text-anchor="middle">noisy chunk x_t</text><text x="737" y="70" text-anchor="middle" fill="var(--ink-3)" font-size="11">H × 2 actions, time t</text>
+  </g>
+  <!-- token rows -->
+  <g font-size="11">
+    <text x="20" y="116" fill="var(--ink-2)">prefix tokens</text>
+    <g fill="var(--prefix)" opacity=".85">
+      <rect x="20" y="124" width="14" height="22" rx="2"/><rect x="38" y="124" width="14" height="22" rx="2"/><rect x="56" y="124" width="14" height="22" rx="2"/><rect x="74" y="124" width="14" height="22" rx="2"/><rect x="92" y="124" width="14" height="22" rx="2"/><rect x="110" y="124" width="14" height="22" rx="2"/>
+      <rect x="152" y="124" width="14" height="22" rx="2"/><rect x="170" y="124" width="14" height="22" rx="2"/><rect x="188" y="124" width="14" height="22" rx="2"/><rect x="206" y="124" width="14" height="22" rx="2"/><rect x="224" y="124" width="14" height="22" rx="2"/>
+      <rect x="320" y="124" width="14" height="22" rx="2"/>
+    </g>
+    <text x="128" y="140" fill="var(--ink-3)">…</text>
+    <text x="520" y="116" fill="var(--ink-2)">suffix tokens</text>
+    <rect x="578" y="124" width="14" height="22" rx="2" fill="var(--torque)"/>
+    <g fill="var(--expert)" opacity=".85"><rect x="682" y="124" width="14" height="22" rx="2"/><rect x="700" y="124" width="14" height="22" rx="2"/><rect x="718" y="124" width="14" height="22" rx="2"/><rect x="736" y="124" width="14" height="22" rx="2"/><rect x="754" y="124" width="14" height="22" rx="2"/><rect x="772" y="124" width="14" height="22" rx="2"/><rect x="790" y="124" width="14" height="22" rx="2"/></g>
+  </g>
+  <g stroke="currentColor" fill="none" stroke-width="1.2">
+    <line x1="80" y1="80" x2="80" y2="120" marker-end="url(#ar)"/><line x1="212" y1="80" x2="212" y2="120" marker-end="url(#ar)"/><line x1="334" y1="80" x2="334" y2="120" marker-end="url(#ar)"/>
+    <line x1="585" y1="80" x2="585" y2="120" marker-end="url(#ar)"/><line x1="737" y1="80" x2="737" y2="120" marker-end="url(#ar)"/>
+  </g>
+  <text x="600" y="98" font-size="11" fill="var(--ink-3)">MLP</text><text x="745" y="98" font-size="11" fill="var(--ink-3)">linear ⊕ time-emb</text>
+  <!-- layer stacks -->
+  <g font-size="12">
+    <rect x="20" y="166" width="364" height="150" rx="8" fill="none" stroke="var(--prefix)" stroke-dasharray="0"/>
+    <text x="34" y="188" font-weight="600" fill="var(--prefix)">VLM stream (prefix weights)</text>
+    <text x="34" y="208" fill="var(--ink-2)" font-size="11">L layers · attends to prefix only</text>
+    <rect x="520" y="166" width="292" height="150" rx="8" fill="none" stroke="var(--expert)"/>
+    <text x="534" y="188" font-weight="600" fill="var(--expert)">action expert (suffix weights)</text>
+    <text x="534" y="208" fill="var(--ink-2)" font-size="11">attends to prefix K/V + whole suffix</text>
+    <g fill="none" stroke="var(--rule)"><rect x="40" y="222" width="324" height="20" rx="3"/><rect x="40" y="248" width="324" height="20" rx="3"/><rect x="40" y="274" width="324" height="20" rx="3"/>
+    <rect x="540" y="222" width="252" height="20" rx="3"/><rect x="540" y="248" width="252" height="20" rx="3"/><rect x="540" y="274" width="252" height="20" rx="3"/></g>
+    <g font-size="10.5" fill="var(--ink-3)"><text x="50" y="236">layer 1: Q K V · attention · MLP</text><text x="50" y="262">layer 2</text><text x="50" y="288">layer L</text>
+    <text x="550" y="236">layer 1: Q K V · joint attention · MLP</text><text x="550" y="262">layer 2</text><text x="550" y="288">layer L</text></g>
+  </g>
+  <g stroke="currentColor" fill="none" stroke-width="1.2"><line x1="200" y1="148" x2="200" y2="162" marker-end="url(#ar)"/><line x1="680" y1="148" x2="680" y2="162" marker-end="url(#ar)"/></g>
+  <!-- K/V arrows -->
+  <g stroke="var(--prefix)" stroke-width="1.4" fill="none">
+    <path d="M364 232 C 440 232, 460 232, 538 232" marker-end="url(#arP)"/>
+    <path d="M364 258 C 440 258, 460 258, 538 258" marker-end="url(#arP)"/>
+    <path d="M364 284 C 440 284, 460 284, 538 284" marker-end="url(#arP)"/>
+  </g>
+  <text x="452" y="222" text-anchor="middle" font-size="11" fill="var(--prefix)">keys, values</text>
+  <text x="452" y="306" text-anchor="middle" font-size="10.5" fill="var(--ink-3)">computed once per observation,</text>
+  <text x="452" y="320" text-anchor="middle" font-size="10.5" fill="var(--ink-3)">reused for all K denoising steps</text>
+  <!-- outputs -->
+  <g stroke="currentColor" fill="none" stroke-width="1.2"><line x1="737" y1="318" x2="737" y2="350" marker-end="url(#ar)"/><line x1="585" y1="318" x2="585" y2="350" marker-end="url(#ar)" stroke-dasharray="4 3"/></g>
+  <g font-size="12">
+    <rect x="662" y="354" width="150" height="48" rx="6" fill="none" stroke="var(--expert)"/><text x="737" y="374" text-anchor="middle">velocity v (H × 2)</text><text x="737" y="390" text-anchor="middle" font-size="11" fill="var(--ink-3)">loss |v − (e − x0)|²</text>
+    <rect x="510" y="354" width="140" height="48" rx="6" fill="none" stroke="var(--torque)" stroke-dasharray="4 3"/><text x="580" y="374" text-anchor="middle">aux head (optional)</text><text x="580" y="390" text-anchor="middle" font-size="11" fill="var(--ink-3)">future F, w = 0.1</text>
+  </g>
+  <!-- placement alternative -->
+  <g font-size="11" fill="var(--ink-3)"><text x="20" y="352">Ablation arms in T3–T5:</text>
+  <text x="20" y="370"><tspan fill="var(--torque)">suffix</tspan> = token beside the actions (TA-VLA)</text>
+  <text x="20" y="386"><tspan fill="var(--prefix)">prefix</tspan> = token appended to the observation</text>
+  <text x="20" y="402">zero = same weights, token input zeroed (no-force twin)</text>
+  <text x="20" y="418">aux = suffix + future-torque head</text></g>
+</svg>
+</div>
+<figcaption>The model used from T3 on (<code>nets.TAVLAMini</code>), drawn for T4. In SmolVLA the prefix stream is a pretrained 450M VLM and the expert has its own reduced width; here both streams are 4 layers of width 128 (about 1.7M parameters with the CNN). The block mask is the reason the prefix keys and values can be cached: the observation's encoding never depends on the noisy actions.</figcaption>
+</figure>
+</section>
+
+<section id="train">
+<h2>2 · One training step, one inference loop</h2>
+<div class="grid2">
+<div class="col" style="min-width:0">
+<h3>Training (flow matching)</h3>
+<ol class="steps">
+<li>Sample a batch of steps from the demonstrations: observation, torque history (z-scored), and the expert's next H actions <code>x0</code>. Positions past the end of the episode are padded and masked out.</li>
+<li>Draw a noise level <code>t ~ Beta(1.5, 1)</code> (more weight on noisy t) and noise <code>e ~ N(0, I)</code>.</li>
+<li>Mix along a straight line: <code>x_t = t·e + (1 − t)·x0</code>.</li>
+<li>The network sees <code>x_t</code>, <code>t</code> and the observation, and predicts a velocity <code>v</code>. The target is the line's velocity <code>u = e − x0</code>.</li>
+<li>Loss <code>|v − u|²</code>, plus <code>0.1·|aux − future torque|²</code> with the auxiliary head. AdamW, warm-up then cosine decay, gradient clip 1, EMA of the weights for evaluation.</li>
+</ol>
+</div>
+<div class="col" style="min-width:0">
+<h3>Inference (closed loop)</h3>
+<ol class="steps">
+<li>Encode the observation once, then cache each layer's prefix keys and values.</li>
+<li>Start from pure noise <code>x ← e</code> at t = 1.</li>
+<li>Take K Euler steps, <code>x ← x − (1/K)·v(x, t)</code>, down to t = 0. Only the expert runs at each step.</li>
+<li>Execute the first <code>n_exec</code> actions of the chunk (half of it here), then observe and re-plan.</li>
+</ol>
+<div class="callout">Why chunks: a sampled chunk commits to one mode for H steps, so the policy doesn't flip between "left" and "right". Executing only part of it keeps the loop reactive to contact.</div>
+</div>
+</div>
+<pre>
+# src/fvb/ta_tutorial/generative.py  (FlowMatching.loss, abridged)
+t   = Beta(1.5, 1).sample(B)                    # noise level per sample
+e   = randn_like(x0)                            # x0: (B, H, A) expert chunk
+x_t = t*e + (1 - t)*x0                          # straight path data -> noise
+v, extra = model(x_t, t, cond)                  # cond: image, tokens, state, torque
+loss = ((v - (e - x0))**2).mean(-1) * mask      # padding masked
+loss += aux_w * ((extra["aux"] - future_torque)**2).mean()   # TA-VLA auxiliary term
+</pre>
+</section>
+
+<section id="t1">
+<h2>3 · T1 — why the head must be generative</h2>
+<div class="col"><p>The observation <i>c</i> is the obstacle's position. Every expert waypoint passes it either on the left, at <code>c − 0.5</code>, or on the right, at <code>c + 0.5</code>, with equal probability. Actions stay inside [−1, 1], the range DDPM's sampler clips to. The same small MLP is trained three ways: flow matching, DDPM (ε-prediction, cosine schedule, DDIM sampling), and plain MSE regression. All three use 20k steps at lr 1e-3 and 3 seeds.</p></div>
+<div class="grid3" id="t1-clouds"></div>
+<figure><div class="grid2"><div class="fig" id="t1-coll"></div><div class="fig" id="t1-loss"></div></div>
+<figcaption id="t1-cap">Left: the share of sampled waypoints that land inside the obstacle (|a − c| &lt; 0.25) during training. Right: the training loss for the same runs. Flow and DDPM losses are on a different scale from MSE, so read each curve for its shape, not its level.</figcaption></figure>
+<h3>How a sample is made</h3>
+<div class="grid2"><div class="fig" id="t1-trace"></div><div class="fig" id="t1-field"></div></div>
+<figure><div class="grid2"><div class="fig" id="t1-sweep"></div><div class="fig" id="t1-lr"></div></div>
+<figcaption>Left: the error versus the number of integration steps at sampling time, for the trained models. Right: the same flow model trained at lr 3e-4 instead of 1e-3, which shows the training budget a two-mode toy already needs.</figcaption></figure>
+</section>
+
+<section id="t2">
+<h2>4 · T2 — closed loop, chunks, data and steps</h2>
+<div class="col"><p>A point mass starts near (0, −1) and must reach a goal near (0, 1) around a disc of radius 0.3. In each episode the expert picks a side at random. The observation is 6-D, the action is a velocity, and the policy is a 4×512 MLP denoiser. Success is measured on the same 200 evaluation scenes for every run.</p></div>
+<div class="kpis" id="t2-kpis"></div>
+<figure><div class="grid2"><div class="fig" id="t2-succ"></div><div class="fig" id="t2-val"></div></div>
+<figcaption>Left: closed-loop success during training, chunks of 16 with 8 executed, 200 demonstrations. Right: held-out loss with fixed noise draws for the same runs. The loss settles early while success keeps rising.</figcaption></figure>
+<figure><div class="grid2"><div class="fig" id="t2-paths-flow"></div><div class="fig" id="t2-paths-mse"></div></div>
+<figcaption>Rollouts of the final policies on the first 16 evaluation scenes; red marks a collision. Regression drives into the obstacle when the two sides are equally likely. Flow matching commits to one side for the whole chunk.</figcaption></figure>
+<figure><div class="grid3"><div class="fig" id="t2-demos"></div><div class="fig" id="t2-h"></div><div class="fig" id="t2-sweep"></div></div>
+<figcaption>Final success against the number of demonstrations (flow, H = 16); against chunk length (H = 1 executes 1, H = 4 executes 2, H = 16 executes 8); and against integration steps at sampling time. Bars and points are seed means, with whiskers from the lowest to the highest seed.</figcaption></figure>
+</section>
+
+<section id="t3">
+<h2>5 · T3 — where the torque token earns its place</h2>
+<div class="col">
+<p>This is a 2-D peg-in-hole task. The policy knows where the hole is only to within about 3 cm (σ). The hole is 1.2 cm wide with a 1.2 cm chamfer each side. The surface height (±3 cm) and the contact stiffness (200–1000 N per unit) are random, and only the force sensor sees them. An impedance controller presses with <code>F = k·(pos − ref)</code>, and above 15 N the episode aborts. On the chamfer, the reaction force tilts toward the hole.</p>
+<p>All arms share the same <code>TAVLAMini</code>: a state token in the prefix, 8-action chunks with 4 executed, and 15k steps. Only the torque token changes: <b>zero</b> (the twin with its input zeroed), <b>prefix</b>, <b>suffix</b> (TA-VLA), and <b>aux</b> (suffix plus future-force prediction).</p>
+</div>
+<div class="kpis" id="t3-kpis"></div>
+<figure><div class="grid2"><div class="fig" id="t3-curve"></div><div class="fig" id="t3-mix"></div></div>
+<figcaption>Left: closed-loop success during training, 400 demonstrations, 3 seeds per arm, on the same 200 scenes. Right: how the episodes end, pooled over seeds. Without force, the extra failures are force aborts: the policy can't tell when it has touched the surface, so it presses too hard.</figcaption></figure>
+<figure><div class="grid2"><div class="fig" id="t3-demos"></div><div class="fig" id="t3-traj"></div></div>
+<figcaption>Left: final success against the number of demonstrations, for the token in the suffix versus zeroed (2 seeds). Right: one evaluation episode for each, with the vertical contact force over time.</figcaption></figure>
+</section>
+
+<section id="t4">
+<h2>6 · T4 — a mini VLA: image, language, force</h2>
+<div class="col"><p>There are four language-conditioned tasks in one scene, seen through a 32×32 side camera: <i>insert into the red hole</i>, <i>insert into the blue hole</i>, <i>press gently</i> (2 N held for 8 steps), and <i>press firmly</i> (6 N). There are 1600 demonstrations across the tasks and 30k training steps. Images are rendered on the GPU from the scene state as a batch is drawn, so camera noise doubles as augmentation. Inserting needs vision to choose the hole and force to finish the alignment. Pressing to a force under a 5× uncertain stiffness needs force.</p></div>
+<figure><div class="fig" id="t4-tasks"></div>
+<figcaption>Final success per task and arm, 100 evaluation episodes per task per seed, 2 seeds. The whiskers are pooled Wilson 95 % intervals.</figcaption></figure>
+<figure><div class="grid2"><div class="fig" id="t4-curve"></div><div class="fig" id="t4-press"></div></div>
+<figcaption>Left: success over all tasks during training. Right: the "press firmly" task alone, the one that depends on force.</figcaption></figure>
+</section>
+
+<section id="t5">
+<h2>7 · T5 — the same recipe on the MuJoCo insertion skill</h2>
+<div class="col"><p><code>SortInsertEnv</code> holds an M16 bolt with a random offset in the hand above a 17 mm hole, using the Panda's joint-torque sensing and fingertip taxels. The demonstrations, recorded with the scripted expert, and the 50 evaluation set-ups are the same ones the BC-MLP experiment used. The state is 16-D, the torque history is 60-D (4 frames of τ_ext 7 plus a tactile summary of 8), and actions are 3-D pad motions.</p></div>
+<figure><div class="fig" id="t5-bars"></div><figcaption id="t5-cap">Insertion success on 50 held-out set-ups per seed. The BC-MLP bars are the earlier V9 result (5 seeds, single-step MSE). The TA arms are flow-matching <code>TAVLAMini</code> policies with 8-action chunks.</figcaption></figure>
+</section>
+
+<section id="vla">
+<h2>8 · What happened with the real SmolVLA</h2>
+<div class="col"><p>The same torque token went into a fine-tuned SmolVLA (450M parameters, pretrained <code>lerobot/smolvla_base</code>) on the image-based insertion skill: 158 demonstrations, 10k steps, re-planning every 10 steps, and 100 held-out set-ups. The ACT rows feed the same history through ACT's environment-state token.</p></div>
+<div class="tablewrap" id="vla-table"></div>
+</section>
+
+<section id="lessons">
+<h2>9 · Convergence: what the runs say</h2>
+<div class="col" id="lessons-body"></div>
+</section>
+
+<section id="run">
+<h2>10 · Run it yourself</h2>
+<pre>
+# VLA image (torch + CUDA); every run writes history.json / final.json / extras.json
+docker compose -f docker/compose.yaml run --rm -T -u $(id -u):$(id -g) vla \
+  python scripts/40_ta_tutorial.py --exp t1 --gen flow --steps 20000 --lr 1e-3 --out outputs/ta_tutorial/t1/flow_s0
+  python scripts/40_ta_tutorial.py --exp t2 --gen flow --horizon 16 --n-exec 8 --demos 200 --out ...
+  python scripts/40_ta_tutorial.py --exp t3 --torque suffix --aux 0.1 --horizon 8 --n-exec 4 --steps 15000 --out ...
+  python scripts/40_ta_tutorial.py --exp t4 --torque suffix --horizon 8 --n-exec 4 --steps 30000 --demos 1600 --out ...
+# train image (MuJoCo + torch): T5
+  python scripts/42_ta_tutorial_t5.py collect --shard 0 --shards 6      # x6, then:
+  python scripts/42_ta_tutorial_t5.py train --torque suffix --seed 0 --out outputs/ta_tutorial/t5/suffix_s0
+# this page
+  python scripts/41_ta_tutorial_report.py                               # -> docs/ta_tutorial/index.html
+# the whole sweep, as run for this page: outputs/diag/tut_sweep.sh (job lists tut_jobs_*.txt)
+</pre>
+<div class="col"><p>The code to read, in order: <code>generative.py</code> (both heads in about 150 lines), <code>nets.py</code> (the two-stream transformer), <code>data.py</code> (chunking and padding), <code>train.py</code> (loop, EMA, closed-loop policy), then the tasks. <code>tests/test_ta_tutorial.py</code> pins the physics, the experts, the masking, the KV cache, and that a short training separates the modes.</p></div>
+</section>
+</div>
+
+<script>
+const D = /*__DATA__*/null;
+const NS = "http://www.w3.org/2000/svg";
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COL = {flow:"--s1", ddpm:"--s2", mse:"--s3", zero:"--s3", suffix:"--s1", prefix:"--s2", aux:"--s4"};
+const NAME = {flow:"flow matching", ddpm:"DDPM / DDIM", mse:"MSE regression", zero:"zeroed token (no force)", suffix:"token in suffix (TA-VLA)", prefix:"token in prefix", aux:"suffix + aux loss"};
+const pct = v => v == null ? "–" : (100*v).toFixed(v < 0.1 && v > 0 ? 1 : 0) + " %";
+function mk(tag, attrs, parent){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);if(parent)parent.appendChild(e);return e;}
+function head(host, title, sub){host.innerHTML="";const t=document.createElement("p");t.className="ctitle";t.textContent=title;host.appendChild(t);if(sub){const s=document.createElement("p");s.className="csub";s.textContent=sub;host.appendChild(s);}}
+function pending(id, msg){const h=document.getElementById(id);if(h)h.innerHTML=`<p class="pending">${msg||"Runs still in progress."}</p>`;}
+function legend(host, items){const l=document.createElement("div");l.className="legend";for(const it of items){const s=document.createElement("span");s.innerHTML=`<i style="background:var(${it.c})"></i>${it.n}`;l.appendChild(s);}host.appendChild(l);}
+function tipFor(host){let t=host.querySelector(".tip");if(!t){t=document.createElement("div");t.className="tip";t.hidden=true;host.appendChild(t);}return t;}
+function niceTicks(lo,hi,n=5){const span=hi-lo||1;const step0=span/n;const mag=Math.pow(10,Math.floor(Math.log10(step0)));const step=[1,2,2.5,5,10].map(m=>m*mag).find(s=>span/s<=n);const out=[];for(let v=Math.ceil(lo/step)*step;v<=hi+1e-9;v+=step)out.push(+v.toFixed(10));return out;}
+function fmtX(v){return v>=1000?(v/1000)+"k":String(v);}
+
+/* line chart: series [{name, cvar, rows:[[x,mean,min,max]]}] */
+function lineChart(id, title, sub, series, o={}){
+  const host=document.getElementById(id);if(!host)return;
+  series=series.filter(s=>s.rows&&s.rows.length);
+  if(!series.length){pending(id);return;}
+  head(host,title,sub);
+  const W=560,H=o.h||250,m={l:46,r:o.rlab?96:14,t:10,b:34};
+  const svg=mk("svg",{viewBox:`0 0 ${W} ${H}`,class:"chart",role:"img","aria-label":title},host);
+  const xs=series.flatMap(s=>s.rows.map(r=>r[0]));
+  let x0=Math.min(...xs),x1=Math.max(...xs);
+  let y0=o.ymin, y1=o.ymax;
+  if(y0==null)y0=Math.min(...series.flatMap(s=>s.rows.map(r=>r[2]??r[1])));
+  if(y1==null)y1=Math.max(...series.flatMap(s=>s.rows.map(r=>r[3]??r[1])));
+  if(o.ylog){y0=Math.max(y0,1e-4);}
+  const lx=o.xlog?v=>Math.log10(v):v=>v;
+  const ly=o.ylog?v=>Math.log10(Math.max(v,1e-6)):v=>v;
+  const X=v=>m.l+(lx(v)-lx(x0))/((lx(x1)-lx(x0))||1)*(W-m.l-m.r);
+  const Y=v=>H-m.b-(ly(v)-ly(y0))/((ly(y1)-ly(y0))||1)*(H-m.t-m.b);
+  const g=mk("g",{class:"axis"},svg);
+  const yt=o.ylog?[y0,...[1e-3,1e-2,1e-1,1,10].filter(v=>v>y0&&v<y1),y1]:niceTicks(y0,y1,4);
+  for(const v of yt){mk("line",{x1:m.l,x2:W-m.r,y1:Y(v),y2:Y(v),class:"gridline"},g);const t=mk("text",{x:m.l-6,y:Y(v)+4,"text-anchor":"end"},g);t.textContent=o.yfmt?o.yfmt(v):(+v.toPrecision(3));}
+  const xt=o.xticks||(o.xlog?[...new Set(xs)].sort((a,b)=>a-b):niceTicks(x0,x1,5));
+  for(const v of xt){const t=mk("text",{x:X(v),y:H-m.b+16,"text-anchor":"middle"},g);t.textContent=fmtX(v);}
+  mk("line",{x1:m.l,x2:W-m.r,y1:H-m.b,y2:H-m.b},g);
+  if(o.xlabel){const t=mk("text",{x:(m.l+W-m.r)/2,y:H-4,"text-anchor":"middle"},g);t.textContent=o.xlabel;}
+  if(o.ylabel){const t=mk("text",{x:12,y:(m.t+H-m.b)/2,"text-anchor":"middle",transform:`rotate(-90 12 ${(m.t+H-m.b)/2})`},g);t.textContent=o.ylabel;}
+  for(const s of series){
+    const c=css(s.cvar);
+    if(s.rows[0].length>2&&s.rows.some(r=>r[3]!==r[2])){
+      const up=s.rows.map(r=>`${X(r[0])},${Y(r[3])}`),dn=s.rows.slice().reverse().map(r=>`${X(r[0])},${Y(r[2])}`);
+      mk("polygon",{points:up.concat(dn).join(" "),fill:c,opacity:.13},svg);
+    }
+    mk("polyline",{points:s.rows.map(r=>`${X(r[0])},${Y(r[1])}`).join(" "),fill:"none",stroke:c,"stroke-width":2,"stroke-linejoin":"round",[s.dash?"stroke-dasharray":"data-x"]:"5 4"},svg);
+    if(o.dots)for(const r of s.rows)mk("circle",{cx:X(r[0]),cy:Y(r[1]),r:4,fill:c,stroke:css("--panel"),"stroke-width":2},svg);
+    const last=s.rows[s.rows.length-1];
+    mk("circle",{cx:X(last[0]),cy:Y(last[1]),r:3.5,fill:c},svg);
+    if(o.rlab){const t=mk("text",{x:X(last[0])+7,y:Y(last[1])+4,"font-size":11,fill:css("--ink-2")},svg);t.textContent=s.short||s.name;}
+  }
+  if(o.ref!=null){mk("line",{x1:m.l,x2:W-m.r,y1:Y(o.ref),y2:Y(o.ref),stroke:css("--ink-3"),"stroke-dasharray":"3 3"},svg);if(o.refl){const t=mk("text",{x:W-m.r,y:Y(o.ref)-5,"text-anchor":"end","font-size":10.5,fill:css("--ink-3")},svg);t.textContent=o.refl;}}
+  const cross=mk("line",{y1:m.t,y2:H-m.b,stroke:css("--ink-3"),"stroke-width":1,opacity:0},svg);
+  const hit=mk("rect",{x:m.l,y:m.t,width:W-m.l-m.r,height:H-m.t-m.b,fill:"transparent"},svg);
+  const tip=tipFor(host);const allx=[...new Set(xs)].sort((a,b)=>a-b);
+  hit.addEventListener("mousemove",ev=>{const p=svg.getBoundingClientRect();const sx=(ev.clientX-p.left)/p.width*W;let best=allx[0];for(const v of allx)if(Math.abs(X(v)-sx)<Math.abs(X(best)-sx))best=v;
+    cross.setAttribute("x1",X(best));cross.setAttribute("x2",X(best));cross.setAttribute("opacity",.6);
+    let h=`<b>${o.xname||"step"} ${fmtX(best)}</b>`;for(const s of series){const r=s.rows.find(r=>r[0]===best);if(r)h+=`<br><span style="color:var(${s.cvar})">●</span> ${s.name}: ${(o.tfmt||(v=>+v.toPrecision(3)))(r[1])}${r.length>2&&r[2]!==r[3]?` <span style="color:var(--ink-3)">(${(o.tfmt||(v=>+v.toPrecision(3)))(r[2])}–${(o.tfmt||(v=>+v.toPrecision(3)))(r[3])})</span>`:""}`;}
+    tip.innerHTML=h;tip.hidden=false;const hr=host.getBoundingClientRect();let lx2=ev.clientX-hr.left+12;if(lx2>hr.width-200)lx2-=220;tip.style.left=lx2+"px";tip.style.top=(ev.clientY-hr.top+12)+"px";});
+  hit.addEventListener("mouseleave",()=>{tip.hidden=true;cross.setAttribute("opacity",0);});
+  if(series.length>1)legend(host,series.map(s=>({n:s.name,c:s.cvar})));
+}
+
+/* grouped bars: groups [{label, bars:[{name,cvar,v,lo,hi}]}] */
+function barChart(id,title,sub,groups,o={}){
+  const host=document.getElementById(id);if(!host)return;
+  groups=groups.filter(g=>g.bars.some(b=>b.v!=null));
+  if(!groups.length){pending(id);return;}
+  head(host,title,sub);
+  const W=o.w||(host.clientWidth>760?960:560),H=o.h||240,m={l:44,r:10,t:16,b:40};
+  const svg=mk("svg",{viewBox:`0 0 ${W} ${H}`,class:"chart",role:"img","aria-label":title},host);
+  const Y=v=>H-m.b-v*(H-m.t-m.b);const g=mk("g",{class:"axis"},svg);
+  for(const v of [0,.25,.5,.75,1]){mk("line",{x1:m.l,x2:W-m.r,y1:Y(v),y2:Y(v),class:"gridline"},g);const t=mk("text",{x:m.l-6,y:Y(v)+4,"text-anchor":"end"},g);t.textContent=(v*100)+"%";}
+  const gw=(W-m.l-m.r)/groups.length;const tip=tipFor(host);const seen={};
+  groups.forEach((gr,i)=>{const n=gr.bars.length;const bw=Math.min(34,(gw-14)/n-2);const start=m.l+i*gw+(gw-n*(bw+2))/2;
+    const t=mk("text",{x:m.l+i*gw+gw/2,y:H-m.b+16,"text-anchor":"middle"},g);t.textContent=gr.label;
+    gr.bars.forEach((b,j)=>{if(b.v==null)return;seen[b.name]=b.cvar;const x=start+j*(bw+2),c=css(b.cvar);
+      const top=Y(b.v),h=Math.max(1,Y(0)-top);
+      mk("path",{d:`M${x},${Y(0)} V${top+Math.min(4,h)} Q${x},${top} ${x+Math.min(4,bw/2)},${top} H${x+bw-Math.min(4,bw/2)} Q${x+bw},${top} ${x+bw},${top+Math.min(4,h)} V${Y(0)} Z`,fill:c},svg);
+      if(b.lo!=null){mk("line",{x1:x+bw/2,x2:x+bw/2,y1:Y(b.lo),y2:Y(b.hi),stroke:css("--ink"),"stroke-width":1.3},svg);for(const yy of [b.lo,b.hi])mk("line",{x1:x+bw/2-4,x2:x+bw/2+4,y1:Y(yy),y2:Y(yy),stroke:css("--ink"),"stroke-width":1.3},svg);}
+      if(o.labels!==false){const tt=mk("text",{x:x+bw/2,y:Math.min(top,b.hi!=null?Y(b.hi):top)-4,"text-anchor":"middle","font-size":10.5,fill:css("--ink-2")},svg);tt.textContent=Math.round(b.v*100);}
+      const r=mk("rect",{x:x-1,y:m.t,width:bw+2,height:H-m.t-m.b,fill:"transparent"},svg);
+      r.addEventListener("mousemove",ev=>{tip.innerHTML=`<b>${gr.label}</b><br>${b.name}: ${pct(b.v)}${b.lo!=null?` <span style="color:var(--ink-3)">[${pct(b.lo)}, ${pct(b.hi)}]</span>`:""}${b.note?`<br><span style="color:var(--ink-3)">${b.note}</span>`:""}`;tip.hidden=false;const hr=host.getBoundingClientRect();let lx2=ev.clientX-hr.left+12;if(lx2>hr.width-210)lx2-=230;tip.style.left=lx2+"px";tip.style.top=(ev.clientY-hr.top+12)+"px";});
+      r.addEventListener("mouseleave",()=>tip.hidden=true);});});
+  mk("line",{x1:m.l,x2:W-m.r,y1:Y(0),y2:Y(0)},g);
+  legend(host,Object.entries(seen).map(([n,c])=>({n,c})));
+}
+
+/* scatter for T1 clouds */
+function cloud(host,title,sub,data,pts,cvar,c){
+  head(host,title,sub);const W=300,H=200,m={l:30,r:8,t:8,b:24};
+  const svg=mk("svg",{viewBox:`0 0 ${W} ${H}`,class:"chart",role:"img","aria-label":title},host);
+  const X=v=>m.l+(v+1.1)/2.2*(W-m.l-m.r),Y=v=>H-m.b-(v+0.1)/1.2*(H-m.t-m.b);
+  const g=mk("g",{class:"axis"},svg);for(const v of [-1,-.5,0,.5,1]){const t=mk("text",{x:X(v),y:H-6,"text-anchor":"middle"},g);t.textContent=v;}
+  mk("rect",{x:X(c-0.25),y:m.t,width:X(c+0.25)-X(c-0.25),height:H-m.t-m.b,fill:css("--hit"),opacity:.1},svg);
+  const t=mk("text",{x:X(c),y:m.t+12,"text-anchor":"middle","font-size":10,fill:css("--hit")},svg);t.textContent="obstacle";
+  for(const p of data)mk("circle",{cx:X(p[0]),cy:Y(p[1]),r:1.6,fill:css("--data"),opacity:.5},svg);
+  for(const p of pts)mk("circle",{cx:X(p[0]),cy:Y(p[1]),r:cvar==="--s3"?4:2,fill:css(cvar),opacity:.75},svg);
+}
+
+function renderT1(){
+  const t1=D&&D.t1;if(!t1||!Object.keys(t1).length){["t1-clouds","t1-coll","t1-loss","t1-trace","t1-field","t1-sweep","t1-lr"].forEach(i=>pending(i));return;}
+  const box=document.getElementById("t1-clouds");box.innerHTML="";
+  for(const k of ["mse","ddpm","flow"]){if(!t1[k]||!t1[k].samples)continue;const d=document.createElement("div");d.className="fig";box.appendChild(d);
+    const f=t1[k].final;cloud(d,NAME[k],`c = 0 · ${pct(f.collision.mean)} in the obstacle`,t1[k].data_c0||[],t1[k].samples["samples_c0.0"]||[],COL[k],0);}
+  const lg=document.createElement("div");lg.className="legend";lg.innerHTML=`<span><i style="background:var(--data)"></i>expert data</span><span>coloured: 400 samples from the trained head</span>`;box.appendChild(lg);
+  const ser=key=>["flow","ddpm","mse"].filter(k=>t1[k]).map(k=>({name:NAME[k],cvar:COL[k],rows:t1[k][key]}));
+  lineChart("t1-coll","Samples landing in the obstacle","share of 2000 sampled waypoints, 10 sampling steps",ser("collision"),{ymin:0,ymax:1,yfmt:v=>Math.round(v*100)+"%",tfmt:pct,xlabel:"training step"});
+  lineChart("t1-loss","Training loss","each objective's own loss (log scale)",ser("loss"),{ylog:true,xlabel:"training step"});
+  // denoising traces
+  const tr=t1.flow&&t1.flow.trace;const th=document.getElementById("t1-trace");
+  if(tr){head(th,"Denoising paths (flow, c = 0)","48 samples, from noise at t = 1 (grey) to actions at t = 0");const W=300,H=220,m=10;const svg=mk("svg",{viewBox:`0 0 ${W} ${H}`,class:"chart",role:"img","aria-label":"denoising paths"},th);
+    const X=v=>W/2+v*(W/2-m)/2.4,Y=v=>H/2-v*(H/2-m)/2.4;mk("rect",{x:X(-0.25),y:0,width:X(0.25)-X(-0.25),height:H,fill:css("--hit"),opacity:.08},svg);
+    const S=tr.length,N=tr[0].length;for(let j=0;j<N;j++){mk("polyline",{points:tr.map(st=>`${X(st[j][0])},${Y(st[j][1])}`).join(" "),fill:"none",stroke:css("--s1"),"stroke-width":1,opacity:.45},svg);
+      mk("circle",{cx:X(tr[0][j][0]),cy:Y(tr[0][j][1]),r:2,fill:css("--data")},svg);mk("circle",{cx:X(tr[S-1][j][0]),cy:Y(tr[S-1][j][1]),r:2.6,fill:css("--s1")},svg);}
+  }else pending("t1-trace");
+  // velocity field
+  const fd=t1.flow&&t1.flow.field;const fh=document.getElementById("t1-field");
+  if(fd){head(fh,"The learned velocity field (c = 0)","arrows: −v, the direction a sample moves as t falls");const W=330,H=124;const svg=mk("svg",{viewBox:`0 0 ${W} ${H}`,class:"chart",role:"img","aria-label":"velocity field at three noise levels"},fh);
+    const ts=Object.keys(fd).sort((a,b)=>b-a);ts.forEach((t,i)=>{const ox=i*110+4,sz=100;const X=v=>ox+(v+2)/4*sz,Y=v=>8+(2-v)/4*sz;mk("rect",{x:ox,y:8,width:sz,height:sz,fill:"none",stroke:css("--rule")},svg);
+      const tt=mk("text",{x:ox+sz/2,y:H-2,"text-anchor":"middle","font-size":11,fill:css("--ink-2")},svg);tt.textContent="t = "+t;
+      const F=fd[t];F.xy.forEach((p,k)=>{const v=F.v[k];const dx=-v[0]*0.06,dy=-v[1]*0.06;const len=Math.hypot(dx,dy);const sc=len>0.22?0.22/len:1;mk("line",{x1:X(p[0]),y1:Y(p[1]),x2:X(p[0]+dx*sc),y2:Y(p[1]+dy*sc),stroke:css("--s1"),"stroke-width":1.1},svg);mk("circle",{cx:X(p[0]),cy:Y(p[1]),r:.9,fill:css("--ink-3")},svg);});
+      for(const mx of [-0.5,0.5])mk("circle",{cx:X(mx),cy:Y(0.5),r:3,fill:"none",stroke:css("--s2"),"stroke-width":1.5},svg);});
+    const cap=document.createElement("p");cap.className="csub";cap.textContent="orange rings: the two expert modes. At high noise every arrow points at their middle; near t = 0 the field splits toward one mode or the other.";fh.appendChild(cap);
+  }else pending("t1-field");
+  // sweep
+  const sw=k=>t1[k]&&t1[k].sweep?{name:NAME[k],cvar:COL[k],rows:Object.entries(t1[k].sweep).map(([s,v])=>[+s,v.mode_err]).sort((a,b)=>a[0]-b[0])}:null;
+  lineChart("t1-sweep","Sampling steps vs sample quality","distance to the nearest expert mode (seed 0)",[sw("flow"),sw("ddpm")].filter(Boolean),{xlog:true,ymin:0,xname:"steps",xlabel:"integration steps",dots:true});
+  const lr=[];if(t1.flow)lr.push({name:"flow, lr 1e-3",cvar:"--s1",rows:t1.flow.mode_err});if(t1["flow_lr3e-4"])lr.push({name:"flow, lr 3e-4",cvar:"--s1",dash:true,rows:t1["flow_lr3e-4"].mode_err});
+  if(t1.ddpm)lr.push({name:"DDPM, lr 1e-3",cvar:"--s2",rows:t1.ddpm.mode_err});if(t1["ddpm_lr3e-4"])lr.push({name:"DDPM, lr 3e-4",cvar:"--s2",dash:true,rows:t1["ddpm_lr3e-4"].mode_err});
+  lineChart("t1-lr","Learning rate and budget","distance to nearest mode during training",lr,{ymin:0,xlabel:"training step"});
+}
+
+function paths(id,title,arm){
+  const host=document.getElementById(id);const e=D.t2&&D.t2[arm];if(!host)return;if(!e||!e.paths||!e.paths.length){pending(id);return;}
+  head(host,title,`${pct(e.final.mean)} success over seeds · first 16 scenes, seed 0`);const W=300,H=300;
+  const svg=mk("svg",{viewBox:`0 0 ${W} ${H}`,class:"chart",role:"img","aria-label":title},host);const X=v=>W/2+v*W/2.6,Y=v=>H/2-v*H/2.6;
+  e.obstacle.forEach(o=>mk("circle",{cx:X(o[0]),cy:Y(o[1]),r:0.3*W/2.6,fill:css("--hit"),opacity:.035,stroke:css("--hit"),"stroke-opacity":.25},svg));
+  e.paths.forEach((p,i)=>{const o=e.obstacle[i];const hit=p.some(q=>Math.hypot(q[0]-o[0],q[1]-o[1])<0.3);mk("polyline",{points:p.map(q=>`${X(q[0])},${Y(q[1])}`).join(" "),fill:"none",stroke:hit?css("--hit"):css("--s1"),"stroke-width":1.4,opacity:.8},svg);});
+  e.goal.forEach(g=>mk("circle",{cx:X(g[0]),cy:Y(g[1]),r:3,fill:css("--ink-2")},svg));
+}
+
+function renderT2(){
+  const t2=D&&D.t2;if(!t2||!Object.keys(t2).length){["t2-succ","t2-val","t2-paths-flow","t2-paths-mse","t2-demos","t2-h","t2-sweep"].forEach(i=>pending(i));return;}
+  const base=g=>t2[`${g}_h16_d200`];
+  const k=document.getElementById("t2-kpis");k.innerHTML="";for(const g of ["flow","ddpm","mse"]){const e=base(g);if(!e)continue;k.innerHTML+=`<div class="kpi"><div class="v" style="color:var(${COL[g]})">${pct(e.final.mean)}</div><div class="l">${NAME[g]} · final success (${e.final.seeds} seeds)</div></div>`;}
+  const ser=key=>["flow","ddpm","mse"].filter(base).map(g=>({name:NAME[g],cvar:COL[g],rows:base(g)[key]}));
+  lineChart("t2-succ","Closed-loop success","200 evaluation scenes, mean of seeds",ser("success"),{ymin:0,ymax:1,yfmt:v=>Math.round(v*100)+"%",tfmt:pct,xlabel:"training step"});
+  lineChart("t2-val","Held-out loss","fixed noise draws, each objective's own scale (log)",ser("val_loss"),{ylog:true,xlabel:"training step"});
+  paths("t2-paths-flow","Flow matching rollouts","flow_h16_d200");paths("t2-paths-mse","MSE regression rollouts","mse_h16_d200");
+  const dm=[10,30,100,200,600].map(d=>{const e=t2[`flow_h16_d${d}`];return e?[d,e.final.mean,Math.min(...e.final.values),Math.max(...e.final.values)]:null}).filter(Boolean);
+  lineChart("t2-demos","Success vs demonstrations","flow, H = 16",[{name:"flow",cvar:"--s1",rows:dm}],{xlog:true,ymin:0,ymax:1,yfmt:v=>Math.round(v*100)+"%",tfmt:pct,xname:"demos",xlabel:"demonstrations",dots:true});
+  barChart("t2-h","Success vs chunk length","flow, 200 demos",[1,4,16].map(h=>{const e=t2[`flow_h${h}_d200`];return{label:`H = ${h}`,bars:[{name:"flow matching",cvar:"--s1",v:e?e.final.mean:null,lo:e?Math.min(...e.final.values):null,hi:e?Math.max(...e.final.values):null,note:"whiskers: seed min–max"}]};}),{w:320});
+  const sw=g=>{const e=base(g);return e&&e.sweep?{name:NAME[g],cvar:COL[g],rows:Object.entries(e.sweep).map(([s,v])=>[+s,v]).sort((a,b)=>a[0]-b[0])}:null;};
+  lineChart("t2-sweep","Success vs sampling steps","final checkpoints, mean of seeds",[sw("flow"),sw("ddpm")].filter(Boolean),{xlog:true,ymin:0,ymax:1,yfmt:v=>Math.round(v*100)+"%",tfmt:pct,xname:"steps",xlabel:"integration steps",dots:true});
+}
+
+function finalBar(e,arm){return e?{name:NAME[arm],cvar:COL[arm],v:e.final.mean,lo:e.final.wilson95?e.final.wilson95[0]:null,hi:e.final.wilson95?e.final.wilson95[1]:null,note:`${e.final.seeds} seeds · ${e.final.values.map(pct).join(", ")}`}:{name:NAME[arm],cvar:COL[arm],v:null};}
+
+function renderT3(){
+  const t3=D&&D.t3;const arms=["zero","prefix","suffix","aux"];if(!t3||!Object.keys(t3).length){["t3-curve","t3-mix","t3-demos","t3-traj"].forEach(i=>pending(i));return;}
+  const b=a=>t3[`${a}_d400`];
+  const k=document.getElementById("t3-kpis");k.innerHTML="";for(const a of arms){const e=b(a);if(!e)continue;k.innerHTML+=`<div class="kpi"><div class="v" style="color:var(${COL[a]})">${pct(e.final.mean)}</div><div class="l">${NAME[a]}${e.final.wilson95?` · 95 % [${pct(e.final.wilson95[0])}, ${pct(e.final.wilson95[1])}]`:""}</div></div>`;}
+  lineChart("t3-curve","Closed-loop success, 400 demos","200 scenes, mean of 3 seeds",arms.filter(b).map(a=>({name:NAME[a],cvar:COL[a],rows:b(a).success})),{ymin:0,ymax:1,yfmt:v=>Math.round(v*100)+"%",tfmt:pct,xlabel:"training step"});
+  // outcome mix as stacked horizontal bars
+  const host=document.getElementById("t3-mix");head(host,"How episodes end","pooled over seeds");
+  const W=560,rowH=34,H=arms.filter(b).length*rowH+40;const svg=mk("svg",{viewBox:`0 0 ${W} ${H}`,class:"chart",role:"img","aria-label":"episode outcomes per arm"},host);
+  const kinds=[["success","--s3","success"],["force_abort","--hit","force abort"],["timeout","--s4","timeout"]];const tip=tipFor(host);
+  arms.filter(b).forEach((a,i)=>{const o=b(a).outcomes;const tot=Object.values(o).reduce((x,y)=>x+y,0)||1;let x=150;const y=8+i*rowH;
+    const t=mk("text",{x:142,y:y+16,"text-anchor":"end","font-size":11.5,fill:css("--ink-2")},svg);t.textContent=NAME[a];
+    for(const [kk,c,lab] of kinds){const w=(o[kk]||0)/tot*(W-160);if(w<=0)continue;const r=mk("rect",{x,y,width:Math.max(0,w-2),height:22,rx:3,fill:css(c)},svg);
+      r.addEventListener("mousemove",ev=>{tip.innerHTML=`<b>${NAME[a]}</b><br>${lab}: ${o[kk]} of ${tot} (${pct(o[kk]/tot)})`;tip.hidden=false;const hr=host.getBoundingClientRect();tip.style.left=Math.min(ev.clientX-hr.left+12,hr.width-200)+"px";tip.style.top=(ev.clientY-hr.top+12)+"px";});
+      r.addEventListener("mouseleave",()=>tip.hidden=true);if(w>34){const tt=mk("text",{x:x+6,y:y+15,"font-size":10.5,fill:"#fff"},svg);tt.textContent=Math.round(100*(o[kk]||0)/tot)+"%";}x+=w;}});
+  legend(host,kinds.map(k=>({n:k[2],c:k[1]})));
+  const dm=a=>({name:NAME[a],cvar:COL[a],rows:[100,400,1500].map(d=>{const e=t3[`${a}_d${d}`];return e?[d,e.final.mean,Math.min(...e.final.values),Math.max(...e.final.values)]:null}).filter(Boolean)});
+  lineChart("t3-demos","Success vs demonstrations","mean and seed range",[dm("zero"),dm("suffix")],{xlog:true,ymin:0,ymax:1,yfmt:v=>Math.round(v*100)+"%",tfmt:pct,xname:"demos",xlabel:"demonstrations",dots:true});
+  // trajectory force trace
+  const th=document.getElementById("t3-traj");const ex=[["suffix",b("suffix")],["zero",b("zero")]].filter(x=>x[1]&&x[1].traj&&x[1].traj.length);
+  if(ex.length){const ser=[];ex.forEach(([a,e])=>{const j=0;ser.push({name:`${NAME[a]} (${e.scene.outcome?e.scene.outcome[j]:""})`,cvar:COL[a],rows:e.traj[j].map((r,t)=>[t,r[3]])});});
+    lineChart("t3-traj","Contact force, evaluation episode 1","Fz (N) at each step; 15 N aborts",ser,{ymin:0,ymax:16,ref:15,refl:"abort",xname:"step",xlabel:"step",tfmt:v=>v.toFixed(1)+" N"});}else pending("t3-traj");
+}
+
+function renderT4(){
+  const t4=D&&D.t4;const arms=["zero","prefix","suffix","aux"];if(!t4||!Object.keys(t4).length){["t4-tasks","t4-curve","t4-press"].forEach(i=>pending(i));return;}
+  const labels=["insert red","insert blue","press 2 N","press 6 N"];
+  barChart("t4-tasks","Success per task","mean of 2 seeds; whiskers: Wilson 95 %",labels.map((l,t)=>({label:l,bars:arms.map(a=>{const e=t4[a];const s=e&&e.tasks?e.tasks[t]:null;return{name:NAME[a],cvar:COL[a],v:s?s.mean:null,lo:s&&s.wilson95?s.wilson95[0]:null,hi:s&&s.wilson95?s.wilson95[1]:null,note:s?`seeds ${s.values.map(pct).join(", ")}`:""};})})),{h:260});
+  lineChart("t4-curve","All tasks","400 episodes per evaluation",arms.filter(a=>t4[a]).map(a=>({name:NAME[a],cvar:COL[a],rows:t4[a].success})),{ymin:0,ymax:1,yfmt:v=>Math.round(v*100)+"%",tfmt:pct,xlabel:"training step"});
+  lineChart("t4-press","Press firmly (6 N)","100 episodes per evaluation",arms.filter(a=>t4[a]).map(a=>({name:NAME[a],cvar:COL[a],rows:t4[a].task_curves?t4[a].task_curves[3]:[]})),{ymin:0,ymax:1,yfmt:v=>Math.round(v*100)+"%",tfmt:pct,xlabel:"training step"});
+}
+
+function renderT5(){
+  const t5=D&&D.t5;const bars=[];
+  if(D&&D.t5_bc){bars.push({label:"BC-MLP (V9)",bars:[{name:"with force",cvar:"--s1",v:D.t5_bc.force,note:"5 seeds, single-step MSE"},{name:"no force",cvar:"--s3",v:D.t5_bc.noforce,note:"5 seeds"}]});}
+  if(t5&&Object.keys(t5).length){bars.push({label:"TA flow policy",bars:[["suffix","with force"],["zero","no force"]].map(([a,n])=>{const e=t5[a];return e?{name:n,cvar:a==="suffix"?"--s1":"--s3",v:e.final.mean,lo:e.final.wilson95?e.final.wilson95[0]:null,hi:e.final.wilson95?e.final.wilson95[1]:null,note:`${e.final.seeds} seeds · ${e.final.values.map(pct).join(", ")}`}:{name:n,cvar:"--s1",v:null};})});
+    if(t5.aux)bars.push({label:"TA + aux loss",bars:[{name:"with force",cvar:"--s1",v:t5.aux.final.mean,lo:t5.aux.final.wilson95?t5.aux.final.wilson95[0]:null,hi:t5.aux.final.wilson95?t5.aux.final.wilson95[1]:null,note:`${t5.aux.final.seeds} seeds`}]});}
+  barChart("t5-bars","Insertion success on the MuJoCo skill","50 held-out set-ups per seed",bars,{h:250});
+}
+
+function renderVLA(){
+  const v=D&&D.vla;const host=document.getElementById("vla-table");if(!v||!Object.keys(v).length){host.innerHTML='<p class="pending">No evaluations found.</p>';return;}
+  const label={off:"SmolVLA, plain",ta_zero:"TA-SmolVLA, token zeroed (no force)",ta:"TA-SmolVLA, raw torque token",ta_norm:"TA-SmolVLA, z-scored token",ta_aux:"TA-SmolVLA, raw token + aux loss",ta_s2:"TA-SmolVLA, raw token (seed 2)",ta_zero_s2:"TA-SmolVLA, token zeroed (seed 2)",act_f_s0:"ACT + force token (seed 0)",act_f_s1:"ACT + force token (seed 1)",act_nf_s0:"ACT, no force (seed 0)",act_nf_s1:"ACT, no force (seed 1)"};
+  const order=Object.keys(label).filter(k=>v[k]);
+  let h='<table><thead><tr><th>policy</th><th class="num">inserted</th><th class="num">rate</th><th class="num">Wilson 95 %</th></tr></thead><tbody>';
+  for(const k of order){const r=v[k];h+=`<tr><td>${label[k]}</td><td class="num">${r.success}/${r.episodes}</td><td class="num">${pct(r.success/r.episodes)}</td><td class="num">${pct(r.wilson95[0])} – ${pct(r.wilson95[1])}</td></tr>`;}
+  host.innerHTML=h+"</tbody></table>";
+}
+
+function renderLessons(){
+  const el=document.getElementById("lessons-body");const L=[];
+  const t1=D&&D.t1,t2=D&&D.t2,t3=D&&D.t3,t4=D&&D.t4;
+  if(t1&&t1.mse&&t1.flow)L.push(`<b>Regression can't represent two modes.</b> On T1 the MSE head put ${pct(t1.mse.final.collision.mean)} of its waypoints inside the obstacle; flow matching ${pct(t1.flow.final.collision.mean)}${t1.ddpm?`, DDPM ${pct(t1.ddpm.final.collision.mean)}`:""}.`);
+  if(t1&&t1["flow_lr3e-4"]&&t1.flow)L.push(`<b>Budget before cleverness.</b> The same flow model at lr 3e-4 ended at a mode error of ${t1["flow_lr3e-4"].final.mode_err.mean.toFixed(3)}; at lr 1e-3 it reached ${t1.flow.final.mode_err.mean.toFixed(3)}. Both loss curves look flat long before that.`);
+  if(t2){const f=t2.flow_h16_d200,m=t2.mse_h16_d200;if(f&&m)L.push(`<b>Watch success, not loss.</b> On T2 the held-out loss settles within the first few thousand steps, while closed-loop success keeps climbing to ${pct(f.final.mean)} (regression: ${pct(m.final.mean)}).`);
+    const d10=t2.flow_h16_d10,d600=t2.flow_h16_d600;if(d10&&d600)L.push(`<b>Data.</b> Flow matching on T2 goes from ${pct(d10.final.mean)} with 10 demonstrations to ${pct(d600.final.mean)} with 600.`);
+    const h1=t2.flow_h1_d200,h16=t2.flow_h16_d200;if(h1&&h16)L.push(`<b>Chunking.</b> A generative head without chunks (H = 1) reached ${pct(h1.final.mean)}; with 16-action chunks it reached ${pct(h16.final.mean)}.`);
+    if(t2.flow_h16_d200&&t2.flow_h16_d200.sweep){const s=t2.flow_h16_d200.sweep;L.push(`<b>Sampling steps.</b> Flow matching on T2: ${Object.entries(s).map(([k,v])=>`${k} step${k==1?"":"s"} → ${pct(v)}`).join(", ")}.`);}}
+  if(t3){const z=t3.zero_d400,s=t3.suffix_d400,p=t3.prefix_d400,a=t3.aux_d400;if(z&&s)L.push(`<b>Force, when the task needs it.</b> On T3 the token in the suffix reached ${pct(s.final.mean)} against ${pct(z.final.mean)} for the zeroed twin${p?`; in the prefix ${pct(p.final.mean)}`:""}${a?`; with the auxiliary loss ${pct(a.final.mean)}`:""}.`);}
+  if(t4&&t4.suffix&&t4.zero&&t4.suffix.tasks&&t4.zero.tasks)L.push(`<b>Per task.</b> On T4, pressing to 6 N: ${pct(t4.suffix.tasks[3].mean)} with force against ${pct(t4.zero.tasks[3].mean)} without. Inserting into the red hole: ${pct(t4.suffix.tasks[0].mean)} against ${pct(t4.zero.tasks[0].mean)}.`);
+  L.push(`<b>Normalise the torque input.</b> Every tier z-scores the torque history. Our first SmolVLA runs fed it raw, mixing a 47 N grip force with 1 N joint torques.`);
+  L.push(`<b>Evaluate the EMA weights on fixed scenes.</b> Every comparison on this page reuses the same evaluation scenes, so arms are paired and differences are not scene luck.`);
+  el.innerHTML="<ul>"+L.map(x=>`<li style="margin:.6rem 0">${x}</li>`).join("")+"</ul>";
+}
+
+function renderAll(){if(!D){document.querySelectorAll(".fig").forEach(f=>{if(!f.classList.contains("diagram"))f.innerHTML='<p class="pending">No data embedded.</p>';});return;}
+  renderT1();renderT2();renderT3();renderT4();renderT5();renderVLA();renderLessons();}
+renderAll();
+let rt;matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>{clearTimeout(rt);rt=setTimeout(renderAll,50);});
+new MutationObserver(()=>{clearTimeout(rt);rt=setTimeout(renderAll,50);}).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
+</script>
