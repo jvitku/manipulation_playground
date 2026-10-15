@@ -194,7 +194,7 @@ td.num,th.num{text-align:right}
 <li>Take K Euler steps, <code>x ← x − (1/K)·v(x, t)</code>, down to t = 0. Only the expert runs at each step.</li>
 <li>Execute the first <code>n_exec</code> actions of the chunk (half of it here), then observe and re-plan.</li>
 </ol>
-<div class="callout">Why chunks: a sampled chunk commits to one mode for H steps, so the policy doesn't flip between "left" and "right". Executing only part of it keeps the loop reactive to contact.</div>
+<div class="callout">Why chunks: a sampled chunk commits to one mode for H steps, so the policy can't flip between "left" and "right" from one step to the next. Executing only part of it keeps the loop reactive to contact. In T2 the flip never happened even without chunks (H = 1 reached 99.5 %): once the point mass leans to one side, its own position tells the policy which way to go.</div>
 </div>
 </div>
 <pre>
