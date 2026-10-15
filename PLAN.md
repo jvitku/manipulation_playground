@@ -419,7 +419,7 @@ TD3/BC insertion, the TA-SmolVLA torque token hurts); V10 matrix + report done.
 | V1 | done | pile gate refined: transient penetration < 2 mm, resting < 0.5 mm |
 | V2 | done | pads protrude 1.5 mm past the finger hull; tau_J also counts joint friction and end stops |
 | V3 | done | `sortview` camera (agentview cropped the scene); vanished bolts parked on the floor 5 m away |
-| V4 | done (rack) | expert 47/50 unseen seeds (noise-free reading); 200 noisy demos validate (104 complete) |
+| V4 | done (rack, realistic noise) | expert WITH realistic teleoperator noise 46/50 held-out seeds (92 %), 285/300 parts (scripts/43_expert_gate.py, seeds 9000-9049); first reading was noise-free 47/50; demos re-recorded with the realistic expert |
 | V5 | fails (reference) | ACT on tray per-part demos 1/60 parts, on 104 rack episodes 0/36 - never reaches a part |
 | V6 | insert + pick done; sequencer failing | insert TD3+BC 10 seeds: **force 74.8 % vs no force 56.2 % (p = 0.0005)**; pick 99.0 % vs 99.6 % (ceiling); sequencer 0/10: learned picks leave the bolt 3-7 mm off centre, the insert skill only saw centred grasps - retraining on randomised in-hand offsets |
 | V7 | fails (reference) | SmolVLA on 104 rack episodes 0/36 parts (closest approach 30-35 mm) |
@@ -432,11 +432,15 @@ V4 findings that changed the design (all journaled):
   of parts (the head-up reorientation of a lying bolt with a two-pad gripper is fragile), and
   learned policies failed to locate parts. Opt-in `SortTaskParams(bolt_presentation="rack")`:
   bolts stand head-up in a narrow raised rack (a kitting presentation), nuts stay in the tray.
-  Noise-free expert on 50 unseen seeds: 47/50 episodes, 297/300 parts. **Pending the user's
-  decision** to make the rack the V4 design; the tray remains the env default.
-* **Gate reading.** The ≥ 90 % gate is measured on the expert without its injected "human"
-  noise; the recorded demos carry the noise (action jitter 0.02, hole-estimate and grasp noise,
-  pauses) and training uses successful episodes / per-part segments. **Pending confirmation.**
+  Noise-free expert on 50 unseen seeds: 47/50 episodes, 297/300 parts. **User decision
+  2026-10-15:** the rack is the default presentation; the tray stays an option.
+* **Gate reading.** **User decision 2026-10-15:** the gate is measured on the expert *with*
+  realistic human-like noise. The first noise model (one 1.5 mm hole error per episode, blind
+  spiral search, 20 Hz white jitter) gave 54 % on development seeds: every miss tilted the bolt
+  further in the grasp. The ``realistic`` preset models a teleoperator with a wrist camera
+  (0.3 mm fixed calibration error, a fresh 0.8 mm hole estimate per approach and per miss, 0.25 s
+  hand drift); with it and an across-the-hex grasp for on-edge nuts the expert scores 46/50
+  held-out seeds (92 %).
 * **Scene.** Tray 360 × 260 × 40 mm instead of the 300 × 220 × 80 mm bin (the palm hit tall
   walls); bucket A beside the tray at (−0.26, −0.46) with a box floor (a disc floor ejected
   ~1/40 dropped nuts through a mesh-vs-cylinder contact artefact).

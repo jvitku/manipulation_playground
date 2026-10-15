@@ -831,7 +831,15 @@ forward pass), ISO M16 bolts / nuts, 17 mm ISO 273 hole. Details per step in the
   (28 % without); full sorts stay at 0-1 of 10 episodes.
 * **Presentation decides the scripted expert.** Bolts dropped in the tray: the noise-free expert
   plateaued at ~58 % of parts (reorienting a lying bolt with a two-pad gripper is fragile).
-  Bolts upright in a rack (opt-in, pending the user's decision): 47/50 unseen episodes.
+  Bolts upright in a rack (the default since 2026-10-15): 47/50 unseen episodes.
+* **A noisy expert must be noisy like a person, not like a broken sensor.** One 1.5 mm hole
+  error held for the whole episode, searched blind on a 0.7 mm spiral, gave 54 % of episodes:
+  every missed entry pushed the bolt into the fixture and tilted it further in the grasp
+  (2 -> 15 -> 90 deg) until it was lost. A teleoperator looks again after a miss. Re-drawing
+  the hole estimate per approach and per miss (0.8 mm, plus a 0.3 mm fixed calibration error)
+  gave 88 %; the rest were the expert's own nut grasps (two nuts on edge 25 mm apart, a nut by
+  the wall), fixed with an across-the-hex fallback grasp. Noisy expert on held-out seeds:
+  46/50 (92 %), 285/300 parts.
 
 **What did not work (yet)**
 

@@ -15,8 +15,12 @@ Per part, nearest first:
 A grasp is checked by lifting: if the part does not follow the hand it re-grasps (at most 3
 attempts per part, then the part is skipped).
 
-"Human-like" noise (``ExpertNoise``) makes the demos imperfect the way a teleoperator is: a hole
-estimate off by ~1.5 mm, grasp-point offsets, per-episode speed, action jitter and short pauses.
+"Human-like" noise (``ExpertNoise``) makes the demos imperfect the way a teleoperator is. The
+``realistic`` preset (the V4 gate since 2026-10-15) models an operator with a wrist camera: a
+0.3 mm fixed calibration error plus a fresh 0.8 mm hole estimate on every approach and after every
+missed entry, grasp-point offsets, per-episode speed, slow (0.25 s) hand drift and short pauses.
+The older presets keep one 1.5 mm hole error for the whole episode and search blind, which no
+operator looking at the hole would do (54 % of episodes vs 96 % on the same development seeds).
 Demos made with it are labelled synthetic.
 """
 
@@ -44,15 +48,32 @@ FLOOR_T = 0.005  # tray floor thickness (fasteners.bin_geoms default)
 
 @dataclass
 class ExpertNoise:
-    hole_xy_std: float = 0.0015  # m, the operator's estimate of where the hole is
+    hole_xy_std: float = 0.0015  # m, per-episode error of the operator's hole estimate
     grasp_std: float = 0.002  # m, grasp point offset along the part
     action_std: float = 0.05  # additive jitter on position/rotation actions
     speed_range: tuple = (0.7, 1.0)  # per-episode speed factor
     pause_prob: float = 0.01  # chance per step of a short pause
     pause_steps: tuple = (2, 8)
+    # m, a fresh error drawn on every approach to the hole and after every missed entry (the
+    # operator looks again and re-aims); 0 = one fixed estimate per episode + blind spiral search
+    hole_attempt_std: float = 0.0
+    jitter_tau_s: float = 0.0  # s, correlation time of the jitter (0 = white per step)
 
 
 NO_NOISE = ExpertNoise(0.0, 0.0, 0.0, (1.0, 1.0), 0.0, (0, 0))
+
+NOISE_PRESETS = {
+    "none": NO_NOISE,
+    "v4": ExpertNoise(),  # the first V4 noise
+    "demos": ExpertNoise(action_std=0.02),  # what outputs/sort_demos_rack was recorded with
+    # a teleoperator with a wrist camera (user decision 2026-10-15: judge the gate on a
+    # realistic noisy expert). A small fixed camera/hand calibration error, a fresh visual
+    # estimate on each approach and after each miss (sub-mm when the tip hovers 4 mm above an
+    # 18 mm hole), slow hand drift rather than 20 Hz white jitter.
+    "realistic": ExpertNoise(
+        hole_xy_std=0.0003, hole_attempt_std=0.0008, action_std=0.02, jitter_tau_s=0.25
+    ),
+}
 
 
 def frame(close_axis: np.ndarray, approach: np.ndarray) -> np.ndarray:
@@ -138,8 +159,10 @@ class SortExpert:
         self.homed = True
         self.fail_log: list[tuple[int, int, str]] = []
         self.speed = self.rng.uniform(*self.noise.speed_range)
+        self.hole_bias = self.rng.normal(0, self.noise.hole_xy_std, 2)
         self.hole_est = env.hole_top.copy()
-        self.hole_est[:2] += self.rng.normal(0, self.noise.hole_xy_std, 2)
+        self.hole_est[:2] += self.hole_bias
+        self.jitter = np.zeros(6)
         self.attempts = np.zeros(len(env.parts), int)
         self.grasp_noise = self.rng.normal(0, self.noise.grasp_std, len(env.parts))
         self.skipped: set[int] = set()
@@ -192,6 +215,14 @@ class SortExpert:
         self.phase = phase
         self.t_phase = 0
         self.log.append((self.step_i, phase, self.part))
+        if phase == "to_hole":
+            self._relook()
+
+    def _relook(self) -> None:
+        """A fresh visual estimate of the hole (only with ``hole_attempt_std`` > 0)."""
+        if self.noise.hole_attempt_std > 0:
+            err = self.rng.normal(0, self.noise.hole_attempt_std, 2)
+            self.hole_est[:2] = self.env.hole_top[:2] + self.hole_bias + err
 
     # -- task logic ----------------------------------------
     def _next_part(self) -> int | None:
@@ -300,6 +331,7 @@ class SortExpert:
         kind = env.parts[i].kind
         aperture = 2 * (0.02 * (1 + PREGRASP_LEVEL[kind]) - 0.002)
         cands = []  # (point, R)
+        fallback: set[int] = set()  # candidates taken only when no preferred one clears
         if kind == "bolt" and axis[2] > 0.95 and env._in_rack(i):
             # standing in the rack: top-down across two head flats (they face +-y by design),
             # pads centred on the head; the fingers reach below the plate top beside the narrow
@@ -345,6 +377,14 @@ class SortExpert:
             for c in dirs:
                 for sign in (1, -1):
                     cands.append((point, frame(sign * _horizontal(c), DOWN)))
+            if abs(axis[2]) <= 0.7:
+                # fallback across the hex, pads at the nut's centre height: used only when the
+                # face grasp does not clear (a finger between two nuts 25 mm apart, or against
+                # the tray wall, stalled 20-30 mm high three times and the nut was skipped)
+                across = np.cross(_horizontal(axis), [0, 0, 1.0])
+                for sign in (1, -1):
+                    cands.append((pos.copy(), frame(sign * across, DOWN)))
+                    fallback.add(len(cands) - 1)
         # never drive the fingertips into the tray floor
         # never drive the fingertips into the surface under the part (OSC overshoots ~5 mm)
         # 3 mm, not more: at +6 mm the pads (16 mm tall) rose above a 14.8 mm nut and missed it
@@ -359,7 +399,7 @@ class SortExpert:
         # margin picked 50 deg tilted grasps. Among feasible candidates take the least hand
         # rotation from now, tilt penalised.
         scored = []
-        for p, R in cands:
+        for k, (p, R) in enumerate(cands):
             clear = self._clearance(p, R, aperture, target=i)
             err, margin = ik_margin(env, p, R, self.pad_offset)
             reach = margin - 10.0 * err
@@ -370,7 +410,8 @@ class SortExpert:
                     reach = min(reach, self._best_insert(u_hand / np.linalg.norm(u_hand))[0])
             turn = np.linalg.norm(Rotation.from_matrix(R @ R_now.T).as_rotvec())
             tilt = math.acos(np.clip(-R[2, 2], -1, 1))
-            scored.append((clear > 0.010, reach > 0.15, -(turn + 2.0 * tilt), reach, p, R))
+            pref = -(turn + 2.0 * tilt) - (10.0 if k in fallback else 0.0)
+            scored.append((clear > 0.010, reach > 0.15, pref, reach, p, R))
         _, _, _, _, p, R = max(scored, key=lambda t: t[:4])
         return p, R
 
@@ -457,7 +498,14 @@ class SortExpert:
             # an operator's hand is steadier in the precise phases than in transit
             fine = self.phase in ("descend", "close", "lift", "hover", "enter", "let_go")
             std = self.noise.action_std * (0.3 if fine else 1.0)
-            a[:6] = np.clip(a[:6] + self.rng.normal(0, std, 6), -1, 1)
+            tau = self.noise.jitter_tau_s
+            if tau > 0:
+                # Ornstein-Uhlenbeck drift with stationary std 1, scaled per phase
+                rho = math.exp(-self.env.control_timestep / tau)
+                self.jitter = rho * self.jitter + math.sqrt(1 - rho**2) * self.rng.normal(0, 1, 6)
+                a[:6] = np.clip(a[:6] + std * self.jitter, -1, 1)
+            else:
+                a[:6] = np.clip(a[:6] + self.rng.normal(0, std, 6), -1, 1)
         return a
 
     def _act(self) -> np.ndarray:
@@ -698,7 +746,10 @@ class SortExpert:
             elif caught or (self.t_phase > 80 and depth < 0.003):
                 # the tip sits on the chamfer or the top face: the hole is not where the expert
                 # thinks. Next point of a 0.7 mm-pitch spiral around its estimate, re-hover.
-                self.search_k += 1
+                if self.noise.hole_attempt_std > 0:
+                    self._relook()  # look again and re-aim instead of searching blind
+                else:
+                    self.search_k += 1
                 self.ok_steps = 0
                 self._go("hover")
             elif depth > self.release_depth or self.t_phase > 80:

@@ -34,6 +34,9 @@ def main() -> None:
     ap.add_argument("--out", default="outputs/sort_demos")
     ap.add_argument("--noise", action="store_true", help="human-like expert noise")
     ap.add_argument("--action-std", type=float, default=None, help="override the noise jitter")
+    ap.add_argument(
+        "--noise-preset", default=None, help="sort_expert.NOISE_PRESETS name (overrides --noise)"
+    )
     ap.add_argument("--camera-size", type=int, default=256)
     ap.add_argument("--no-cameras", action="store_true")
     ap.add_argument("--max-steps", type=int, default=3600)
@@ -45,7 +48,7 @@ def main() -> None:
     import fvb.envs  # noqa: F401
     from fvb.envs.sort_bolts_nuts import SortTaskParams
     from fvb.logging.sort_episode import SortEpisodeWriter, part_segments
-    from fvb.policy.sort_expert import NO_NOISE, ExpertNoise, SortExpert
+    from fvb.policy.sort_expert import NO_NOISE, NOISE_PRESETS, ExpertNoise, SortExpert
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -53,6 +56,8 @@ def main() -> None:
     noise = ExpertNoise() if args.noise else NO_NOISE
     if args.noise and args.action_std is not None:
         noise = ExpertNoise(action_std=args.action_std)
+    if args.noise_preset:
+        noise = NOISE_PRESETS[args.noise_preset]
     for seed in parse_seeds(args.seeds):
         t0 = time.time()
         env = suite.make(
