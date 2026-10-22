@@ -23,6 +23,7 @@ def test_index_has_app_div(client):
         "app.js",
         "charts.js",
         "viewers.js",
+        "vecgrid.js",
         "style.css",
         "vendor/uplot.iife.min.js",
         "vendor/uplot.min.css",
@@ -34,7 +35,7 @@ def test_static_assets(client, path):
 
 def test_index_references_scripts_in_order(client):
     html = client.get("/").text
-    scripts = ("vendor/uplot.iife.min.js", "charts.js", "viewers.js", "app.js")
+    scripts = ("vendor/uplot.iife.min.js", "charts.js", "vecgrid.js", "viewers.js", "app.js")
     order = [html.index(f"/static/{s}") for s in scripts]
     assert order == sorted(order)
 
@@ -79,3 +80,11 @@ def test_index_loads_katex(client):
 @pytest.mark.parametrize("lesson", ["bc-mse", "flow", "flow-bc"])
 def test_lessons_have_display_equations(client, lesson):
     assert "$$" in client.get(f"/lessons/{lesson}.html").text
+
+
+def test_vecgrid_api_and_tokens(client):
+    js = client.get("/static/vecgrid.js").text
+    assert "LabVecGrid" in js and "panel" in js and "render" in js
+    css = client.get("/static/style.css").text
+    for tok in ("--vec-neg", "--vec-zero", "--vec-pos"):
+        assert css.count(tok + ":") == 3  # light, dark-auto, dark-forced

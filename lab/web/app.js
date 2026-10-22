@@ -206,6 +206,18 @@
       const spec = detail.spec;
       main.replaceChildren();
 
+      // --- per-task vector-grid toggle (re-renders the last result without refetching) ---
+      const vgBox = el("input", { type: "checkbox" });
+      vgBox.checked = window.LabVecGrid.enabled(taskId);
+      vgBox.addEventListener("change", () => {
+        window.LabVecGrid.setEnabled(taskId, vgBox.checked);
+        if (lastShown) showResult(lastShown.result, lastShown.evalId);
+      });
+      main.append(el("div", { class: "ctl" },
+        el("label", { class: "vgtoggle", title: "show vector values as colour grids in the result viewer (turn off if rendering is slow)" },
+          vgBox, "vector grids")));
+      let lastShown = null;
+
       // --- lesson card ---
       const lessonBody = el("div", { class: "lesson-body" });
       const nav_t = nav.querySelector(".active .t");
@@ -445,12 +457,14 @@
       }
 
       function showResult(result, evalId) {
+        lastShown = { result, evalId };
         outcomeEl.replaceChildren(outcomeTable(result));
         viewerEl.hidden = false;
         viewerEl.replaceChildren(el("h3", { text: "result" }), el("div", { class: "viewer-body" }));
         const ctx = {
           task: taskId,
           evalId,
+          vecgrids: window.LabVecGrid.enabled(taskId),
           fileUrl: (name) => `/api/evals/${encodeURIComponent(taskId)}/${encodeURIComponent(evalId)}/file/${encodeURIComponent(name)}`,
         };
         window.LabViewers.render(spec.viewer, result, viewerEl.querySelector(".viewer-body"), ctx);

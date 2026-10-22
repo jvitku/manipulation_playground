@@ -14,7 +14,7 @@ TINY = {
     "demos": 40, "steps": 100, "lr": 1e-3, "batch": 32, "horizon": 16, "n_exec": 8,
     "use_force": True, "sample_steps": 2, "eval_every": 50,
 }  # fmt: skip
-EPISODE_KEYS = {"z0", "holes", "target", "est", "pos", "force", "outcome"}
+EPISODE_KEYS = {"act", "z0", "holes", "target", "est", "pos", "force", "outcome"}
 
 
 def make_ctx(d, params):
@@ -54,6 +54,7 @@ def test_task3_eval_episode_payload(tmp_path, trained):
     res = json.loads((ev.dir / "result.json").read_text())
     assert 0 < len(res["episodes"]) <= 16
     for e in res["episodes"]:
+        assert len(e["act"]) == len(e["pos"]) - 1 and len(e["act"][0]) == 2
         assert set(e) == EPISODE_KEYS
         assert len(e["pos"]) == len(e["force"]) >= 1 and len(e["pos"][0]) == 2
     assert res["force_zeroed"] is False and res["trained_with_force"] is True

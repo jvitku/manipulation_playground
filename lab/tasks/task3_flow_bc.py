@@ -17,6 +17,7 @@ result.json written by `evaluate`:
      "trained_with_force", "sample_steps",
      "est_sigma", "sensor_noise",
      "episodes": [{"z0", "holes", "target", "est", "pos": [[x, z]...], "force": [[fx, fz]...],
+                   "act": [[ax, az]...] (action applied at step s, 3 decimals; len = len(pos)-1),
                    "outcome"}]}     # <= 16, floats rounded to 4 decimals; pos[0] is the start
 `pos[i]` and `force[i]` are the peg position / sensed force after step i (force[0] = [0, 0]).
 `force_zeroed` is true when the torque channels were zeroed at evaluation (the form flag, or a
@@ -76,14 +77,17 @@ def _rollout(model, ds_like, n, seed, n_exec, K, use_force, est_sigma=0.03, sens
     record = min(record, n)
     pos = [[env.pos[i].tolist()] for i in range(record)]
     force = [[[0.0, 0.0]] for _ in range(record)]
+    act = [[] for _ in range(record)]
     while not env.done.all():
         live = ~env.done.copy()
-        env.step(pol.act(c2d.t3_obs(env)))
+        a = pol.act(c2d.t3_obs(env))
+        env.step(a)
         for i in range(record):
             if live[i]:
+                act[i].append(np.asarray(a[i], float).tolist())
                 pos[i].append(env.pos[i].tolist())
                 force[i].append(env.hist[i, -1].tolist())
-    return env, pos, force
+    return env, pos, force, act
 
 
 _GEN = {}
@@ -124,7 +128,7 @@ def train(ctx) -> None:
     model = _build(arch)
 
     def eval_fn(m):
-        env, _, _ = _rollout(m, ds, TRAIN_EVAL_N, 10_000 + seed, n_exec, K, use_force)
+        env, *_ = _rollout(m, ds, TRAIN_EVAL_N, 10_000 + seed, n_exec, K, use_force)
         return {
             "success": float(env.success.mean()),
             "force_abort": float((env.outcome == "force_abort").mean()),
@@ -157,7 +161,7 @@ def evaluate(ctx) -> None:
     norm = {k: (m.to(dev), s.to(dev)) for k, (m, s) in ck["norm"].items()}
     ds_like = _Norm(arch["horizon"], norm, dev)
     n_exec = max(1, min(int(arch.get("n_exec", 8)), arch["horizon"]))
-    env, pos, force = _rollout(
+    env, pos, force, act = _rollout(
         model, ds_like, n, 20_000 + seed, n_exec, K, not zeroed, est_sigma, sensor_noise,
         MAX_VIEW_EPISODES,
     )  # fmt: skip
@@ -168,6 +172,7 @@ def evaluate(ctx) -> None:
         {
             "z0": r4(env.z0[i]), "holes": r4(env.holes[i]), "target": int(env.target[i]),
             "est": r4(env.est[i]), "pos": r4(pos[i]), "force": r4(force[i]),
+            "act": np.round(np.asarray(act[i], float), 3).tolist(),
             "outcome": str(env.outcome[i]),
         }
         for i in range(min(n, MAX_VIEW_EPISODES))

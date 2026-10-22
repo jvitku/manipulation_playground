@@ -1,6 +1,6 @@
 /* Result viewers. Contract for real viewers (added by later tasks):
  *   LabViewers.register(name, fn)  where fn(resultObj, container, ctx) renders into container.
- *   ctx = {task, evalId, fileUrl(name) -> "/api/evals/<task>/<eval>/file/<name>"}.
+ *   ctx = {task, evalId, vecgrids (bool: per-task vector-grid toggle; see vecgrid.js), fileUrl(name) -> "/api/evals/<task>/<eval>/file/<name>"}.
  *   LabViewers.render(viewerName, resultObj, container, ctx) dispatches by spec.viewer;
  *   unknown/unregistered names fall back to pretty-printed JSON. */
 (function () {
@@ -332,7 +332,7 @@
   // (chamfer width / depth), DEPTH=0.06 (hole depth below the chamfer bottom).
   const C2_WH = 0.006, C2_WC = 0.012, C2_DEPTH = 0.06, C2_FABORT = 15.0;
 
-  function contact2d(result, container) {
+  function contact2d(result, container, ctx) {
     const eps = Array.isArray(result && result.episodes)
       ? result.episodes.filter((e) => e && Array.isArray(e.pos) && e.pos.length && Array.isArray(e.force)) : [];
     const wrap = h("div", { class: "viewer-contact2d" });
@@ -370,7 +370,32 @@
     const label = h("span", { style: "font:12px var(--mono);color:var(--muted)" });
     const row = h("div", { style: "display:flex;gap:10px;align-items:center;margin:8px 0;max-width:480px" }, sel, btn, slider);
     wrap.append(row, canvas, strip, label);
+    // vector grids (only what the payload holds): the 10x2 force window the net reads as its torque
+    // input (zeros when blinded) and the last 10 applied actions (the current one is the last row).
+    const vg = window.LabVecGrid && window.LabVecGrid.panel(ctx);
+    let vgBox = null;
+    if (vg) {
+      vgBox = h("div", { class: "vecgrids" });
+      wrap.append(vgBox, h("p", { class: "note", text:
+        "Grids: rows are time (oldest to newest), columns are (x, z). Force window = the last 10 force readings, "
+        + "the net's torque-history input (all zero when the force input is blinded). Actions = the last 10 actions "
+        + "applied, newest last. Red negative, black zero, green positive; hover for values." }));
+    }
     container.replaceChildren(wrap);
+    function drawGrids(e, st) {
+      if (!vgBox) return;
+      vgBox.replaceChildren();
+      const HW = 10, win = [];
+      for (let i = st - HW + 1; i <= st; i++) win.push(i >= 0 ? e.force[Math.min(i, e.force.length - 1)] : [0, 0]);
+      const blind = !!(result && result.force_zeroed);
+      window.LabVecGrid.render(vgBox, blind ? win.map(() => [0, 0]) : win,
+        { title: blind ? "force window (blinded: zeros)" : "force window 10x2 (N)", vmax: C2_FABORT });
+      if (Array.isArray(e.act) && e.act.length) {
+        const acts = [];
+        for (let i = st - HW + 1; i <= st; i++) acts.push(i >= 0 && i < e.act.length ? e.act[i] : [0, 0]);
+        window.LabVecGrid.render(vgBox, acts, { title: "actions 10x2 (ax, az)", vmax: 1 });
+      }
+    }
     const g = canvas.getContext("2d"), gs = strip.getContext("2d");
     let ep = eps[0], step = 0, playing = true;
 
@@ -435,6 +460,7 @@
       gs.fillStyle = css("--muted", "#6b7280"); gs.fillText(`±${C2_FABORT} N abort`, W - 84, 11);
       gs.strokeStyle = css("--ink", "#1f2430");
       gs.beginPath(); gs.moveTo(tx(step), 0); gs.lineTo(tx(step), HS); gs.stroke();
+      drawGrids(ep, step);
       slider.max = last; slider.value = step;
       label.textContent = `${ep.outcome} · step ${step}/${last} · F = (${fx.toFixed(1)}, ${fz.toFixed(1)}) N`;
     }

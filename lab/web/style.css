@@ -3,6 +3,7 @@
   --accent:#d8490b; --accent-soft:#fdeee6; --good:#1a7f4b; --good-soft:#e3f3ea;
   --warn:#9a6700; --warn-soft:#fdf3d7; --bad:#b3261e; --bad-soft:#fbe9e7;
   --chart1:#2563eb; --chart2:#d8490b; --chart3:#1a7f4b; --loss:#b3261e;
+  --vec-neg:#e5484d; --vec-zero:#0d0f12; --vec-pos:#30c46b;
   --chip:#eef0f4; --mono:'JetBrains Mono',ui-monospace,monospace;
 }
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
@@ -10,6 +11,7 @@
   --accent:#f0683a; --accent-soft:#3a2317; --good:#4ccb8a; --good-soft:#15291e;
   --warn:#e3b341; --warn-soft:#2d2512; --bad:#f2726a; --bad-soft:#331a18;
   --chart1:#6ba1ff; --chart2:#f0683a; --chart3:#4ccb8a; --loss:#f2726a;
+  --vec-neg:#ff5a5f; --vec-zero:#050607; --vec-pos:#3ddc84;
   --chip:#262a32; color-scheme:dark;
 }}
 :root[data-theme="dark"]{
@@ -17,6 +19,7 @@
   --accent:#f0683a; --accent-soft:#3a2317; --good:#4ccb8a; --good-soft:#15291e;
   --warn:#e3b341; --warn-soft:#2d2512; --bad:#f2726a; --bad-soft:#331a18;
   --chart1:#6ba1ff; --chart2:#f0683a; --chart3:#4ccb8a; --loss:#f2726a;
+  --vec-neg:#ff5a5f; --vec-zero:#050607; --vec-pos:#3ddc84;
   --chip:#262a32; color-scheme:dark;
 }
 *{box-sizing:border-box}
@@ -96,3 +99,8 @@ svg .box{fill:var(--chip);stroke:var(--line)}
 svg .lossbox{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.5}
 svg .losstxt{fill:var(--accent);font-weight:600;font-size:11px;font-family:var(--mono)}
 svg .arr{stroke:var(--muted);fill:none;marker-end:url(#ah)}
+.vecgrids{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;align-items:flex-start}
+.vecgrid .vg-title{font-size:11px;font-weight:600;color:var(--muted);margin-bottom:3px}
+.vecgrid canvas{display:block;border:1px solid var(--line);border-radius:4px;background:var(--vec-zero)}
+.vecgrid .vg-tip{font:11px var(--mono);color:var(--muted);margin-top:2px;min-height:15px}
+.vgtoggle{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-left:auto;cursor:pointer}
