@@ -1,3 +1,4 @@
 {
-  "bc-mse": {"steps_per_s": 354.0, "collect_s_per_ep": 0.00003, "overhead_s": 1.5}
+  "bc-mse": {"steps_per_s": 354.0, "collect_s_per_ep": 0.00003, "overhead_s": 1.5},
+  "flow": {"steps_per_s": 359.0, "collect_s_per_ep": 0.00003, "overhead_s": 1.5, "eval_s_per_k": 0.005}
 }
