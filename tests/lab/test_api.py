@@ -196,3 +196,28 @@ def test_eval_file_dotdot_404(client):
     with pytest.raises(HTTPException) as e:
         h("dummy", "x", "..")
     assert e.value.status_code == 404
+
+
+def test_startup_sweeps_interrupted_runs(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setenv("LAB_DATA", str(tmp_path))
+    monkeypatch.setenv("LAB_EXTRA_TASKS", "tests.lab.dummy_task")
+    d = tmp_path / "runs" / "dummy" / "260101-000000-aaaa"
+    d.mkdir(parents=True)
+    (d / "status.json").write_text(json.dumps({"state": "running", "pid": 1}))
+    from lab.server.app import create_app
+
+    with TestClient(create_app()) as c:  # entering the context runs the startup hook
+        st = c.get("/api/runs/dummy/260101-000000-aaaa").json()["status"]
+    assert st["state"] == "failed" and st["msg"] == "server restarted"
+
+
+def test_list_tasks_survives_broken_estimate(client, monkeypatch):
+    from lab.tasks import registry
+
+    spec = registry.get("dummy")
+    monkeypatch.setattr(spec, "estimate", lambda p: 1 / 0, raising=False)
+    r = client.get("/api/tasks")
+    assert r.status_code == 200
+    assert next(t for t in r.json() if t["id"] == "dummy")["est_label"] is None

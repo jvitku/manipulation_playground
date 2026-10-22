@@ -47,6 +47,13 @@ def test_embed_train_tiny(trained):
         assert {f"{a}_loss", f"{a}_success"} <= keys
     steps = [r["step"] for r in rows]
     assert steps == sorted(steps)  # one monotonic stream across arms
+    # every row carries the arm-local step (1..steps) so charts can overlay the arms
+    assert all(1 <= r["arm_step"] <= TINY["steps"] for r in rows)
+    for a in ARMS:
+        own = [r["arm_step"] for r in rows if f"{a}_loss" in r]
+        assert own and own == sorted(own)
+    chart_ids = {c["id"]: c for c in registry.get("embeddings").charts}
+    assert chart_ids["loss"]["x_key"] == chart_ids["success"]["x_key"] == "arm_step"
     ck = torch.load(trained.dir / "ckpt" / "last.pt", weights_only=False)
     assert ck["arms"] == list(ARMS) and ck["gen"] == "flow"
     for a in ARMS:

@@ -312,7 +312,7 @@
         if (st.step != null) kids.push(el("span", {}, "step ", el("b", { text: fmtInt(st.step) }), st.total_steps ? ` / ${fmtInt(st.total_steps)}` : ""));
         if (st.wall_s != null) kids.push(el("span", {}, "wall ", el("b", { text: fmtWall(st.wall_s) })));
         if (currentRun) kids.push(el("span", {}, "run ", el("b", { text: currentRun })));
-        if (st.msg) kids.push(el("span", { text: st.msg }));
+        if (st.msg || st.message) kids.push(el("span", { text: st.msg || st.message }));
         statusEl.replaceChildren(...kids);
       }
 
@@ -472,7 +472,7 @@
           evalStatus.replaceChildren(
             el("span", {}, el("span", { class: `dot ${st.state}` }), el("b", { text: st.state || "?" })),
             st.wall_s != null ? el("span", {}, "wall ", el("b", { text: fmtWall(st.wall_s) })) : null,
-            st.msg ? el("span", { text: st.msg }) : null);
+            (st.msg || st.message) ? el("span", { text: st.msg || st.message }) : null);
           if (!isTerminal(st.state)) { later(poll, 1000); return; }
           evalBtn.disabled = false;
           if (st.state === "done" && r.result) showResult(r.result, evalId);
@@ -489,7 +489,7 @@
         const ctx = {
           task: taskId,
           evalId,
-          vecgrids: window.LabVecGrid.enabled(taskId),
+          vecgrids: !!spec.vecgrids && window.LabVecGrid.enabled(taskId),
           fileUrl: (name) => `/api/evals/${encodeURIComponent(taskId)}/${encodeURIComponent(evalId)}/file/${encodeURIComponent(name)}`,
         };
         window.LabViewers.render(spec.viewer, result, viewerEl.querySelector(".viewer-body"), ctx);
@@ -504,19 +504,36 @@
     };
   }
 
-  // Outcome table: for every top-level section of the result with scalar numbers, one row per number;
-  // a "wilson95" [lo, hi] on the section is shown as the CI of its "success" rate.
+  // Outcome table. Two result shapes:
+  //  - sectioned (tasks 1-2): top-level objects (t1/t2) of scalar fractions, one row per number;
+  //    a "wilson95" [lo, hi] on the section is the CI of its "success" rate.
+  //  - flat (tasks 3-9): top-level {n_episodes, success, wilson95, counts: {outcome: k}, ...} (plus
+  //    base_success for the residual task): headline success % with its CI, then each count as
+  //    "k of n" (counts are integers, never percentages). Other top-level numbers are settings.
   function outcomeTable(result) {
     const rows = [];
     const pct = (v) => (v >= 0 && v <= 1 ? `${(v * 100).toFixed(1)} %` : Number(v).toPrecision(3));
-    for (const [sec, obj] of Object.entries(result || {})) {
-      if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
+    const ci = (w) => (Array.isArray(w) && w.length === 2 ? `${(w[0] * 100).toFixed(0)}–${(w[1] * 100).toFixed(0)}` : "—");
+    const bad = (k) => /collision|error|abort|wrong|timeout/.test(k);
+    const row = (label, text, cls, c) =>
+      rows.push(el("tr", {}, el("td", { text: label }), el("td", {}, el("span", { class: cls, text })), el("td", { text: c })));
+    const r = result || {};
+    const n = typeof r.n_episodes === "number" ? r.n_episodes : null;
+    if (typeof r.success === "number") {
+      row(n != null ? `success (${n} episodes)` : "success", pct(r.success), "chip", ci(r.wilson95));
+      if (r.counts && typeof r.counts === "object") {
+        for (const [k, v] of Object.entries(r.counts)) {
+          if (k === "success" || typeof v !== "number") continue;
+          row(k, n != null ? `${v} of ${n}` : String(v), bad(k) ? "chip bad" : "chip", "—");
+        }
+      }
+      if (typeof r.base_success === "number") row("base policy success", pct(r.base_success), "chip", "—");
+    }
+    for (const [sec, obj] of Object.entries(r)) {
+      if (!obj || typeof obj !== "object" || Array.isArray(obj) || sec === "counts") continue;
       for (const [k, v] of Object.entries(obj)) {
         if (typeof v !== "number") continue;
-        let ci = "—";
-        if (Array.isArray(obj.wilson95) && k === "success") ci = `${(obj.wilson95[0] * 100).toFixed(0)}–${(obj.wilson95[1] * 100).toFixed(0)}`;
-        const bad = /collision|error/.test(k);
-        rows.push(el("tr", {}, el("td", { text: `${sec} ${k}` }), el("td", {}, el("span", { class: bad ? "chip bad" : "chip", text: pct(v) })), el("td", { text: ci })));
+        row(`${sec} ${k}`, pct(v), bad(k) ? "chip bad" : "chip", k === "success" ? ci(obj.wilson95) : "—");
       }
     }
     if (!rows.length) return el("p", { class: "note", text: "No scalar outcome metrics in this result." });

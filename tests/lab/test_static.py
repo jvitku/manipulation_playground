@@ -92,3 +92,10 @@ def test_vecgrid_api_and_tokens(client):
     css = client.get("/static/style.css").text
     for tok in ("--vec-neg", "--vec-zero", "--vec-pos"):
         assert css.count(tok + ":") == 3  # light, dark-auto, dark-forced
+
+
+def test_ui_reads_progress_message_and_chart_x_key(client):
+    """Static contract: tasks write set_status(message=...) and charts take an optional x_key."""
+    app = client.get("/static/app.js").text
+    assert app.count("st.msg || st.message") >= 2  # run status bar + eval status
+    assert "x_key" in client.get("/static/charts.js").text

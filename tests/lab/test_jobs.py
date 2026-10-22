@@ -59,7 +59,7 @@ def test_start_job_spawns_detached(tmp_path):
     # unknown task -> subprocess fails fast; proves spawn, pid, log and failure path
     write_config(tmp_path, "no_such_task")
     pid = start_job("train", tmp_path)
-    assert pid > 0 and int((tmp_path / "job.pid").read_text()) == pid
+    assert pid > 0 and json.loads((tmp_path / "job.pid").read_text())["pid"] == pid
     for _ in range(100):
         if read_status(tmp_path)["state"] == "failed":
             break
@@ -105,3 +105,62 @@ def test_atomic_write_concurrent_writers(tmp_path):
     [t.join() for t in ts]
     assert not errs and "i" in json.loads((tmp_path / "c.json").read_text())
     assert [p.name for p in tmp_path.iterdir()] == ["c.json"]
+
+
+def test_pid_reuse_with_different_start_is_failed(tmp_path):
+    """A live process whose start time differs from the recorded one is a reused pid."""
+    import os
+
+    from lab.core.jobs import proc_start
+
+    pid = os.getpid()
+    (tmp_path / "status.json").write_text(json.dumps({"state": "running"}))
+    (tmp_path / "job.pid").write_text(json.dumps({"pid": pid, "start": proc_start(pid) + 12345}))
+    st = read_status(tmp_path)
+    assert st["state"] == "failed" and "died" in st["msg"]
+    (tmp_path / "job.pid").write_text(json.dumps({"pid": pid, "start": proc_start(pid)}))
+    assert read_status(tmp_path)["state"] == "running"
+    (tmp_path / "job.pid").write_text(json.dumps(pid))  # old format: bare int, no start check
+    assert read_status(tmp_path)["state"] == "running"
+
+
+def test_start_job_records_start_time(tmp_path):
+    from lab.core.jobs import read_pid_info
+
+    d = tmp_path / "sort" / "j"
+    write_config(d, "nosuchtask")
+    pid = start_job("train", d)
+    got_pid, start = read_pid_info(d)
+    assert got_pid == pid and isinstance(start, int)
+
+
+def test_start_job_popen_failure_marks_failed(tmp_path, monkeypatch):
+    import subprocess
+
+    import pytest
+
+    def boom(*a, **k):
+        raise OSError("no fork")
+
+    monkeypatch.setattr(subprocess, "Popen", boom)
+    d = tmp_path / "t" / "j"
+    d.mkdir(parents=True)
+    with pytest.raises(OSError):
+        start_job("train", d)
+    st = read_status(d)
+    assert st["state"] == "failed" and "no fork" in st["msg"]
+
+
+def test_sweep_stale_marks_nonterminal_failed(tmp_path):
+    from lab.core.jobs import sweep_stale
+
+    for name, state in [("a", "running"), ("b", "paused"), ("c", "queued"), ("d", "done")]:
+        d = tmp_path / "runs" / "t" / name
+        d.mkdir(parents=True)
+        (d / "status.json").write_text(json.dumps({"state": state}))
+    (tmp_path / "runs" / "t" / "e").mkdir()  # config-only dir (no status yet)
+    assert sweep_stale(tmp_path / "runs", tmp_path / "evals") == 4
+    for n in "abce":
+        st = read_status(tmp_path / "runs" / "t" / n)
+        assert st["state"] == "failed" and st["msg"] == "server restarted"
+    assert read_status(tmp_path / "runs" / "t" / "d")["state"] == "done"

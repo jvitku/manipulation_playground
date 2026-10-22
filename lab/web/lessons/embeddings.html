@@ -92,7 +92,7 @@ hole by feel. Leave it on to compare the encodings on what they are for: telling
 while one-hot, binary and text must learn the mapping &ldquo;command &rarr; which of the two observed hole positions&rdquo;; that
 difference is exactly what the comparison measures.
 Each arm trains <em>Training steps per encoding</em> steps, so a full run costs about four single trainings; use
-<em>Encodings to train</em> to run one arm.</p>
+<em>Encodings to train</em> to run one arm. The arms train one after another, but the charts plot each against its own step count, so the curves overlay at equal training effort.</p>
 
 <h3>Normalisation is part of the representation</h3>
 <p>State and force are z-scored with the training set's statistics, as everywhere. One-hot and binary vectors are passed through

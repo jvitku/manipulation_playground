@@ -613,7 +613,7 @@
     const fc = h("canvas", { width: W, height: HS, style: "width:100%;max-width:640px;height:auto;display:block;margin-top:6px;border:1px solid var(--line);border-radius:6px" });
     const ac = h("canvas", { width: W, height: HS, style: "width:100%;max-width:640px;height:auto;display:block;margin-top:6px;border:1px solid var(--line);border-radius:6px" });
     wrap.append(h("div", { style: "margin:8px 0" }, sel), fc, ac, label);
-    const vg = window.LabVecGrid && window.LabVecGrid.panel(ctx);
+    const vg = eps.some((e) => Array.isArray(e.obs_force)) && window.LabVecGrid && window.LabVecGrid.panel(ctx);
     let vgBox = null, obsG = null, gridEp = null;
     if (vg) {
       vgBox = h("div", { class: "vecgrids" });

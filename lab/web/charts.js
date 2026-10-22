@@ -1,12 +1,26 @@
 /* makeCharts(container, chartsSpec) -> {push(rows), reset()}
  * chartsSpec: [{id, title, series: [{key, label, color?, dash?}], log_y?, ymin?, ymax?}, ...]
- * Rows are {"step": N, "<key>": v, ...}; rows sharing a step are merged; absent keys are null gaps. */
+ * Rows are {"step": N, "<key>": v, ...}; rows sharing a step are merged; absent keys are null gaps.
+ * Optional per-chart `x_key`: the x-axis is that row field instead of "step" (rows without it are
+ * skipped for that chart), so phases of one run can be overlaid on a per-phase step axis. Rows that
+ * share an x value merge; they carry different series keys per phase, so nothing is overwritten. */
 (function () {
   const COLORS = ["--chart1", "--chart2", "--chart3", "--loss"];
 
   function cssColor(name, fallback) {
     const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     return v || fallback;
+  }
+
+  // compact tick label: 2-3 significant digits, k/M suffixes, no trailing zeros (0.5, 12, 2k, 0.012, 3e-4)
+  function fmtTick(v) {
+    if (v == null || !Number.isFinite(v)) return "";
+    const a = Math.abs(v);
+    if (a === 0) return "0";
+    if (a >= 1e6) return +(v / 1e6).toPrecision(3) + "M";
+    if (a >= 1e3) return +(v / 1e3).toPrecision(3) + "k";
+    if (a < 1e-3) return v.toExponential(0);
+    return String(+v.toPrecision(a < 1 ? 2 : 3));
   }
 
   function seriesColor(s, i) {
@@ -17,8 +31,6 @@
   window.makeCharts = function makeCharts(container, chartsSpec) {
     container.replaceChildren();
     const charts = [];
-    const steps = [];
-    const byStep = new Map(); // step -> index in steps
 
     (chartsSpec || []).forEach((cs) => {
       const tile = document.createElement("div");
@@ -51,7 +63,10 @@
         scales: { x: { time: false }, y: cs.log_y ? { distr: 3 } : {} },
         axes: [
           { stroke: axisStroke, grid, ticks: grid, size: 28, font: "10px JetBrains Mono, monospace" },
-          { stroke: axisStroke, grid, ticks: grid, size: 46, font: "10px JetBrains Mono, monospace" },
+          {
+            stroke: axisStroke, grid, ticks: grid, size: 42, space: 28, gap: 3,
+            font: "10px JetBrains Mono, monospace", values: (u, vals) => vals.map(fmtTick),
+          },
         ],
         series: [{}].concat(
           series.map((s, i) => ({
@@ -68,7 +83,7 @@
         opts.scales.y = Object.assign(opts.scales.y, { range: [cs.ymin ?? null, cs.ymax ?? null] });
       }
       const u = new uPlot(opts, [[]].concat(series.map(() => [])), plot);
-      charts.push({ u, series, cols });
+      charts.push({ u, series, cols, xKey: cs.x_key || "step", xs: [], byX: new Map() });
     });
 
     if (typeof ResizeObserver !== "undefined") {
@@ -81,34 +96,41 @@
     }
 
     function redraw() {
-      charts.forEach((c) => c.u.setData([steps].concat(c.cols)));
+      charts.forEach((c) => c.u.setData([c.xs].concat(c.cols)));
     }
 
     return {
       push(rows) {
         if (!rows || !rows.length) return;
         for (const r of rows) {
-          if (r == null || typeof r.step !== "number") continue;
-          let i = byStep.get(r.step);
-          if (i === undefined) {
-            i = steps.length;
-            steps.push(r.step);
-            byStep.set(r.step, i);
-            charts.forEach((c) => c.cols.forEach((col) => col.push(null)));
-          }
-          charts.forEach((c) =>
+          if (r == null) continue;
+          for (const c of charts) {
+            const x = r[c.xKey];
+            if (typeof x !== "number") continue;
+            let i = c.byX.get(x);
+            if (i === undefined) {
+              // keep the x-axis ascending: an overlaid phase restarts at a low x, so insert in order
+              i = c.xs.length;
+              while (i > 0 && c.xs[i - 1] > x) i--;
+              c.xs.splice(i, 0, x);
+              c.cols.forEach((col) => col.splice(i, 0, null));
+              if (i < c.xs.length - 1) c.xs.forEach((xv, j) => c.byX.set(xv, j));
+              else c.byX.set(x, i);
+            }
             c.series.forEach((s, k) => {
               const v = r[s.key];
               if (typeof v === "number" && Number.isFinite(v)) c.cols[k][i] = v;
-            })
-          );
+            });
+          }
         }
         redraw();
       },
       reset() {
-        steps.length = 0;
-        byStep.clear();
-        charts.forEach((c) => c.cols.forEach((col) => (col.length = 0)));
+        charts.forEach((c) => {
+          c.xs.length = 0;
+          c.byX.clear();
+          c.cols.forEach((col) => (col.length = 0));
+        });
         redraw();
       },
     };

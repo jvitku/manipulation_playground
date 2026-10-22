@@ -244,6 +244,7 @@ def train(ctx) -> None:
             step_offset=i * steps, total_steps=total, warmup=max(1, min(500, steps // 10)),
             eval_every=eval_every, ckpt_every=ckpt_every, eval_fn=eval_fn,
             log_every=max(1, min(50, steps // 4)), seed=seed, arch=arch, payload_wrap=wrap,
+            local_step_key="arm_step",
         )  # fmt: skip
         if not ok_run:
             ctx.set_status(state="stopped")
@@ -387,11 +388,14 @@ SPEC = TaskSpec(
     ],
     charts=[
         {"id": "loss", "title": "Flow loss (train, per encoding)",
-         "series": [{"key": f"{a}_loss", "label": a} for a in ARMS], "log_y": True},
+         "series": [{"key": f"{a}_loss", "label": a} for a in ARMS], "log_y": True,
+         "x_key": "arm_step"},
         {"id": "success", "title": "Closed-loop success (200 fixed scenes, all commands)",
-         "series": [{"key": f"{a}_success", "label": a} for a in ARMS], "log_y": False},
+         "series": [{"key": f"{a}_success", "label": a} for a in ARMS], "log_y": False,
+         "x_key": "arm_step"},
         *[{"id": f"cmd{k}", "title": f"Success: {c2d.TASKS[k]}",
-           "series": [{"key": f"{a}_c{k}", "label": a} for a in ARMS], "log_y": False}
+           "series": [{"key": f"{a}_c{k}", "label": a} for a in ARMS], "log_y": False,
+           "x_key": "arm_step"}
           for k in range(4)],
     ],
     viewer="embeddings",

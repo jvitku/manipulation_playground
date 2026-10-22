@@ -48,11 +48,18 @@ def train_loop(
     step_offset: int = 0,
     total_steps: int | None = None,
     payload_wrap: Callable[[dict], dict] | None = None,
+    local_step_key: str | None = None,
 ):
     """Train `model`; returns True if all steps ran, False if stopped early
     (a final ckpt is saved). `prefix` is prepended to loss/val_loss/lr metric names;
     `step_offset`/`total_steps` place this phase inside a longer multi-phase run (status bar,
-    metric and checkpoint step numbering) and keep checkpoint file names unique across phases."""
+    metric and checkpoint step numbering) and keep checkpoint file names unique across phases.
+    `local_step_key`, when set, adds this phase's own step (1..steps) to every metric row under
+    that key, so charts can overlay phases on a shared x-axis (global `step` stays monotonic)."""
+
+    def local(step):
+        return {local_step_key: step} if local_step_key else {}
+
     torch.manual_seed(seed)
     dev = ds.device
     model.to(dev)
@@ -116,11 +123,15 @@ def train_loop(
                 series[f"{prefix}val_loss"] = val_loss(ema_m, gen, val_ds)
             if aux_weight > 0:
                 series[f"{prefix}aux"] = acc_aux / nacc
-            ctx.log(step_offset + step, **series)
+            ctx.log(step_offset + step, **series, **local(step))
             ctx.set_status(step=step_offset + step, total_steps=total)
             acc, acc_aux, nacc = 0.0, 0.0, 0
         if eval_fn is not None and (step % eval_every == 0 or step == steps):
-            ctx.log(step_offset + step, **{k: float(v) for k, v in eval_fn(ema_m).items()})
+            ctx.log(
+                step_offset + step,
+                **{k: float(v) for k, v in eval_fn(ema_m).items()},
+                **local(step),
+            )
         if step % ckpt_every == 0 and step < steps:
             save(step)
     if nacc and last_loss is None:

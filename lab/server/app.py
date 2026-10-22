@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -148,16 +149,30 @@ def _gpu() -> dict:
         return {"used_mb": 0, "total_mb": 0}
 
 
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # every job is a child of this container, so none outlives a restart: whatever is still
+    # non-terminal on disk was interrupted (and its pid may since have been reused)
+    jobs.sweep_stale(data_root() / "runs", data_root() / "evals")
+    yield
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="lab")
+    app = FastAPI(title="lab", lifespan=_lifespan)
 
     @app.get("/api/tasks")
     def list_tasks():
+        def est_label(s):
+            try:
+                return estimate_label(
+                    float(s.estimate(registry.validate_params(s, {}, which="train")))
+                )
+            except Exception:  # noqa: BLE001 - a broken estimate must not take the ladder down
+                return None
+
         return [
             {
-                "est_label": estimate_label(
-                    float(s.estimate(registry.validate_params(s, {}, which="train")))
-                ),
+                "est_label": est_label(s),
                 "last_state": _newest_state(s.id),
                 "id": s.id,
                 "order": s.order,

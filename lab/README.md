@@ -9,7 +9,7 @@ FastAPI backend (`lab/server`), static front end (`lab/web`), tasks in `lab/task
 |---|---|---|---|
 | 1 | `bc-mse` | behaviour cloning with MSE averages two expert modes into a crash | ~13 s |
 | 2 | `flow` | same data and net, flow matching samples both modes | ~13 s |
-| 3 | `embeddings` | one policy, four commands: one-hot / bits / learned word embeddings / text | ~2 min |
+| 3 | `embeddings` | one policy, four commands: one-hot / bits / learned word embeddings / continuous goal vector | ~2 min |
 | 4 | `flow-bc` | flow policy reading the force history to find a hole by feel | ~40 s |
 | 5 | `force-token` | the repo's Stage-1 gantry pipeline (ACT/MLP, force token on/off, DART noise) | ~2 min |
 | 6 | `ta-vla` | two-stream transformer with a torque token: image + words + state in, actions out | ~4 min |
@@ -80,7 +80,7 @@ entry (e.g. `steps_per_s = steps / (wall_s - overhead_s - collection)`), then ch
    (`ckpt_task`); the server validates the id and swaps in the absolute path. `long=True` flags
    hours-long settings.
 3. `train(ctx)` receives a `RunContext` (`lab/core/runctx.py`): `ctx.params`, `ctx.log(step, **metrics)`
-   (one monotonic step stream -> `metrics.jsonl` -> the charts), `ctx.set_status`, `ctx.save_ckpt(step, payload, label=, metrics=)`
+   (one monotonic step stream -> `metrics.jsonl` -> the charts; a chart spec may set `x_key` to plot against another row field, e.g. embeddings' per-arm `arm_step`, so phases overlay), `ctx.set_status` (progress text goes under the key `message`; the terminal `ctx.done(msg)`/`ctx.fail(msg)` write `msg`, which wins in the UI), `ctx.save_ckpt(step, payload, label=, metrics=)`
    (-> `ckpt/index.json`), `ctx.should_continue()` (poll it so pause/stop work; on stop set
    `state="stopped"`), `ctx.done(msg)`. Gradient loops can use `lab.core.loop.train_loop`. Checkpoint
    payloads must be self-describing (a `meta` dict) so `evaluate` rebuilds the model from the file
@@ -90,7 +90,7 @@ entry (e.g. `steps_per_s = steps / (wall_s - overhead_s - collection)`), then ch
    viewer: document its schema in the module docstring (see `task4_force_token.py`).
 5. Viewer: add or reuse one in `lab/web/viewers.js` (`LabViewers.register(name, fn(result,
    container, ctx))`); it must degrade to a JSON fallback on unknown payloads.
-6. Lesson: `lab/web/lessons/<id>.html`. Math in KaTeX (`$...$` / `$$...$$`). Grounding rule: every
+6. Lesson: `lab/web/lessons/<id>.html`. Math in KaTeX, delimiters `$$...$$` (display) and `\(...\)` (inline); a bare `$...$` is not typeset. Grounding rule: every
    number on the page is either measured by this app (say which run) or cited; anything else is
    written as an explanation, not a result. Refer to other tasks by ladder order ("task 4
    (flow-bc)").
@@ -101,7 +101,9 @@ entry (e.g. `steps_per_s = steps / (wall_s - overhead_s - collection)`), then ch
 
 - `make lab-build` / `make lab` / `make lab-stop` / `make lab-test` (above). After editing server
   or task code: `docker compose -f docker/compose.yaml restart lab` (modules are imported at
-  startup; static files and `calib.json` are served fresh).
+  startup; static files and `calib.json` are served fresh). **Restarting the container kills every
+  running job**; at startup the server marks all interrupted (non-terminal) runs and evals `failed`
+  ("server restarted"), and `job.pid` records the process start time so a reused pid never looks alive.
 - Training and evaluation are detached jobs (`lab/run_job.py`); closing the browser never stops
   them, and an overnight run keeps going and shows up in the run list on return. Stop/pause via the
   UI buttons.
