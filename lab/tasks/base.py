@@ -32,3 +32,4 @@ class TaskSpec:
     train: Callable
     evaluate: Callable
     lesson: str  # filename under lab/web/lessons/
+    check: Callable | None = None  # cross-param check on typed train params; raises ValueError

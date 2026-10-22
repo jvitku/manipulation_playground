@@ -77,7 +77,10 @@ def validate_params(spec, form: dict, which: str = "all") -> dict:
     unknown = sorted(set(form) - set(known))
     if unknown:
         raise ValueError(f"unknown params: {unknown}")
-    return {p.name: _coerce(p, form.get(p.name, p.default)) for p in params}
+    out = {p.name: _coerce(p, form.get(p.name, p.default)) for p in params}
+    if which in ("train", "all") and getattr(spec, "check", None):
+        spec.check(out)
+    return out
 
 
 def calib(task_id: str) -> dict:

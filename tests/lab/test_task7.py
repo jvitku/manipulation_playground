@@ -73,3 +73,24 @@ def test_task7_eval_reuses_task6(tmp_path, trained):
     assert read_status(ev.dir)["state"] == "done"
     res = json.loads((ev.dir / "result.json").read_text())
     assert res["trained_with_force"] is True and sum(res["counts"].values()) == 2
+
+
+def test_task7_start_below_floor_rejected():
+    spec = registry.get("td3-bc")
+    with pytest.raises(ValueError, match="bc_weight_start must be >= bc_weight_floor"):
+        registry.validate_params(spec, {"bc_weight_start": 0.0}, which="train")
+    ok = registry.validate_params(
+        spec, {"bc_weight_start": 0.0, "bc_weight_floor": 0.0}, which="train"
+    )
+    assert ok["bc_weight_start"] == 0.0
+
+
+def test_task7_plain_td3_with_demos(tmp_path):
+    ctx = make_ctx(tmp_path / "run", {**TINY, "bc_weight_start": 0.0, "bc_weight_floor": 0.0})
+    t7.train(ctx)
+    rows = read_metrics(ctx.dir)
+    assert not any("bc_loss" in r for r in rows)
+    assert [r["bc_weight"] for r in rows if "bc_weight" in r] != []
+    assert all(r["bc_weight"] == 0 for r in rows if "bc_weight" in r)
+    ck = torch.load(ctx.dir / "ckpt" / "last.pt", weights_only=False)
+    assert ck["meta"]["bc"]["demo_stats"]["episodes"] == 2

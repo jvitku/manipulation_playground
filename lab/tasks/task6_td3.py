@@ -159,7 +159,11 @@ def _train_loop(ctx, P: dict, env, p, rp, hooks=None) -> None:
     rng = np.random.default_rng(seed)
     dev = _device()
     agent, cfg = _make_agent(env, dev)
-    buf = ReplayBuffer(env.obs_dim, env.act_dim, min(1_000_000, steps))
+    buf = ReplayBuffer(
+        env.obs_dim,
+        env.act_dim,
+        min(1_000_000, steps) if hooks is None else hooks.buffer_size(steps),
+    )
     start_steps = min(KEEP_START, steps // 5)  # uniform-random actions first (script: 5000)
     meta = {"algo": "td3", "task": "arm", "use_force": bool(P["use_force"]), "history": HISTORY,
             "xy_scale": float(env.scale[0]), "z_scale": float(env.scale[2]),
@@ -187,6 +191,8 @@ def _train_loop(ctx, P: dict, env, p, rp, hooks=None) -> None:
     if hooks is not None and not hooks.prepare(ctx, env, buf, rng):
         ctx.set_status(state="stopped")
         return
+    if hooks is not None:
+        meta.update(hooks.final_meta())
     o = env.reset(train_seed)
     ep_ret = 0.0
     for t in range(1, steps + 1):

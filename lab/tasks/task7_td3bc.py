@@ -39,6 +39,13 @@ def bc_weight_at(t: int, start: float, floor: float, decay_steps: int) -> float:
     return floor + (start - floor) * max(0.0, 1.0 - t / max(decay_steps, 1))
 
 
+def check_params(P: dict) -> None:
+    """Cross-param check (-> 422): lambda(t) only decays, so start must be >= floor."""
+    if float(P["bc_weight_start"]) < float(P["bc_weight_floor"]):
+        raise ValueError("bc_weight_start must be >= bc_weight_floor "
+                         "(for plain TD3 with demos in the buffer set both to 0)")  # fmt: skip
+
+
 def collect_demos(ctx, env, n: int, bufs) -> dict | None:
     """Script 18's `collect_demos` loop (arm branch), with progress and stop polling.
     None if stopped meanwhile."""
@@ -67,11 +74,20 @@ class BCHooks:
         self.floor = float(P["bc_weight_floor"])
         self.decay = int(P["bc_decay_steps"])
         self.demo_buf = None
-        self.stats: dict = {}
+        self.meta_extra: dict = {}
 
     def meta(self) -> dict:
         return {"bc": {"n_demos": self.n_demos, "bc_weight_start": self.start,
                        "bc_weight_floor": self.floor, "bc_decay_steps": self.decay}}  # fmt: skip
+
+    def final_meta(self) -> dict:
+        """Meta known only after `prepare` (demo_stats); merged into every checkpoint."""
+        return {"bc": {**self.meta()["bc"], **self.meta_extra}}
+
+    def buffer_size(self, steps: int) -> int:
+        """Replay capacity: steps + the demo transitions (about 250 per episode at most), so the
+        demos are not overwritten near the end of a run. Script 18 used 1M."""
+        return min(1_000_000, steps + self.n_demos * 250)
 
     def prepare(self, ctx, env, buf, rng) -> bool:
         from fvb.policy.td3 import ReplayBuffer
@@ -81,6 +97,7 @@ class BCHooks:
         if stats is None:
             return False
         self.stats = stats
+        self.meta_extra = {"demo_stats": stats}
         ctx.set_status(message=f"demos: {stats['success']}/{stats['episodes']} succeeded, "
                        f"{stats['transitions']} transitions; training")  # fmt: skip
         return True
@@ -176,5 +193,6 @@ SPEC = TaskSpec(
     train=train,
     evaluate=t6.evaluate,
     lesson="td3-bc.html",
+    check=check_params,
 )  # fmt: skip
 registry.register(SPEC)
