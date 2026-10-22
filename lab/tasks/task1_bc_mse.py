@@ -69,7 +69,7 @@ class _Norm:
 
 
 def _collect(n: int, seed: int, noise: float) -> list[dict]:
-    """Like `toy.t2_collect` but with the expert's noise as a parameter."""
+    """Like `toy.t2_collect` (must track it) but with the expert noise as a parameter."""
     env = toy.ObstacleReach(n, seed)
     ex = toy.ObstacleExpert(env, seed, noise)
     obs, act, alive = [], [], []
@@ -160,11 +160,12 @@ def train(ctx) -> None:
         holder["t1"] = p  # the last call is the final T1 save
         return {"t1": p, "arch": {"t1": p["arch"]}, "gen": p["gen"], "params": ctx.params}
 
-    train_loop(
+    done1 = train_loop(
         ctx, m1, gen, ds, vds, prefix="t1_", total_steps=total, eval_fn=t1_eval,
         arch=arch1, payload_wrap=wrap1, **common,
     )  # fmt: skip
-    if not ctx.should_continue():
+    if not done1:
+        ctx.set_status(state="stopped")
         return
 
     # ---- part 2: closed-loop obstacle reach
@@ -191,11 +192,14 @@ def train(ctx) -> None:
             "params": ctx.params,
         }
 
-    train_loop(
+    done2 = train_loop(
         ctx, m2, gen, ds2, vds2, prefix="t2_", step_offset=steps, total_steps=total,
         eval_fn=t2_eval, arch=arch2, payload_wrap=wrap2, **common,
     )  # fmt: skip
-    ctx.done("trained t1 + t2")
+    if done2:
+        ctx.done("trained t1 + t2")
+    else:
+        ctx.set_status(state="stopped")
 
 
 def evaluate(ctx) -> None:

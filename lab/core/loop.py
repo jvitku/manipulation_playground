@@ -49,8 +49,8 @@ def train_loop(
     total_steps: int | None = None,
     payload_wrap: Callable[[dict], dict] | None = None,
 ):
-    """Train `model`; returns the EMA model. `prefix` is prepended to loss/val_loss/lr metric
-    names; `step_offset`/`total_steps` place this phase inside a longer multi-phase status bar and
+    """Train `model`; returns True if all steps ran, False if stopped early
+    (a final ckpt is saved). `prefix` is prepended to loss/val_loss/lr metric names; `step_offset`/`total_steps` place this phase inside a longer multi-phase status bar and
     keep checkpoint file names unique across phases."""
     torch.manual_seed(seed)
     dev = ds.device
@@ -82,9 +82,11 @@ def train_loop(
 
     g = torch.Generator(device="cpu").manual_seed(seed)
     acc, acc_aux, nacc, last_loss, step = 0.0, 0.0, 0, None, 0
+    completed = True
     for step in range(1, steps + 1):
         if not ctx.should_continue():
             step -= 1
+            completed = False
             break
         model.train()
         idx = torch.randint(0, ds.n, (batch,), generator=g).to(dev)
@@ -113,15 +115,15 @@ def train_loop(
                 series[f"{prefix}val_loss"] = val_loss(ema_m, gen, val_ds)
             if aux_weight > 0:
                 series[f"{prefix}aux"] = acc_aux / nacc
-            ctx.log(step, **series)
+            ctx.log(step_offset + step, **series)
             ctx.set_status(step=step_offset + step, total_steps=total)
             acc, acc_aux, nacc = 0.0, 0.0, 0
         if eval_fn is not None and (step % eval_every == 0 or step == steps):
-            ctx.log(step, **{k: float(v) for k, v in eval_fn(ema_m).items()})
+            ctx.log(step_offset + step, **{k: float(v) for k, v in eval_fn(ema_m).items()})
         if step % ckpt_every == 0 and step < steps:
             save(step)
     if nacc and last_loss is None:
         last_loss = acc / nacc
     ctx.set_status(step=step_offset + step, total_steps=total)
     save(step)
-    return ema_m
+    return completed

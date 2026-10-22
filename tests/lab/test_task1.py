@@ -62,3 +62,27 @@ def test_task1_eval_uses_ckpt_arch(tmp_path):
 def test_task1_estimate_positive():
     spec = registry.get("bc-mse")
     assert spec.estimate(registry.validate_params(spec, {}, which="train")) > 0
+
+
+def test_task1_metrics_steps_monotonic_across_phases(tmp_path):
+    ctx = make_ctx(tmp_path / "run", TINY)
+    t1.train(ctx)
+    steps = [r["step"] for r in read_metrics(ctx.dir)]
+    assert steps == sorted(steps) and max(steps) == 2 * TINY["steps"]
+    assert any(s > TINY["steps"] for s in steps)
+
+
+def test_task1_stop_during_t2_is_stopped_not_done(tmp_path):
+    ctx = make_ctx(tmp_path / "run", TINY)
+    real = ctx.should_continue
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] > TINY["steps"] + 10:  # inside the T2 phase
+            ctx._stop = True
+        return real()
+
+    ctx.should_continue = flaky
+    t1.train(ctx)
+    assert read_status(ctx.dir)["state"] == "stopped"

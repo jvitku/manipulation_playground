@@ -23,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
         print(tb, file=sys.stderr)
         ctx.fail(f"{type(e).__name__}: {e}\n{tb[-1500:]}")
         return 1
-    if read_status(ctx.dir).get("state") not in ("done", "failed"):
+    if read_status(ctx.dir).get("state") not in ("done", "failed", "stopped"):
         ctx.done()
     return 0
 
