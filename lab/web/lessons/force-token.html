@@ -1,0 +1,120 @@
+<h3>The task</h3>
+<p>This is the headline result of the repo's Stage&nbsp;1 (docs/FINDINGS.md, &ldquo;Stage 1&rdquo;), run here on the real
+simulator: a 3-axis <b>gantry</b> holds a square peg over a square hole with <b>0.5 mm clearance</b>. The hole is at a random
+(x, y), &sigma; = 1.5 mm per axis, and the policy is <em>never told where</em>. It only senses the peg: its position relative to
+the start, its velocity, and the wrist force/torque. The peg descends; if it lands on the rim it jams. To finish it must feel
+<em>which way</em> it is off, back up, shift 0.5 mm toward the hole, and try again. Success is 30 mm of insertion over the
+opening; &gt;60 N aborts; 8 s is the time limit.</p>
+
+<h3>The data</h3>
+<p>A scripted expert that can read the hole position (privileged) descends at 5 cm/s, and on a jam retracts 3 mm and corrects one
+0.5 mm step toward the true hole. At run start the lab <em>collects</em> the demonstrations on the gantry (the same loop as
+<code>scripts/09_collect_expert.py</code>; it takes about a second per five episodes) and slices them into windows of
+<b>H = 10</b> past observations and the next <b>K = 5</b> expert actions. Each observation has 18 numbers: position (3),
+velocity (3), <b>compensated force and torque (6)</b>, <b>a summary of the high-rate force over the interval (3)</b> and the last action (3).
+The 9 force numbers are the <b>force token</b>. <em>Demo action noise</em> perturbs the <em>executed</em> action while collecting
+(labels stay the clean expert action); Stage 1's own data used none, so set it to 0 for the closest replica.</p>
+
+<h3>The method: ACT-lite</h3>
+<p>A small action-chunking transformer. The H observation tokens go through a linear embedding plus learned positions and a 3-layer
+transformer encoder; K <b>learned queries</b> cross-attend to that memory in a 2-layer decoder and a linear head reads out K actions
+(about 800&nbsp;k parameters; the <em>MLP</em> baseline flattens the window instead, 116&nbsp;k). It is trained by plain regression.
+Near the end of an episode there are fewer than K future actions, so those slots are masked:</p>
+<p>$$L = \frac{\sum_{b}\sum_{k} m_{b,k}\;\tfrac{1}{3}\left\lVert \hat a_{b,k} - a^{*}_{b,k}\right\rVert_1}{\sum_{b}\sum_{k} m_{b,k}}$$</p>
+<p class="ref">where \(m\) is the validity mask, \(\hat a\) the predicted chunk and \(a^*\) the expert chunk, both z-scored per channel.
+Closed loop, the policy executes the <em>first</em> action of the chunk each step.</p>
+<p><b>The zeroed twin.</b> <em>Feed the force channels</em> off zeroes the 9 force channels in training and evaluation: same
+network, same data, no touch. At evaluation, <em>Zero the force input</em> blinds a force-trained model after the fact (the raw channels are set
+to 0 before normalisation). Compare the two at equal settings: the difference is the value of the force token.</p>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 780 310" role="img" aria-label="ACT-lite: observation window with highlighted force channels and a zeroed-twin switch, encoder, K learned queries, decoder, action chunk and masked L1 loss node" style="width:100%;max-width:780px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="ftA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+    <marker id="ftL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--loss)"/></marker>
+    <marker id="ftG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+  </defs>
+  <!-- observation window -->
+  <text x="75" y="18" text-anchor="middle" fill="var(--muted)">window: H = 10 steps</text>
+  <rect x="10" y="26" width="130" height="30" rx="6" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="75" y="45" text-anchor="middle" fill="var(--ink)">pos 3 &middot; vel 3</text>
+  <rect x="10" y="62" width="130" height="50" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <text x="75" y="80" text-anchor="middle" fill="var(--ink)" font-weight="700">force token (9)</text>
+  <text x="75" y="95" text-anchor="middle" fill="var(--muted)">F, T comp. 6 + hf 3</text>
+  <rect x="10" y="118" width="130" height="30" rx="6" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="75" y="137" text-anchor="middle" fill="var(--ink)">prev action 3</text>
+  <!-- zeroed switch -->
+  <rect x="160" y="68" width="66" height="38" rx="6" fill="none" stroke="var(--accent)" stroke-dasharray="4 3"/>
+  <text x="193" y="84" text-anchor="middle" fill="var(--accent)">use_force</text>
+  <text x="193" y="98" text-anchor="middle" fill="var(--muted)">off &#8594; 0</text>
+  <line x1="140" y1="87" x2="158" y2="87" stroke="var(--accent)" marker-end="url(#ftG)"/>
+  <!-- merge to embed -->
+  <line x1="140" y1="41" x2="258" y2="84" stroke="var(--muted)" marker-end="url(#ftA)"/>
+  <line x1="226" y1="87" x2="258" y2="90" stroke="var(--accent)" stroke-width="2" marker-end="url(#ftG)"/>
+  <line x1="140" y1="133" x2="258" y2="98" stroke="var(--muted)" marker-end="url(#ftA)"/>
+  <rect x="260" y="64" width="84" height="46" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="302" y="83" text-anchor="middle" fill="var(--ink)">embed + pos</text>
+  <text x="302" y="98" text-anchor="middle" fill="var(--muted)">(B, H, 128)</text>
+  <line x1="344" y1="87" x2="374" y2="87" stroke="var(--muted)" marker-end="url(#ftA)"/>
+  <rect x="376" y="58" width="108" height="58" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="430" y="80" text-anchor="middle" fill="var(--ink)">encoder</text>
+  <text x="430" y="95" text-anchor="middle" fill="var(--muted)">3 &times; self-attn</text>
+  <text x="430" y="108" text-anchor="middle" fill="var(--muted)">history tokens</text>
+  <!-- queries + decoder -->
+  <rect x="376" y="150" width="108" height="36" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="430" y="166" text-anchor="middle" fill="var(--ink)">K = 5 learned</text>
+  <text x="430" y="180" text-anchor="middle" fill="var(--muted)">queries</text>
+  <line x1="484" y1="87" x2="520" y2="106" stroke="var(--muted)" marker-end="url(#ftA)"/>
+  <line x1="484" y1="168" x2="520" y2="128" stroke="var(--muted)" marker-end="url(#ftA)"/>
+  <rect x="522" y="88" width="104" height="58" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="574" y="110" text-anchor="middle" fill="var(--ink)">decoder</text>
+  <text x="574" y="125" text-anchor="middle" fill="var(--muted)">2 &times; cross-attn</text>
+  <text x="574" y="138" text-anchor="middle" fill="var(--muted)">+ Linear(3)</text>
+  <line x1="626" y1="117" x2="654" y2="117" stroke="var(--muted)" marker-end="url(#ftA)"/>
+  <rect x="656" y="98" width="112" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="712" y="114" text-anchor="middle" fill="var(--ink)">a&#770; chunk</text>
+  <text x="712" y="128" text-anchor="middle" fill="var(--muted)">(B, K, 3) mm</text>
+  <!-- expert target + loss -->
+  <rect x="656" y="206" width="112" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="712" y="222" text-anchor="middle" fill="var(--ink)">a* expert chunk</text>
+  <text x="712" y="236" text-anchor="middle" fill="var(--muted)">+ mask m (end of episode)</text>
+  <line x1="712" y1="136" x2="680" y2="164" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#ftL)"/>
+  <line x1="712" y1="206" x2="720" y2="190" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#ftL)"/>
+  <rect x="652" y="164" width="118" height="28" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <text x="711" y="183" text-anchor="middle" fill="var(--loss)" font-weight="700">masked L1</text>
+  <text x="380" y="286" text-anchor="middle" fill="var(--muted)">closed loop: read the last H observations &#8594; predict K actions &#8594; execute the first &#8594; step the simulator</text>
+</svg>
+<p class="ref">B = batch. The highlighted block is the 9 force channels (the force token); the dashed <code>use_force</code> switch is the zeroed
+twin. The loss node compares the chunk with the expert chunk, ignoring slots past the episode end.</p>
+
+<h3>What to watch: validation L1 is health, closed-loop success is the score</h3>
+<p>The charts show collection progress, then per epoch the train and validation <b>masked L1</b> and the validation action error in mm. They
+do not show success: that is only measured by <em>Evaluate</em>, which flies unseen holes closed loop. The repo's own numbers
+(docs/FINDINGS.md, Stage 1; 50 fresh seeds, &sigma; = 1.5 mm, 40 epochs) show why you need both:</p>
+<table class="out">
+<tr><th>gantry policy</th><th>val L1</th><th>success</th></tr>
+<tr><td>expert (privileged)</td><td>&mdash;</td><td>50/50</td></tr>
+<tr><td>ACT-lite + force</td><td>0.073</td><td><b>50/50</b></td></tr>
+<tr><td>ACT-lite, force zeroed</td><td>0.152</td><td><b>5/50</b></td></tr>
+<tr><td>MLP + force</td><td>0.132</td><td>45/50</td></tr>
+<tr><td>MLP, force zeroed</td><td>0.158</td><td>5/50</td></tr>
+</table>
+<p class="ref">README.md quotes the same headline as &ldquo;50/50 vs 7/50&rdquo; (a different run of the pictured episodes); FINDINGS.md&rsquo; 5/50 is the evaluated table above.</p>
+<p>The validation loss separates the variants only 2&times; (0.07 vs 0.15), because 90&nbsp;% of the steps are &ldquo;descend 2.5 mm&rdquo; and both fit them; the
+closed-loop gap is 10&times;. Without force the policy even learns the jam&rarr;retract reflex, but the same observation precedes
+&ldquo;shift +x&rdquo; and &ldquo;shift &minus;x&rdquo;, an L1 regression averages them, and it retracts about 20 times per episode and dithers
+until timeout. The sign of the torque at the jam is the missing bit. And the arm is a warning that this is not a law of nature: on
+the Panda arm (docs/FINDINGS.md, arm result) the MLP with force reaches <b>39/50</b> against <b>4/50</b> zeroed, while ACT-lite
+plateaued at 4/50 with <em>or</em> without force &mdash; cause not isolated. Here only the gantry is wired in.</p>
+<p>In the viewer: the video shows the 3-D close-up with the force strip (|F| dark, Fz blue). The strips below are synced to the
+video; the grid is the force part of the window the net reads at that moment. A forced-blind run shows zeros there.</p>
+
+<h3>Knobs</h3>
+<ul>
+<li><b>Expert demonstrations</b>: 50&ndash;500, default 300 (the Stage-1 size). Collection is cheap; the run time is mostly epochs.</li>
+<li><b>Policy</b>: <code>act</code> (history transformer) or <code>mlp</code> (flattened window). <b>History H</b> and <b>chunk K</b> default to the Stage-1 10 and 5.</li>
+<li><b>Feed the force channels</b>: off = the zeroed twin, trained blind.</li>
+<li><b>Epochs</b> (default 40) and <b>learning rate</b> (3e-4, cosine decay, AdamW, batch 256). A checkpoint is kept at each validation improvement and at the end.</li>
+<li><b>Demo action noise</b>: see &ldquo;The data&rdquo;. Evaluation: <em>Hole offset sigma</em> (trained at 1.5; the repo reports that the force policy still reaches 50/50 at 3 mm),
+<em>Clearance</em>, <em>Zero the force input</em>, <em>Episodes to render</em> (the video concatenates them, each behind a short title card) and the eval seed.</li>
+</ul>

@@ -8,5 +8,6 @@ from lab.tasks import (
     task1_bc_mse,  # noqa: F401
     task2_flow,  # noqa: F401
     task3_flow_bc,  # noqa: F401
+    task4_force_token,  # noqa: F401
     task_embed,  # noqa: F401
 )

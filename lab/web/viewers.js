@@ -543,6 +543,122 @@
     contact2d(result, rolls, ctx);
   }
 
+
+  // ---- video: gantry rollout mp4 + outcome table + per-episode force/action strip charts ----------
+  // result.json from lab/tasks/task4_force_token.py. Frame layout of rollout.mp4 per rendered episode:
+  // VID_CARD title-card frames, then 1 initial frame + one per step, then VID_HOLD hold frames.
+  const VID_CARD = 15, VID_HOLD = 20, VID_FABORT = 60.0;
+
+  function video(result, container, ctx) {
+    const r = result || {};
+    const eps = Array.isArray(r.episodes) ? r.episodes.filter((e) => e && Array.isArray(e.force) && e.force.length) : [];
+    const wrap = h("div", { class: "viewer-video" });
+    const stats = h("div", { style: "margin-bottom:6px" });
+    stats.append(chip("success", pct(r.success)));
+    if (Array.isArray(r.wilson95) && r.wilson95.length === 2) stats.append(chip("95% CI", `${pct(r.wilson95[0])} – ${pct(r.wilson95[1])}`));
+    if (r.model) stats.append(chip("policy", `${r.model} H=${r.H} K=${r.K}`));
+    if (r.force_zeroed) {
+      const twf = r.trained_with_force;
+      stats.append(chip("force input", twf === false ? "zeroed (trained without force)" : twf === true ? "blinded at eval (trained with force)" : "zeroed"));
+    }
+    wrap.append(stats);
+    // outcome table
+    const counts = r.counts || {}, n = num(r.n_episodes) || 0;
+    const tbl = h("table", { class: "out" });
+    tbl.append(h("tr", {}, ...["outcome", "episodes", "share"].map((t) => h("th", { text: t }))));
+    for (const o of ["success", "force_abort", "timeout"]) {
+      if (num(counts[o]) != null) tbl.append(h("tr", {}, h("td", { text: o.replace("_", " ") }), h("td", { text: String(counts[o]) }), h("td", { text: n ? pct(counts[o] / n) : "n/a" })));
+    }
+    wrap.append(tbl);
+    const bk = Array.isArray(r.buckets) ? r.buckets.filter((b) => b && b.n > 0) : [];
+    if (bk.length) {
+      const bt = h("table", { class: "out", style: "margin-top:8px" });
+      bt.append(h("tr", {}, ...["|hole offset| mm", "episodes", "success"].map((t) => h("th", { text: t }))));
+      for (const b of bk) bt.append(h("tr", {}, h("td", { text: `${b.lo} – ${b.hi}` }), h("td", { text: String(b.n) }), h("td", { text: pct(b.success) })));
+      wrap.append(bt, h("p", { class: "note", text: `Clearance ${r.clearance_mm} mm: offsets under about half of it go in without any search; the force policy earns its keep on the larger ones.` }));
+    }
+    const vid = h("video", { controls: "", preload: "metadata", style: "width:100%;max-width:640px;display:block;margin:10px 0;border-radius:8px;background:#000" });
+    const hasVideo = !!(r.video && ctx && typeof ctx.fileUrl === "function");
+    if (hasVideo) { vid.setAttribute("src", ctx.fileUrl(r.video)); wrap.append(vid); }
+    else wrap.append(h("p", { class: "note", text: "No video in this result (rendered episodes = 0)." }));
+    if (!eps.length) { container.replaceChildren(wrap); return; }
+    const W = 640, HS = 110;
+    const sel = h("select", {});
+    eps.forEach((e, i) => sel.append(h("option", { value: i, text: `episode ${i + 1}: ${e.outcome} (offset ${e.offset_mm[0].toFixed(1)}, ${e.offset_mm[1].toFixed(1)} mm)` })));
+    const label = h("span", { style: "font:12px var(--mono);color:var(--muted)" });
+    const fc = h("canvas", { width: W, height: HS, style: "width:100%;max-width:640px;height:auto;display:block;margin-top:6px;border:1px solid var(--line);border-radius:6px" });
+    const ac = h("canvas", { width: W, height: HS, style: "width:100%;max-width:640px;height:auto;display:block;margin-top:6px;border:1px solid var(--line);border-radius:6px" });
+    wrap.append(h("div", { style: "margin:8px 0" }, sel), fc, ac, label);
+    const vg = window.LabVecGrid && window.LabVecGrid.panel(ctx);
+    let vgBox = null, obsG = null, gridEp = null;
+    if (vg) {
+      vgBox = h("div", { class: "vecgrids" });
+      wrap.append(vgBox, h("p", { class: "note", text:
+        "Grid: the force channels of the observation window the net reads at the video's current step (oldest row at the top; columns are Fx Fy Fz Tx Ty Tz, then max|F|, min Fz, max|T| over the control interval). "
+        + "All zero when the force input is blinded. Red negative, black zero, green positive; hover for values." }));
+    }
+    container.replaceChildren(wrap);
+    const fcg = fc.getContext("2d"), acg = ac.getContext("2d");
+    let ep = eps[0], epIdx = 0, step = 0;
+    const starts = [];
+    { let acc = 0; for (const e of eps) { starts.push(acc); acc += VID_CARD + e.force.length + 1 + VID_HOLD; } }
+    const fps = num(r.fps) || 20;
+    function strip(g, series, names, cols, lim, title) {
+      const last = ep.force.length - 1;
+      g.fillStyle = css("--panel", "#fff"); g.fillRect(0, 0, W, HS);
+      const tx = (i) => (i / Math.max(1, last)) * (W - 2) + 1, y = (v) => HS / 2 - (v / lim) * (HS / 2 - 8);
+      g.strokeStyle = css("--line", "#e2e4e9"); g.lineWidth = 1;
+      g.beginPath(); g.moveTo(0, y(0)); g.lineTo(W, y(0)); g.stroke();
+      series.forEach((k, j) => {
+        g.beginPath();
+        ep.force.forEach((_, i) => { const v = k(i); i ? g.lineTo(tx(i), y(Math.max(-lim, Math.min(lim, v)))) : g.moveTo(tx(i), y(Math.max(-lim, Math.min(lim, v)))); });
+        g.strokeStyle = cols[j]; g.lineWidth = 1.3; g.stroke();
+        g.fillStyle = cols[j]; g.font = "10px monospace"; g.fillText(names[j], 4 + 34 * j, 11);
+      });
+      g.fillStyle = css("--muted", "#6b7280"); g.fillText(`${title} (±${lim})`, W - 150, 11);
+      g.strokeStyle = css("--ink", "#1f2430");
+      g.beginPath(); g.moveTo(tx(step), 0); g.lineTo(tx(step), HS); g.stroke();
+    }
+    function draw() {
+      step = Math.max(0, Math.min(step, ep.force.length - 1));
+      const c = [css("--warn", "#b7791f"), css("--good", "#1a7f4b"), css("--accent", "#2f6fed"), css("--ink", "#1f2430")];
+      const fl = ep.force.map((f) => Math.hypot(f[0], f[1], f[2]));
+      const fl0 = Math.max(10, ...fl) * 1.1;
+      strip(fcg, [(i) => ep.force[i][0], (i) => ep.force[i][1], (i) => ep.force[i][2], (i) => fl[i]], ["Fx", "Fy", "Fz", "|F|"], c, Math.min(VID_FABORT, Math.ceil(fl0)), "force N");
+      strip(acg, [(i) => ep.act[i][0], (i) => ep.act[i][1], (i) => ep.act[i][2]], ["dx", "dy", "dz"], c, 5, "action mm");
+      const f = ep.force[step];
+      label.textContent = `${ep.outcome} · step ${step + 1}/${ep.force.length} · F = (${f[0].toFixed(1)}, ${f[1].toFixed(1)}, ${f[2].toFixed(1)}) N · peak ${ep.peak_F_N} N · recoveries ${ep.recoveries}`;
+      if (vgBox && Array.isArray(ep.obs_force)) {
+        const Hn = num(r.H) || 10, blind = !!r.force_zeroed, win = [];
+        for (let i = step - Hn + 1; i <= step; i++) win.push(blind ? ep.obs_force[0].map(() => 0) : ep.obs_force[Math.max(0, i)]);
+        if (gridEp !== ep) {
+          vgBox.replaceChildren();
+          obsG = window.LabVecGrid.render(vgBox, win, { title: blind ? "force obs window (blinded: zeros)" : `force obs window ${Hn}x9`, vmax: 10,
+            labels: win.flatMap(() => ["Fx", "Fy", "Fz", "Tx", "Ty", "Tz", "max|F|", "min Fz", "max|T|"]), cols: 9 });
+          gridEp = ep;
+        }
+        obsG.update(win);
+      }
+    }
+    if (hasVideo) {
+      vid.addEventListener("timeupdate", () => {
+        // follow the video: pick the episode whose frame range holds the current frame, then its step
+        const f = Math.round(vid.currentTime * fps);
+        let k = starts.length - 1;
+        while (k > 0 && f < starts[k]) k--;
+        if (k !== epIdx) { epIdx = k; ep = eps[k]; sel.value = String(k); }
+        step = f - starts[k] - VID_CARD - 1;
+        draw();
+      });
+    }
+    sel.addEventListener("change", () => {
+      epIdx = Number(sel.value); ep = eps[epIdx]; step = 0;
+      if (hasVideo) vid.currentTime = (starts[epIdx] + VID_CARD) / fps;
+      draw();
+    });
+    draw();
+  }
+
   window.LabViewers = { register: (name, fn) => { registry[name] = fn; }, render, jsonFallback };
   window.LabViewers.register("t1scatter", t1scatter);
   window.LabViewers.register("traj2d", traj2d);
@@ -552,4 +668,5 @@
   window.LabViewers.register("flow", flow);
   window.LabViewers.register("contact2d", contact2d);
   window.LabViewers.register("embeddings", embeddings);
+  window.LabViewers.register("video", video);
 })();
