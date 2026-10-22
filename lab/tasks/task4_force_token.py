@@ -194,12 +194,13 @@ def _card(lines: list[str]) -> np.ndarray:
     return img
 
 
-def _strip(fmag: list[float], fz: list[float]) -> np.ndarray:
-    """|F| (dark) and Fz (blue) against time; fixed axes -10..30 N over the 8 s horizon."""
+def _strip(
+    fmag: list[float], fz: list[float], lo: float = -10.0, hi: float = 30.0, tmax: int = 160
+) -> np.ndarray:
+    """|F| (dark) and Fz (blue) against time; fixed axes (default -10..30 N over 8 s)."""
     import cv2
 
     img = np.full((SH, VW, 3), 255, np.uint8)
-    lo, hi, tmax = -10.0, 30.0, 160
 
     def pt(i, v):
         return int(i / tmax * (VW - 1)), int(

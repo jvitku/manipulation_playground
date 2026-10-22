@@ -4,5 +4,6 @@
   "flow-bc": {"steps_per_s": 224.0, "collect_s_per_ep": 0.002, "overhead_s": 1.5, "eval_s": 0.2},
   "embeddings": {"steps_per_s": 241.0, "collect_s_per_ep": 0.002, "overhead_s": 1.5, "eval_s": 0.2},
   "force-token": {"collect_s_per_ep": 0.21, "s_per_epoch": 0.92, "mlp_factor": 0.3, "overhead_s": 4.5},
+  "td3": {"steps_per_s": 70.0, "eval_s": 5.0, "overhead_s": 5.0},
   "ta-vla": {"steps_per_s": 74.0, "collect_s_per_ep": 0.002, "overhead_s": 2.0, "eval_s": 1.0, "d64_speedup": 1.0}
 }

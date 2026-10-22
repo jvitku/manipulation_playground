@@ -1,0 +1,117 @@
+<h3>The task</h3>
+<p>The same Panda arm hidden-hole insertion as the repo's Stage&nbsp;1 behaviour cloning, but now with <b>no expert and no labels</b>. The agent
+sees the last 4 steps of a 20-number observation (tip position and velocity relative to the start, the wrist force/torque, the last action),
+moves the peg tip by at most &plusmn;1&nbsp;mm in x, y and &plusmn;3&nbsp;mm in z per step, and gets a <b>reward</b>. The hole is shifted by a random
+&sigma;&nbsp;=&nbsp;1.5&nbsp;mm and the policy is never told where.</p>
+<p>The reward may look at the true hole (the policy never does): depth progress in mm, a <b>potential-based shaping</b> term that rewards
+getting closer to the hole in xy (it provably does not change the optimal policy), minus a time cost every step, minus a force penalty above
+20&nbsp;N, <b>+50</b> for success and <b>&minus;20</b> for a 60&nbsp;N abort, all times 0.1. Timeouts are not terminal: the critic still bootstraps through them.
+The first steps of a run are uniformly random actions; after that the actor acts with Gaussian exploration noise, one gradient update per
+environment step.</p>
+
+<h3>The method: TD3</h3>
+<svg viewBox="0 0 780 330" role="img" aria-label="TD3: replay buffer feeds twin critics and an actor; target networks give the TD target; critic loss and actor loss nodes; delayed actor update and soft target update" style="width:100%;max-width:780px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="tdA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+    <marker id="tdL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--loss)"/></marker>
+    <marker id="tdG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+  </defs>
+  <!-- replay buffer -->
+  <rect x="8" y="120" width="104" height="60" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="60" y="142" text-anchor="middle" fill="var(--ink)">replay buffer</text>
+  <text x="60" y="158" text-anchor="middle" fill="var(--muted)">(o, a, r, o&#8242;, d)</text>
+  <text x="60" y="172" text-anchor="middle" fill="var(--muted)">batch of 256</text>
+  <!-- online nets -->
+  <rect x="170" y="24" width="150" height="56" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <text x="245" y="46" text-anchor="middle" fill="var(--ink)" font-weight="700">actor &pi;(o)</text>
+  <text x="245" y="62" text-anchor="middle" fill="var(--muted)">256&times;256 MLP, tanh</text>
+  <rect x="170" y="130" width="150" height="70" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <text x="245" y="152" text-anchor="middle" fill="var(--ink)" font-weight="700">twin critics</text>
+  <text x="245" y="170" text-anchor="middle" fill="var(--muted)">Q1(o, a)   Q2(o, a)</text>
+  <text x="245" y="186" text-anchor="middle" fill="var(--muted)">two independent heads</text>
+  <!-- target nets -->
+  <rect x="170" y="250" width="150" height="56" rx="9" fill="var(--chip)" stroke="var(--line)" stroke-dasharray="4 3"/>
+  <text x="245" y="272" text-anchor="middle" fill="var(--ink)">target actor &pi;&#8242;, critics Q1&#8242;, Q2&#8242;</text>
+  <text x="245" y="290" text-anchor="middle" fill="var(--muted)">slow copies (&tau; = 0.005)</text>
+  <!-- y node -->
+  <rect x="400" y="250" width="170" height="56" rx="14" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="485" y="272" text-anchor="middle" fill="var(--ink)">TD target y</text>
+  <text x="485" y="290" text-anchor="middle" fill="var(--muted)">r + &gamma;(1&minus;d) min(Q1&#8242;, Q2&#8242;)</text>
+  <!-- critic loss -->
+  <rect x="470" y="140" width="150" height="50" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <text x="545" y="161" text-anchor="middle" fill="var(--loss)" font-weight="700">critic loss</text>
+  <text x="545" y="177" text-anchor="middle" fill="var(--muted)">(Q1&minus;y)&sup2; + (Q2&minus;y)&sup2;</text>
+  <!-- actor loss -->
+  <rect x="470" y="30" width="150" height="50" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <text x="545" y="51" text-anchor="middle" fill="var(--loss)" font-weight="700">actor loss</text>
+  <text x="545" y="67" text-anchor="middle" fill="var(--muted)">&minus; mean Q1(o, &pi;(o))</text>
+  <!-- arrows -->
+  <line x1="112" y1="150" x2="168" y2="165" stroke="var(--muted)" marker-end="url(#tdA)"/>
+  <line x1="112" y1="140" x2="168" y2="62" stroke="var(--muted)" marker-end="url(#tdA)"/>
+  <line x1="112" y1="170" x2="168" y2="270" stroke="var(--muted)" marker-end="url(#tdA)"/>
+  <line x1="320" y1="278" x2="398" y2="278" stroke="var(--muted)" marker-end="url(#tdA)"/>
+  <line x1="485" y1="250" x2="530" y2="192" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#tdL)"/>
+  <line x1="320" y1="165" x2="468" y2="165" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#tdL)"/>
+  <line x1="320" y1="52" x2="468" y2="55" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#tdL)"/>
+  <line x1="320" y1="140" x2="468" y2="72" stroke="var(--loss)" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#tdL)"/>
+  <!-- update arrows -->
+  <path d="M470 55 H440 V44 H322" fill="none" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#tdG)"/>
+  <text x="440" y="22" text-anchor="middle" fill="var(--accent)">every 2nd step</text>
+  <path d="M245 200 V248" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#tdG)"/>
+  <text x="256" y="228" fill="var(--accent)">soft copy</text>
+  <text x="680" y="150" text-anchor="middle" fill="var(--muted)">target-policy smoothing:</text>
+  <text x="680" y="166" text-anchor="middle" fill="var(--muted)">a&#8242; = clip(&pi;&#8242;(o&#8242;) + clip(&epsilon;, &plusmn;0.5), &plusmn;1)</text>
+  <text x="680" y="182" text-anchor="middle" fill="var(--muted)">&epsilon; ~ N(0, 0.2&sup2;)</text>
+</svg>
+<p class="ref">Red = where a loss is computed; blue = how a network is updated. The three tricks that make it TD3 are all in the target: the minimum
+over <em>two</em> critics, noise on the target action, and the actor and target networks moving slowly.</p>
+
+<h3>Where each loss is computed</h3>
+<p>For a batch of transitions \((o, a, r, o', d)\) (\(d=1\) only for a real terminal, not a timeout), the target action carries clipped noise and the
+target is the <em>smaller</em> of the two target critics:</p>
+<p>$$a' = \operatorname{clip}\!\big(\pi'(o') + \operatorname{clip}(\epsilon,-0.5,0.5),\,-1,\,1\big),\quad \epsilon\sim\mathcal N(0,0.2^2)$$</p>
+<p>$$y = r + \gamma\,(1-d)\,\min\big(Q_1'(o',a'),\,Q_2'(o',a')\big)$$</p>
+<p>$$L_{\text{critic}} = \big(Q_1(o,a)-y\big)^2 + \big(Q_2(o,a)-y\big)^2$$</p>
+<p class="ref">&gamma; = 0.99. Both heads regress to the same \(y\); taking the minimum fights the over-estimation a single critic suffers when the actor
+climbs its errors. This is the <code>critic_loss</code> chart; <code>q1_mean</code> and <code>target_mean</code> are the batch means of \(Q_1\) and \(y\).</p>
+<p>Every <b>second</b> critic step the actor is updated, using the first critic only, and then both target networks are blended toward the online ones:</p>
+<p>$$L_{\text{actor}} = -\,\tfrac1B\sum_b Q_1\big(o_b,\pi(o_b)\big),\qquad \theta'\leftarrow(1-\tau)\,\theta'+\tau\,\theta,\ \ \tau=0.005$$</p>
+<p class="ref">The delay lets the critic settle before the actor chases it. The actor has no label at all: its only teacher is the gradient of the critic with respect to the action.</p>
+
+<h3>The story: a seed lottery</h3>
+<p>The repo ran this exact setup (150k steps, five seeds per condition, best checkpoint, 50 unseen holes; README.md, &ldquo;Reinforcement learning&rdquo;):</p>
+<table class="out">
+<tr><th>seed</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>mean</th></tr>
+<tr><td>with F/T</td><td>9/50</td><td>6/50</td><td>0/50</td><td><b>49/50</b></td><td>0/50</td><td>25.6&nbsp;%</td></tr>
+<tr><td>without F/T</td><td>4/50</td><td>9/50</td><td>1/50</td><td>0/50</td><td>8/50</td><td>8.8&nbsp;%</td></tr>
+</table>
+<p>The same algorithm, the same code, only the random seed differs, and one run solves the task (every hole over 1&nbsp;mm away inserted, in a
+median of 31 steps against the scripted expert&rsquo;s ~114) while four others do not. The failed runs get stuck in local optima: diving fast into the
+60&nbsp;N abort, or hovering until the timeout. Convergence is <b>bimodal</b>: a run either finds the insertion behaviour or it never does, and no
+average over a few seeds describes it. That is the honest verdict of the repo too: force/torque is what makes the task learnable, but at this budget
+TD3 finds it in only 1 of 5 seeds, and behaviour cloning from the expert is far more reliable.</p>
+<p><b>A single run here can look like either mode.</b> Run seed&nbsp;3 with force and you may think TD3 is easy; run seed&nbsp;2 and you may think
+it is broken. Neither conclusion is justified by one seed. To compare two settings you need several seeds each, which is hours of simulation.</p>
+
+<h3>What to watch</h3>
+<ul>
+<li><b>A rising reward is not success.</b> The reward includes depth progress and shaping, so a policy can collect a lot of it by hovering just above
+the hole or by diving to the abort. The <em>Success rate</em> chart (eval on held-out holes, and the share of the last 50 training episodes) is the
+score; the reward curve is a hint.</li>
+<li><b>Bimodal convergence.</b> Success sits near zero for a long time and then, in a lucky run, jumps. A flat success curve at 100k steps is
+what 4 of the repo&rsquo;s 5 seeds looked like.</li>
+<li><b>Q estimate vs target.</b> <code>q1_mean</code> and <code>target_mean</code> should move together. If \(Q_1\) runs far above the targets, the actor
+is exploiting critic errors (over-estimation); if both explode, the critic has diverged and the reward curve will soon follow. A <code>critic_loss</code>
+that grows steadily, rather than spiking and falling back, says the same.</li>
+<li><b>Actor loss</b> is &minus;Q, so it falls as Q rises. It tells you about the critic&rsquo;s scale, not about how good the policy is.</li>
+</ul>
+
+<h3>Knobs</h3>
+<ul>
+<li><b>Environment steps</b>: 20k&ndash;300k, default 100k. This is the cost: the simulation, not the networks, is the bottleneck, so the estimate shown before the run is
+long. Pause keeps the replay buffer (it lives in memory); Stop saves a checkpoint and ends the run.</li>
+<li><b>Seed</b>: the lottery ticket. <b>Exploration noise</b> (0.2), <b>force penalty</b>, <b>time cost</b>, <b>hole-shaping weight</b> change the reward and the search.</li>
+<li><b>Feed the force channels</b>: off = the zeroed twin, trained blind. <b>Evaluate every</b>: a held-out evaluation (20 holes) and a checkpoint at each; the best by
+eval success and the latest are kept.</li>
+<li>Evaluation: unseen holes, hole-offset &sigma;, <em>Zero the force input</em> (blinds a force-trained actor after the fact), episodes to render, eval seed.</li>
+</ul>

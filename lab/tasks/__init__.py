@@ -10,5 +10,6 @@ from lab.tasks import (
     task3_flow_bc,  # noqa: F401
     task4_force_token,  # noqa: F401
     task5_tavla,  # noqa: F401
+    task6_td3,  # noqa: F401
     task_embed,  # noqa: F401
 )
