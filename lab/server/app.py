@@ -247,7 +247,7 @@ def create_app() -> FastAPI:
         f = WEB / "index.html"
         if not f.is_file():
             raise HTTPException(404, "index.html not built yet")
-        return FileResponse(f)
+        return FileResponse(f, headers={"Cache-Control": "no-cache"})
 
     if WEB.is_dir():
         (WEB / "lessons").mkdir(exist_ok=True)

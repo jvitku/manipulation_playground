@@ -346,7 +346,8 @@
       stats.append(chip("95% CI", `${pct(result.wilson95[0])} – ${pct(result.wilson95[1])}`));
     }
     if (result && result.force_zeroed) {
-      stats.append(chip("force input", result.trained_with_force === false ? "zeroed (trained without force)" : "blinded at eval (trained with force)"));
+      const twf = result.trained_with_force; // absent in results written before the field existed
+      stats.append(chip("force input", twf === false ? "zeroed (trained without force)" : twf === true ? "blinded at eval (trained with force)" : "zeroed"));
     }
     wrap.append(stats);
     if (!eps.length) {

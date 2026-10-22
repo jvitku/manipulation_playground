@@ -52,5 +52,6 @@ def test_task1_spec_points_at_lesson(client):
 
 
 def test_static_and_lessons_revalidate(client):
+    assert client.get("/").headers["cache-control"] == "no-cache"
     assert client.get("/static/app.js").headers["cache-control"] == "no-cache"
     assert client.get("/lessons/flow-bc.html").headers["cache-control"] == "no-cache"
