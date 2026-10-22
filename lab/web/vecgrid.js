@@ -4,6 +4,7 @@
  *     values: flat array, or array of rows (rows = grid rows, cols = row length)
  *     opts:   {cols, labels[], title, vmax, cell}   vmax default = max|v| (>= 1e-6)
  *     hover shows "[index] value" (or "[row,col]" for array-of-rows).
+ *   the returned wrapper has .update(values) to redraw in place (keeps hover listeners; use it per animation frame).
  *   LabVecGrid.panel(ctx) -> {el, add(title, values, opts), clear(), enabled} or null when the task's
  *     toggle is off (viewers: `const p = LabVecGrid.panel(ctx); if (p) {...}`). Append p.el yourself.
  *   LabVecGrid.enabled(taskId) / setEnabled(taskId, bool): per-task toggle, localStorage
@@ -20,13 +21,20 @@
     const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     return v || fb;
   }
+  let conv = null, palCache = null, palAt = 0;
   function rgb(c) {
-    const d = document.createElement("canvas").getContext("2d");
+    const d = conv || (conv = document.createElement("canvas").getContext("2d", { willReadFrequently: true }));
     d.fillStyle = "#000"; d.fillStyle = c; d.fillRect(0, 0, 1, 1);
     const p = d.getImageData(0, 0, 1, 1).data;
     return [p[0], p[1], p[2]];
   }
-  function palette() {
+  function palette() { // cached ~1 s: theme changes show up on the next repaint after that
+    const now = Date.now();
+    if (palCache && now - palAt < 1000) return palCache;
+    palAt = now;
+    return (palCache = paletteNow());
+  }
+  function paletteNow() {
     return [rgb(tok("--vec-neg", "#d33")), rgb(tok("--vec-zero", "#101114")), rgb(tok("--vec-pos", "#2a4"))];
   }
   function color(pal, v, vmax) {
@@ -36,38 +44,51 @@
 
   function render(container, values, opts) {
     opts = opts || {};
-    const rows2d = Array.isArray(values) && values.length && Array.isArray(values[0]);
-    const flat = rows2d ? values.flat() : Array.from(values || []);
-    const cols = rows2d ? values[0].length : Math.max(1, opts.cols || Math.ceil(Math.sqrt(flat.length)));
-    const nrows = Math.ceil(flat.length / cols);
-    const cell = opts.cell || Math.max(10, Math.min(22, Math.floor(260 / cols)));
-    let vmax = opts.vmax;
-    if (!(vmax > 0)) vmax = Math.max(1e-6, ...flat.map((v) => Math.abs(v)).filter(Number.isFinite));
     const wrap = document.createElement("div");
     wrap.className = "vecgrid";
     if (opts.title) { const t = document.createElement("div"); t.className = "vg-title"; t.textContent = opts.title; wrap.append(t); }
     const cv = document.createElement("canvas");
-    cv.width = cols * cell; cv.height = nrows * cell;
-    const g = cv.getContext("2d"), pal = palette();
-    flat.forEach((v, i) => {
-      g.fillStyle = Number.isFinite(v) ? color(pal, v, vmax) : tok("--line", "#888");
-      g.fillRect((i % cols) * cell, Math.floor(i / cols) * cell, cell - 1, cell - 1);
-    });
     const tip = document.createElement("div");
     tip.className = "vg-tip";
-    tip.textContent = `±${vmax.toPrecision(3)} full scale`;
+    wrap.append(cv, tip);
+    const g = cv.getContext("2d");
+    let flat = [], cols = 1, rows2d = false, cell = 10, vmax = 1;
+    const idle = () => `±${vmax.toPrecision(3)} full scale`;
+
+    // (re)draw the cells in place; the canvas and its listeners stay mounted
+    function update(vals, vm) {
+      rows2d = Array.isArray(vals) && vals.length > 0 && Array.isArray(vals[0]);
+      flat = rows2d ? vals.flat() : Array.from(vals || []);
+      cols = rows2d ? vals[0].length : Math.max(1, opts.cols || Math.ceil(Math.sqrt(flat.length)));
+      const nrows = Math.ceil(flat.length / cols);
+      cell = opts.cell || Math.max(10, Math.min(22, Math.floor(260 / cols)));
+      vmax = vm != null ? vm : opts.vmax;
+      if (!(Number.isFinite(vmax) && vmax > 0)) {
+        vmax = Math.max(1e-6, ...flat.filter((v) => Number.isFinite(v)).map((v) => Math.abs(v)));
+      }
+      if (cv.width !== cols * cell || cv.height !== nrows * cell) { cv.width = cols * cell; cv.height = nrows * cell; }
+      else g.clearRect(0, 0, cv.width, cv.height);
+      const pal = palette(), na = tok("--line", "#888");
+      flat.forEach((v, i) => {
+        g.fillStyle = Number.isFinite(v) ? color(pal, v, vmax) : na;
+        g.fillRect((i % cols) * cell, Math.floor(i / cols) * cell, cell - 1, cell - 1);
+      });
+      if (!tip.dataset.hover) tip.textContent = idle();
+    }
     cv.addEventListener("mousemove", (ev) => {
       const r = cv.getBoundingClientRect(), sx = cv.width / r.width;
       const c = Math.floor(((ev.clientX - r.left) * sx) / cell), rw = Math.floor(((ev.clientY - r.top) * sx) / cell), i = rw * cols + c;
       if (c >= 0 && c < cols && i < flat.length) {
         const lab = opts.labels && opts.labels[i] != null ? opts.labels[i] : (rows2d ? `[${rw},${c}]` : `[${i}]`);
-        tip.textContent = `${lab} = ${Number(flat[i]).toFixed(4)}`;
+        tip.dataset.hover = "1";
+        tip.textContent = Number.isFinite(flat[i]) ? `${lab} = ${Number(flat[i]).toFixed(4)}` : `${lab} = n/a`;
       }
     });
-    cv.addEventListener("mouseleave", () => { tip.textContent = `±${vmax.toPrecision(3)} full scale`; });
-    wrap.append(cv, tip);
+    cv.addEventListener("mouseleave", () => { delete tip.dataset.hover; tip.textContent = idle(); });
+    update(values);
     if (container) container.append(wrap);
     wrap.canvas = cv;
+    wrap.update = update;
     return wrap;
   }
 

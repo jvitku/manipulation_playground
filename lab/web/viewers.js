@@ -378,22 +378,29 @@
       vgBox = h("div", { class: "vecgrids" });
       wrap.append(vgBox, h("p", { class: "note", text:
         "Grids: rows are time (oldest to newest), columns are (x, z). Force window = the last 10 force readings, "
-        + "the net's torque-history input (all zero when the force input is blinded). Actions = the last 10 actions "
-        + "applied, newest last. Red negative, black zero, green positive; hover for values." }));
+        + "the net's torque-history input (all zero when the force input is blinded). Actions = the previous 9 actions plus the "
+        + "one chosen at this step (newest last; grey = no action, the episode has ended). Red negative, black zero, green positive; hover for values." }));
     }
     container.replaceChildren(wrap);
+    let gridEp = null, forceG = null, actG = null;
     function drawGrids(e, st) {
       if (!vgBox) return;
-      vgBox.replaceChildren();
       const HW = 10, win = [];
       for (let i = st - HW + 1; i <= st; i++) win.push(i >= 0 ? e.force[Math.min(i, e.force.length - 1)] : [0, 0]);
       const blind = !!(result && result.force_zeroed);
-      window.LabVecGrid.render(vgBox, blind ? win.map(() => [0, 0]) : win,
-        { title: blind ? "force window (blinded: zeros)" : "force window 10x2 (N)", vmax: C2_FABORT });
-      if (Array.isArray(e.act) && e.act.length) {
+      const hasAct = Array.isArray(e.act) && e.act.length > 0;
+      if (gridEp !== e) { // (re)build only when the episode changes; per frame we update in place
+        vgBox.replaceChildren();
+        forceG = window.LabVecGrid.render(vgBox, win, { title: blind ? "force window (blinded: zeros)" : "force window 10x2 (N)", vmax: C2_FABORT });
+        actG = hasAct ? window.LabVecGrid.render(vgBox, [[0, 0]], { title: "actions 10x2 (ax, az): previous 9 + chosen now", vmax: 1 }) : null;
+        gridEp = e;
+      }
+      forceG.update(blind ? win.map(() => [0, 0]) : win);
+      if (actG) {
         const acts = [];
-        for (let i = st - HW + 1; i <= st; i++) acts.push(i >= 0 && i < e.act.length ? e.act[i] : [0, 0]);
-        window.LabVecGrid.render(vgBox, acts, { title: "actions 10x2 (ax, az)", vmax: 1 });
+        // act[i] is chosen at step i (moves pos[i] -> pos[i+1]); beyond the last step it does not exist -> n/a
+        for (let i = st - HW + 1; i <= st; i++) acts.push(i < 0 ? [NaN, NaN] : i < e.act.length ? e.act[i] : [NaN, NaN]);
+        actG.update(acts);
       }
     }
     const g = canvas.getContext("2d"), gs = strip.getContext("2d");
