@@ -90,6 +90,47 @@ def test_estimate_label(client):
     assert r["label"] == "~2 min"
     r = client.post("/api/tasks/dummy/estimate", json={"params": {"steps": 250}}).json()
     assert "long run" in r["label"]
+    r = client.post("/api/tasks/dummy/estimate", json={"params": {"steps": 1}}).json()
+    assert r["label"] == "~14 s"  # below a minute: seconds
+    r = client.post("/api/tasks/dummy/estimate", json={"params": {"steps": 3}}).json()
+    assert r["label"] == "~42 s"
+
+
+def test_list_has_est_label_and_last_state(client):
+    row = next(t for t in client.get("/api/tasks").json() if t["id"] == "dummy")
+    assert row["est_label"] == "~1 min"  # 5 steps * 14 s = 70 s
+    assert row["last_state"] is None
+    rid = _start(client, steps=3)
+    _wait(client, f"/api/runs/dummy/{rid}")
+    row = next(t for t in client.get("/api/tasks").json() if t["id"] == "dummy")
+    assert row["last_state"] == "done" and not row["running"]
+
+
+def test_favicon(client):
+    for path in ("/favicon.ico", "/favicon.svg"):
+        r = client.get(path)
+        assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg+xml")
+    assert "favicon.svg" in client.get("/").text
+
+
+def test_reference_ckpts_allowlist(client, tmp_path, monkeypatch):
+    from lab.server import app as appmod
+    from lab.tasks import registry
+
+    (tmp_path / "ref.pt").write_bytes(b"x")
+    spec = registry.get("dummy")
+    monkeypatch.setattr(appmod, "REPO", tmp_path)
+    monkeypatch.setattr(
+        spec, "reference_ckpts", {"a": ("ref.pt", "reference (test)"), "b": ("nope.pt", "x")}
+    )
+    cks = client.get("/api/tasks/dummy").json()["checkpoints"]
+    assert [c["id"] for c in cks] == ["reference/a"] and cks[0][
+        "reference"
+    ]  # missing file not listed
+    assert appmod._resolve_ckpt("dummy", "reference/a") == (tmp_path / "ref.pt").resolve()
+    for bad in ("reference/b", "reference/../ref.pt", "reference/..", "reference/zzz"):
+        r = client.post("/api/tasks/dummy/evals", json={"ckpt": bad})
+        assert r.status_code == 404, bad
 
 
 def test_eval_roundtrip(client):

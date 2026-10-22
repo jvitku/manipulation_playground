@@ -28,6 +28,13 @@ class RevalidatingStaticFiles(StaticFiles):
 
 
 WEB = Path(__file__).resolve().parents[1] / "web"
+REPO = Path(__file__).resolve().parents[2]
+REF_RUN = "reference"  # pseudo run id of allowlisted reference checkpoints ("reference/<name>")
+FAVICON = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" '
+    'rx="7" fill="#2f6fed"/><path d="M8 23V9l8 9 8-9v14" fill="none" stroke="#fff" '
+    'stroke-width="3" stroke-linejoin="round"/></svg>'
+)
 SAFE = re.compile(r"^[A-Za-z0-9._-]+$")
 ACTIVE = ("pending", "queued", "running", "paused")
 # Estimate label thresholds: >= 45 min is a long run, >= 1.5 h an overnight job.
@@ -39,7 +46,9 @@ def data_root() -> Path:
 
 
 def estimate_label(seconds: float) -> str:
-    if seconds < 90 * 60:
+    if seconds < 60:
+        label = f"~{max(1, round(seconds))} s"
+    elif seconds < 90 * 60:
         label = f"~{max(1, round(seconds / 60))} min"
     else:
         label = f"~{seconds / 3600:.1f} h"
@@ -66,6 +75,12 @@ def _spec(task_id: str):
 def _resolve_ckpt(task_id: str, ckpt_id: str) -> Path:
     """Checkpoint id "<run_id>/<file>" of `task_id` -> its file; 404 if unsafe/missing/foreign."""
     run_id, _, fname = str(ckpt_id or "").partition("/")
+    if run_id == REF_RUN:  # allowlist of the task spec, never a client-supplied path
+        ref = registry.get(_safe(task_id)).reference_ckpts.get(fname)
+        f = (REPO / ref[0]) if ref else None
+        if f is None or not f.is_file():
+            raise HTTPException(404, "checkpoint not found")
+        return f.resolve()
     try:
         _safe(task_id)
         _safe(run_id)
@@ -77,6 +92,12 @@ def _resolve_ckpt(task_id: str, ckpt_id: str) -> Path:
     if not ckpt.is_relative_to(runs_dir) or not ckpt.is_file():
         raise HTTPException(404, "checkpoint not found")
     return ckpt
+
+
+def _newest_state(task_id: str) -> str | None:
+    for d in _job_dirs("runs", task_id)[:1]:
+        return jobs.read_status(d).get("state")
+    return None
 
 
 def _params_dicts(params) -> list[dict]:
@@ -134,6 +155,10 @@ def create_app() -> FastAPI:
     def list_tasks():
         return [
             {
+                "est_label": estimate_label(
+                    float(s.estimate(registry.validate_params(s, {}, which="train")))
+                ),
+                "last_state": _newest_state(s.id),
                 "id": s.id,
                 "order": s.order,
                 "title": s.title,
@@ -173,12 +198,19 @@ def create_app() -> FastAPI:
                         "created": c.get("created"),
                     }
                 )
+        for name, (path, label) in s.reference_ckpts.items():
+            if (REPO / path).is_file():
+                ref = {"id": f"{REF_RUN}/{name}", "run_id": REF_RUN, "label": label}
+                ckpts.append(
+                    {**ref, "step": None, "metrics": None, "created": None, "reference": True}
+                )
         return {
             "spec": {
                 "params": _params_dicts(s.params),
                 "eval_params": _params_dicts(s.eval_params),
                 "charts": s.charts,
                 "viewer": s.viewer,
+                "vecgrids": s.vecgrids,
                 "lesson_url": f"/lessons/{s.lesson}",
             },
             "runs": runs,
@@ -255,6 +287,11 @@ def create_app() -> FastAPI:
         if not f.is_file():
             raise HTTPException(404, "not found")
         return FileResponse(f)
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    @app.get("/favicon.svg", include_in_schema=False)
+    def favicon():
+        return Response(FAVICON, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/gpu")
     def gpu():

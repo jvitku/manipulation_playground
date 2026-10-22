@@ -104,3 +104,6 @@ svg .arr{stroke:var(--muted);fill:none;marker-end:url(#ah)}
 .vecgrid canvas{display:block;border:1px solid var(--line);border-radius:4px;background:var(--vec-zero)}
 .vecgrid .vg-tip{font:11px var(--mono);color:var(--muted);margin-top:2px;min-height:15px}
 .vgtoggle{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-left:auto;cursor:pointer}
+.tcard .last{font-size:10.5px;color:var(--muted);grid-column:3}
+.tcard .last.done{color:var(--good)}
+.tcard .last.failed,.tcard .last.error{color:var(--bad,#b3261e)}

@@ -395,6 +395,7 @@ SPEC = TaskSpec(
           for k in range(4)],
     ],
     viewer="embeddings",
+    vecgrids=True,
     estimate=estimate,
     train=train,
     evaluate=evaluate,

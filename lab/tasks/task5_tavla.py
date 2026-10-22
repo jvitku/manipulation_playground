@@ -262,6 +262,7 @@ SPEC = TaskSpec(
          "log_y": False},
     ],
     viewer="tavla",
+    vecgrids=True,
     estimate=estimate,
     train=train,
     evaluate=evaluate,

@@ -1,7 +1,7 @@
 """Task spec dataclasses: tunable parameters and the per-task contract."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -42,3 +42,8 @@ class TaskSpec:
     evaluate: Callable
     lesson: str  # filename under lab/web/lessons/
     check: Callable | None = None  # cross-param check on typed train params; raises ValueError
+    # True when the task's result viewer draws vector grids (shows the "vector grids" toggle)
+    vecgrids: bool = False
+    # checkpoints that live outside lab/data: name -> (repo-relative path, label). Listed in the
+    # evaluate dropdown as id "reference/<name>"; only this allowlist is ever resolved.
+    reference_ckpts: dict[str, tuple[str, str]] = field(default_factory=dict)

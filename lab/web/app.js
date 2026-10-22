@@ -159,9 +159,10 @@
     const a = el("a", { class: "tcard" + (active ? " active" : ""), href: `#/task/${encodeURIComponent(t.id)}` },
       el("span", { class: "n", text: t.order }),
       el("span", { class: "t", text: t.title }),
-      el("span", { class: "min", text: t.minutes_label || "" }),
+      el("span", { class: "min", text: t.est_label || "", title: "nominal time at the default parameters" }),
       el("span", { class: "s", text: t.subtitle || "" }));
     if (t.running) a.append(el("span", { class: "run", text: "running" }));
+    else if (t.last_state) a.append(el("span", { class: "last " + t.last_state, text: "last: " + t.last_state }));
     return a;
   }
 
@@ -236,7 +237,7 @@
         window.LabVecGrid.setEnabled(taskId, vgBox.checked);
         if (lastShown) showResult(lastShown.result, lastShown.evalId);
       });
-      main.append(el("div", { class: "ctl" },
+      if (spec.vecgrids) main.append(el("div", { class: "ctl" },
         el("label", { class: "vgtoggle", title: "show vector values as colour grids in the result viewer (turn off if rendering is slow)" },
           vgBox, "vector grids")));
       let lastShown = null;
@@ -428,6 +429,7 @@
         const prev = ckptSel.value;
         ckptSel.replaceChildren();
         for (const c of detail.checkpoints || []) {
+          if (c.reference) { ckptSel.append(el("option", { value: c.id, text: c.label })); continue; }
           const m = c.metrics || {};
           const key = Object.keys(m).find((k) => typeof m[k] === "number");
           const head = key ? ` · ${key} ${Number(m[key]).toPrecision(3)}` : "";

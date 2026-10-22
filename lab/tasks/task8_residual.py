@@ -459,6 +459,7 @@ SPEC = TaskSpec(
          "series": [{"key": "delta_abs_ma", "label": "|delta|"}], "log_y": False},
     ],
     viewer="contact2d",
+    vecgrids=True,
     estimate=estimate,
     train=train,
     evaluate=evaluate,

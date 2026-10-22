@@ -438,6 +438,11 @@ SPEC = TaskSpec(
          "log_y": False},
     ],
     viewer="video",
+    vecgrids=True,
+    reference_ckpts={
+        "force": ("outputs/s1/force/best.pt", "reference (repo Stage 1) · force, best"),
+        "noforce": ("outputs/s1/noforce/best.pt", "reference (repo Stage 1) · no force, best"),
+    },
     estimate=estimate,
     train=train,
     evaluate=evaluate,
