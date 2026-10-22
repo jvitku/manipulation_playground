@@ -59,10 +59,49 @@ def test_start_job_spawns_detached(tmp_path):
     # unknown task -> subprocess fails fast; proves spawn, pid, log and failure path
     write_config(tmp_path, "no_such_task")
     pid = start_job("train", tmp_path)
-    assert pid > 0 and json.loads((tmp_path / "status.json").read_text())["pid"] == pid
+    assert pid > 0 and int((tmp_path / "job.pid").read_text()) == pid
     for _ in range(100):
         if read_status(tmp_path)["state"] == "failed":
             break
         time.sleep(0.1)
     assert read_status(tmp_path)["state"] == "failed"
     assert (tmp_path / "job.log").exists()
+
+
+def test_start_job_never_clobbers_child_state(tmp_path):
+    # child finishes (done) before/while the parent records its pid: terminal state must survive
+    def ok(ctx):
+        pass
+
+    registry.register(SimpleNamespace(id="ok", train=ok, evaluate=ok))
+    write_config(tmp_path, "ok")
+    run_job.main(["train", str(tmp_path)])
+    (tmp_path / "job.pid").write_text("12345")  # what a late parent write looks like
+    assert read_status(tmp_path)["state"] == "done"
+
+
+def test_pid_file_gives_liveness_before_child_writes_status(tmp_path):
+    (tmp_path / "status.json").write_text(json.dumps({"state": "running"}))
+    (tmp_path / "job.pid").write_text(str(2**22 + 12345))
+    assert read_status(tmp_path)["state"] == "failed"
+
+
+def test_atomic_write_concurrent_writers(tmp_path):
+    import threading
+
+    from lab.core.runctx import atomic_write_json
+
+    errs = []
+
+    def w(i):
+        try:
+            for _ in range(50):
+                atomic_write_json(tmp_path / "c.json", {"i": i})
+        except Exception as e:  # noqa: BLE001
+            errs.append(e)
+
+    ts = [threading.Thread(target=w, args=(i,)) for i in range(4)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errs and "i" in json.loads((tmp_path / "c.json").read_text())
+    assert [p.name for p in tmp_path.iterdir()] == ["c.json"]

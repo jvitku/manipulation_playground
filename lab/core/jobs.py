@@ -28,11 +28,9 @@ def start_job(kind: str, job_dir: Path) -> int:
             start_new_session=True,
             cwd=Path(__file__).resolve().parents[2],  # repo root, so `-m lab.run_job` resolves
         )
-    # The child also records its own pid; only fill it in if it has not got that far yet,
-    # so a fast-finishing child's terminal state is never clobbered.
-    status = read_status_raw(job_dir)
-    if "pid" not in status:
-        atomic_write_json(job_dir / "status.json", {**status, "pid": proc.pid})
+    # The pid goes to its own file: the parent never read-modify-writes status.json after the
+    # spawn, so it cannot clobber the child's state. read_status falls back to it for liveness.
+    atomic_write_json(job_dir / "job.pid", proc.pid)
     return proc.pid
 
 
@@ -57,11 +55,18 @@ def read_status_raw(job_dir: Path) -> dict:
         return {}
 
 
+def read_pid_file(job_dir: Path) -> int | None:
+    try:
+        return json.loads((Path(job_dir) / "job.pid").read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
 def read_status(job_dir: Path) -> dict:
     st = read_status_raw(job_dir)
     if not st:
         return {"state": "pending"}
-    pid = st.get("pid")
+    pid = st.get("pid") or read_pid_file(job_dir)
     if st.get("state") in ("running", "paused") and pid and not _alive(pid):
         return {**st, "state": "failed", "msg": f"process died (pid {pid}) without finishing"}
     return st

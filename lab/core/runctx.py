@@ -6,6 +6,7 @@ status.json and control.json are replaced atomically; metrics.jsonl is append-on
 
 import json
 import os
+import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,9 +15,14 @@ POLL_S = 0.5
 
 
 def atomic_write_json(path: Path, obj) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(obj))
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(obj, f)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def _now() -> str:
