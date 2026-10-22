@@ -1,0 +1,130 @@
+<h3>The task</h3>
+<p>A peg must be inserted into a hole in a surface, seen from the side (x right, z up). The hole is 1.2 cm wide, 6 cm
+deep, and sits at a random x in [-8, 8] cm; the policy is told only a <em>noisy estimate</em> of it (&sigma; = 3 cm
+by default), and the height of the surface (&plusmn;3 cm) is not told at all. The peg is driven by an
+<b>impedance controller</b>: the action (a in [-1, 1]&sup2;) moves a reference point by 1 cm per step, the peg follows the
+reference until the surface blocks it, and then the controller's spring presses with
+<code>F = k&middot;(pos &minus; ref)</code>, where the stiffness k (200&ndash;1000 N per unit) is drawn per episode and is unobservable
+without the force sensor. Push the reference deeper into the surface and the force rises; above <b>15 N</b> a protective
+stop aborts the episode. The hole is surrounded by a 45&deg; <b>chamfer</b> 1.2 cm wide, on which the reaction force tilts
+toward the hole: Fx tells which way to slide. The estimate is wrong by more than the chamfer catches (1.8 cm) in about half
+the episodes, so the peg must search by feel.</p>
+
+<h3>The data</h3>
+<p>A scripted expert: go above the estimate, descend until it feels contact, press lightly (3 N), slide along Fx on the
+chamfer, otherwise sweep a widening zig-zag across the surface, and push in once the peg drops. At the start of every
+run the demonstrations are <em>collected</em> (the <em>Demonstrations</em> knob), and only the <b>successful</b> episodes are
+kept for training; the run's status line says how many survived. Each observation has 22 numbers: the peg's position
+(x relative to the estimate, and z; 2 numbers) and the <b>last 10 force readings</b> (Fx, Fz each; 20 numbers). The force is
+noisy (sensor noise 0.05 N by default).</p>
+
+<h3>The method</h3>
+<p>The same flow-matching recipe as the previous task: the expert chunk is noised along a straight line,
+<code>x<sub>t</sub> = t&middot;e + (1 &minus; t)&middot;x<sub>0</sub></code>, and the net regresses the velocity,
+<code>L = &#8214; v &minus; (e &minus; x<sub>0</sub>) &#8214;&sup2;</code>; sampling integrates <code>K</code> Euler steps from noise.
+What is new is the input: contact. The policy plays the first <code>n_exec</code> actions of each sampled chunk and then
+re-plans from the freshest force history, so the force window is what lets it notice that the peg touched down, that it is
+sliding down a chamfer, or that it is pressing too hard.</p>
+<p><b>The zeroed twin.</b> <em>Feed the force history</em> off replaces the 20 force channels with zeros (training and
+evaluation), so the net still gets the position but is blind to contact. Compare the two runs at equal settings: that
+difference is the value of touch. At evaluation, <em>Zero the force input</em> blinds a force-trained net after the fact.</p>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 760 300" role="img" aria-label="MLPDenoiser with the 20-dimensional force history input highlighted and the flow loss node" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="fbA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--muted)"/>
+    </marker>
+    <marker id="fbL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--loss)"/>
+    </marker>
+    <marker id="fbG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--accent)"/>
+    </marker>
+  </defs>
+  <!-- inputs -->
+  <rect x="10" y="20" width="150" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="85" y="36" text-anchor="middle" fill="var(--ink)">noisy chunk x_t</text>
+  <text x="85" y="50" text-anchor="middle" fill="var(--muted)">(B, H, 2)</text>
+  <rect x="10" y="72" width="150" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="85" y="88" text-anchor="middle" fill="var(--ink)">state (x &minus; est, z)</text>
+  <text x="85" y="102" text-anchor="middle" fill="var(--muted)">(B, 2)</text>
+  <rect x="10" y="124" width="150" height="44" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <text x="85" y="141" text-anchor="middle" fill="var(--ink)" font-weight="700">force history</text>
+  <text x="85" y="156" text-anchor="middle" fill="var(--muted)">10 &times; (Fx, Fz) = (B, 20)</text>
+  <rect x="10" y="182" width="150" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="85" y="198" text-anchor="middle" fill="var(--ink)">time embed t</text>
+  <text x="85" y="212" text-anchor="middle" fill="var(--muted)">(B, 64)</text>
+  <!-- zeroed switch -->
+  <rect x="190" y="126" width="64" height="40" rx="6" fill="none" stroke="var(--accent)" stroke-dasharray="4 3"/>
+  <text x="222" y="143" text-anchor="middle" fill="var(--accent)">use_force</text>
+  <text x="222" y="157" text-anchor="middle" fill="var(--muted)">off &#8594; 0</text>
+  <line x1="160" y1="146" x2="188" y2="146" stroke="var(--accent)" marker-end="url(#fbG)"/>
+  <!-- concat -->
+  <line x1="160" y1="39" x2="296" y2="112" stroke="var(--muted)" marker-end="url(#fbA)"/>
+  <line x1="160" y1="91" x2="296" y2="120" stroke="var(--muted)" marker-end="url(#fbA)"/>
+  <line x1="254" y1="146" x2="296" y2="138" stroke="var(--accent)" stroke-width="2" marker-end="url(#fbG)"/>
+  <line x1="160" y1="201" x2="296" y2="150" stroke="var(--muted)" marker-end="url(#fbA)"/>
+  <rect x="298" y="104" width="62" height="52" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="329" y="127" text-anchor="middle" fill="var(--ink)">concat</text>
+  <text x="329" y="142" text-anchor="middle" fill="var(--muted)">obs = 22</text>
+  <!-- net -->
+  <line x1="360" y1="130" x2="396" y2="130" stroke="var(--muted)" marker-end="url(#fbA)"/>
+  <rect x="398" y="96" width="140" height="68" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="468" y="120" text-anchor="middle" fill="var(--ink)">MLPDenoiser</text>
+  <text x="468" y="136" text-anchor="middle" fill="var(--muted)">4 &times; Linear(512) + GELU</text>
+  <text x="468" y="150" text-anchor="middle" fill="var(--muted)">out: Linear(H&middot;2)</text>
+  <line x1="538" y1="130" x2="574" y2="130" stroke="var(--muted)" marker-end="url(#fbA)"/>
+  <rect x="576" y="111" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="621" y="127" text-anchor="middle" fill="var(--ink)">v (predicted</text>
+  <text x="621" y="141" text-anchor="middle" fill="var(--ink)">velocity)</text>
+  <!-- target -->
+  <rect x="576" y="206" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="621" y="222" text-anchor="middle" fill="var(--ink)">u = e &minus; x&#8320;</text>
+  <text x="621" y="236" text-anchor="middle" fill="var(--muted)">(target)</text>
+  <!-- loss -->
+  <line x1="666" y1="130" x2="696" y2="146" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#fbL)"/>
+  <line x1="621" y1="206" x2="705" y2="178" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#fbL)"/>
+  <rect x="680" y="148" width="72" height="30" rx="15" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <text x="716" y="167" text-anchor="middle" fill="var(--loss)" font-weight="700">L (loss)</text>
+  <text x="716" y="140" text-anchor="middle" fill="var(--loss)">&#8214;v &minus; u&#8214;&sup2;</text>
+  <text x="380" y="276" text-anchor="middle" fill="var(--muted)">closed loop: sample K Euler steps &#8594; play n_exec actions &#8594; read the new force history &#8594; repeat</text>
+</svg>
+<p class="ref">B = batch, H = action chunk. The highlighted block is the 20-dimensional force history; the dashed
+<code>use_force</code> switch is the zeroed twin. The loss node compares the net's velocity with the line's velocity, exactly as in the
+previous task.</p>
+
+<h3>What to watch: loss is health, closed-loop success is the metric</h3>
+<p>Two charts, and they disagree on purpose. The <b>flow loss</b> is an average over all noise levels, and most of that
+average is made of noisy levels that are impossible to get right, so the curve drops fast and then flattens early
+(this repo's <code>train.py</code> states it plainly: the loss of a generative head is a poor progress signal because it
+flattens early while closed-loop success keeps improving). So every <em>eval every</em> steps the run also rolls the current
+model out closed loop on 200 fresh scenes, and plots the <b>success</b>. Read the loss as a health check &mdash; it is falling,
+no NaN, train and val together &mdash; and the success curve as the score.</p>
+<p>The tutorial journal (docs/ta_tutorial/report_data.json, TAVLAMini with a force token, 400 demos, 3 seeds, lr 1e-3) shows
+both halves honestly. The loss falls from 0.185 at 500 steps to 0.130 at 3000 and then only creeps down (0.094 at 15k)
+while success goes 77% (1.5k) &rarr; 86% (3k) and then <em>stays</em> within noise at 85&ndash;87% to 15k: the late loss
+improvement bought nothing measurable. Neither curve alone could tell you that. With the force blanked, the same pipeline
+reaches only 59&ndash;65% and its loss ends higher (0.155) &mdash; but a loss of 0.155 does not say &ldquo;61% success&rdquo;, only the
+closed-loop run does. This task uses the plain MLPDenoiser, so expect the same shape but not the same numbers: measure, do not
+assume.</p>
+<p>The reference, from the tutorial (docs/ta_tutorial.md, 400 demos, 3 seeds): <b>force 86.7%</b> vs <b>zeroed 61.3%</b>;
+at 100 demos 80.7% vs 62.7%, at 1500 demos 85.3% vs 63.5%. The failures differ in kind: without force the policy fails mostly by
+<b>force abort</b> (74&ndash;80 of 200 episodes against 22&ndash;24 with force), because it cannot feel when the peg has touched
+down and keeps pushing. Compare the <em>force abort</em> curve in the success chart, and the outcome colours in the viewer:
+green success, red force abort, amber wrong hole, grey timeout. The strip chart under the side view shows the Fx/Fz the
+policy was reading; the dashed lines are the 15 N limit.</p>
+
+<h3>Knobs</h3>
+<ul>
+<li><b>Demonstrations</b>: expert episodes collected at run start; only successful ones are used. 100 already give most
+of the force benefit; more mainly raises the plateau slowly.</li>
+<li><b>Training steps</b> and <b>Closed-loop eval every N steps</b>: how long to train and how often to roll out the 200-scene
+evaluation (each one costs seconds, so a small interval slows the run).</li>
+<li><b>Learning rate</b>, <b>Batch size</b>: as before; 1e-3 is the tutorial's setting.</li>
+<li><b>Action chunk</b> / <b>Actions executed per chunk</b>: how far ahead the net plans and how many actions are played before
+the force history is read again (clamped to the chunk). Playing fewer keeps the policy reactive to contact.</li>
+<li><b>Feed the force history</b>: off = the zeroed twin (position only).</li>
+<li><b>Sampling steps K</b>: Euler steps per chunk; cost grows linearly. At evaluation: <em>Hole-estimate error</em> (how wrong the
+told hole position is), <em>Force sensor noise</em>, and <em>Zero the force input</em>.</li>
+</ul>

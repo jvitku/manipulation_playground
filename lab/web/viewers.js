@@ -327,6 +327,129 @@
     traj2d(result, d.lastChild, ctx);
   }
 
+  // ---- contact2d: peg-search side view with force arrow and Fx/Fz strip chart --------------
+  // Geometry mirrors src/fvb/ta_tutorial/contact2d.py: WH=0.006 (hole half-width), WC=0.012
+  // (chamfer width / depth), DEPTH=0.06 (hole depth below the chamfer bottom).
+  const C2_WH = 0.006, C2_WC = 0.012, C2_DEPTH = 0.06, C2_FABORT = 15.0;
+
+  function contact2d(result, container) {
+    const eps = Array.isArray(result && result.episodes)
+      ? result.episodes.filter((e) => e && Array.isArray(e.pos) && e.pos.length && Array.isArray(e.force)) : [];
+    const wrap = h("div", { class: "viewer-contact2d" });
+    const stats = h("div", { style: "margin-bottom:6px" });
+    stats.append(chip("success", pct(result && result.success)));
+    const counts = (result && result.counts) || {};
+    for (const o of ["force_abort", "wrong_hole", "timeout"]) {
+      if (num(counts[o]) != null && num(result.n_episodes)) stats.append(chip(o.replace("_", " "), pct(counts[o] / result.n_episodes)));
+    }
+    if (Array.isArray(result && result.wilson95) && result.wilson95.length === 2) {
+      stats.append(chip("95% CI", `${pct(result.wilson95[0])} – ${pct(result.wilson95[1])}`));
+    }
+    if (result && result.force_zeroed) stats.append(chip("force input", "zeroed"));
+    wrap.append(stats);
+    if (!eps.length) {
+      wrap.append(h("p", { style: "color:var(--muted)", text: "No episodes to animate in this result." }));
+      container.replaceChildren(wrap);
+      return;
+    }
+    const W = 480, HC = 300, HS = 100;
+    const X0 = -0.16, X1 = 0.16, Z0 = -0.12, Z1 = 0.15;
+    const px = (x) => ((x - X0) / (X1 - X0)) * W;
+    const pz = (z) => HC - ((z - Z0) / (Z1 - Z0)) * HC;
+    const outColor = (o) => (o === "success" ? css("--good", "#1a7f4b") : o === "force_abort" ? css("--bad", "#b3261e")
+      : o === "wrong_hole" ? css("--warn", "#b7791f") : css("--muted", "#6b7280"));
+    const canvas = h("canvas", { width: W, height: HC, style: "width:100%;max-width:480px;height:auto;display:block;border-radius:8px;border:3px solid var(--line)" });
+    const strip = h("canvas", { width: W, height: HS, style: "width:100%;max-width:480px;height:auto;display:block;margin-top:6px;border:1px solid var(--line);border-radius:6px" });
+    const sel = h("select", {});
+    eps.forEach((e, i) => sel.append(h("option", { value: i, text: `episode ${i + 1}: ${e.outcome}` })));
+    const btn = h("button", { type: "button", text: "Pause" });
+    const slider = h("input", { type: "range", min: 0, max: 1, value: 0, step: 1, style: "flex:1;min-width:120px" });
+    const label = h("span", { style: "font:12px var(--mono);color:var(--muted)" });
+    const row = h("div", { style: "display:flex;gap:10px;align-items:center;margin:8px 0;max-width:480px" }, sel, btn, slider);
+    wrap.append(row, canvas, strip, label);
+    container.replaceChildren(wrap);
+    const g = canvas.getContext("2d"), gs = strip.getContext("2d");
+    let ep = eps[0], step = 0, playing = true;
+
+    function surface(e) {
+      const z0 = e.z0, zf = z0 - C2_WC, zb = z0 - C2_WC - C2_DEPTH;
+      const pts = [[X0 - 0.05, z0]];
+      for (const hx of [...e.holes].sort((a, b) => a - b)) {
+        pts.push([hx - C2_WH - C2_WC, z0], [hx - C2_WH, zf], [hx - C2_WH, zb], [hx + C2_WH, zb], [hx + C2_WH, zf], [hx + C2_WH + C2_WC, z0]);
+      }
+      pts.push([X1 + 0.05, z0]);
+      return pts;
+    }
+    function draw() {
+      const last = ep.pos.length - 1;
+      step = Math.max(0, Math.min(step, last));
+      canvas.style.borderColor = outColor(ep.outcome);
+      g.fillStyle = css("--panel", "#fff");
+      g.fillRect(0, 0, W, HC);
+      const sp = surface(ep);
+      g.beginPath();
+      sp.forEach(([x, z], i) => (i ? g.lineTo(px(x), pz(z)) : g.moveTo(px(x), pz(z))));
+      g.lineTo(W, HC); g.lineTo(0, HC); g.closePath();
+      g.fillStyle = css("--chip", "#eceef2"); g.fill();
+      g.strokeStyle = css("--ink", "#1f2430"); g.lineWidth = 1.5; g.stroke();
+      // the policy's hole estimate (dashed) and the true target hole
+      g.setLineDash([4, 4]); g.strokeStyle = css("--muted", "#6b7280"); g.lineWidth = 1;
+      g.beginPath(); g.moveTo(px(ep.est), 0); g.lineTo(px(ep.est), HC * 0.25); g.stroke(); g.setLineDash([]);
+      g.fillStyle = css("--muted", "#6b7280"); g.font = "10px monospace";
+      g.fillText("estimate", px(ep.est) + 3, 12);
+      // trail, peg, force arrow
+      g.beginPath();
+      for (let i = 0; i <= step; i++) { const [x, z] = ep.pos[i]; i ? g.lineTo(px(x), pz(z)) : g.moveTo(px(x), pz(z)); }
+      g.strokeStyle = outColor(ep.outcome); g.globalAlpha = 0.5; g.lineWidth = 1.5; g.stroke(); g.globalAlpha = 1;
+      const [x, z] = ep.pos[step], [fx, fz] = ep.force[Math.min(step, ep.force.length - 1)];
+      const f = Math.hypot(fx, fz);
+      if (f > 0.3) {
+        const L = Math.min(70, 4.5 * f), ax = px(x) + (fx / f) * L, az = pz(z) - (fz / f) * L;
+        g.strokeStyle = css("--accent", "#2f6fed"); g.lineWidth = 2;
+        g.beginPath(); g.moveTo(px(x), pz(z)); g.lineTo(ax, az); g.stroke();
+        const a = Math.atan2(az - pz(z), ax - px(x));
+        g.beginPath(); g.moveTo(ax, az); g.lineTo(ax - 7 * Math.cos(a - 0.4), az - 7 * Math.sin(a - 0.4));
+        g.lineTo(ax - 7 * Math.cos(a + 0.4), az - 7 * Math.sin(a + 0.4)); g.closePath();
+        g.fillStyle = css("--accent", "#2f6fed"); g.fill();
+      }
+      g.beginPath(); g.arc(px(x), pz(z), 4.5, 0, 2 * Math.PI);
+      g.fillStyle = css("--ink", "#1f2430"); g.fill();
+      // strip chart: Fx, Fz over time, cursor at the current step
+      gs.fillStyle = css("--panel", "#fff"); gs.fillRect(0, 0, W, HS);
+      const fm = Math.max(C2_FABORT, ...ep.force.map((v) => Math.max(Math.abs(v[0]), Math.abs(v[1]))));
+      const tx = (i) => (i / Math.max(1, last)) * (W - 2) + 1, fy = (v) => HS / 2 - (v / fm) * (HS / 2 - 6);
+      gs.strokeStyle = css("--line", "#e2e4e9"); gs.lineWidth = 1;
+      gs.beginPath(); gs.moveTo(0, fy(0)); gs.lineTo(W, fy(0)); gs.stroke();
+      gs.setLineDash([3, 3]); gs.strokeStyle = css("--bad", "#b3261e");
+      for (const v of [C2_FABORT, -C2_FABORT]) { gs.beginPath(); gs.moveTo(0, fy(v)); gs.lineTo(W, fy(v)); gs.stroke(); }
+      gs.setLineDash([]);
+      [[0, css("--warn", "#b7791f"), "Fx"], [1, css("--accent", "#2f6fed"), "Fz"]].forEach(([k, col, name], j) => {
+        gs.beginPath();
+        ep.force.forEach((v, i) => (i ? gs.lineTo(tx(i), fy(v[k])) : gs.moveTo(tx(i), fy(v[k]))));
+        gs.strokeStyle = col; gs.lineWidth = 1.3; gs.stroke();
+        gs.fillStyle = col; gs.font = "10px monospace"; gs.fillText(name, 4 + 24 * j, 11);
+      });
+      gs.fillStyle = css("--muted", "#6b7280"); gs.fillText(`±${C2_FABORT} N abort`, W - 84, 11);
+      gs.strokeStyle = css("--ink", "#1f2430");
+      gs.beginPath(); gs.moveTo(tx(step), 0); gs.lineTo(tx(step), HS); gs.stroke();
+      slider.max = last; slider.value = step;
+      label.textContent = `${ep.outcome} · step ${step}/${last} · F = (${fx.toFixed(1)}, ${fz.toFixed(1)}) N`;
+    }
+    const timer = setInterval(() => {
+      if (!canvas.isConnected) { clearInterval(timer); return; }
+      if (!playing) return;
+      if (step >= ep.pos.length - 1) { playing = false; btn.textContent = "Replay"; return; }
+      step += 1; draw();
+    }, 40);
+    sel.addEventListener("change", () => { ep = eps[Number(sel.value)]; step = 0; playing = true; btn.textContent = "Pause"; draw(); });
+    btn.addEventListener("click", () => {
+      if (!playing && step >= ep.pos.length - 1) step = 0;
+      playing = !playing; btn.textContent = playing ? "Pause" : "Play"; draw();
+    });
+    slider.addEventListener("input", () => { step = Number(slider.value); playing = false; btn.textContent = "Play"; draw(); });
+    draw();
+  }
+
   window.LabViewers = { register: (name, fn) => { registry[name] = fn; }, render, jsonFallback };
   window.LabViewers.register("t1scatter", t1scatter);
   window.LabViewers.register("traj2d", traj2d);
@@ -334,4 +457,5 @@
   window.LabViewers.register("flowtransport", flowtransport);
   window.LabViewers.register("stepsweep", stepsweep);
   window.LabViewers.register("flow", flow);
+  window.LabViewers.register("contact2d", contact2d);
 })();
