@@ -1,0 +1,88 @@
+<h3>The problem with plain TD3</h3>
+<p>The previous lesson ended on a seed lottery: the same TD3 code solved the hidden-hole insertion in 1 of 5 seeds and failed in the other four,
+stuck in a <em>dive-and-abort</em> optimum (pushing down fast into the 60&nbsp;N abort) or a <em>hover</em> optimum (waiting for the timeout). The repo&rsquo;s
+Stage&nbsp;1.5 (&ldquo;R1&ndash;R4&rdquo;) asked what it takes to make that reliable. The recipe it found is the one this task runs: <b>put expert demonstrations in the
+replay buffer, and keep an imitation term in the actor loss.</b> It is TD3+BC (Fujimoto &amp; Gu, 2021) with one repo-specific detail that turned out to matter.</p>
+
+<h3>The recipe</h3>
+<ol>
+<li><b>Demonstrations.</b> At the start, the scripted privileged expert (the one that knows the hole position) inserts the peg
+<code>n_demos</code>&nbsp;=&nbsp;100 times through the very same RL environment, so the transitions carry the real observations and the real reward. They go into the
+replay buffer <em>and</em> into a separate demo buffer. The agent never sees the privileged hole position: only the expert did.</li>
+<li><b>A critic that learns from them.</b> The critic update is unchanged TD3 (twin critics, target smoothing, delayed actor). Because the demos are in the replay buffer, it
+sees what a successful insertion is worth from step&nbsp;1 instead of waiting for random exploration to find one.</li>
+<li><b>An imitation term in the actor loss.</b> Every actor update draws a fresh batch of \((o_d, a_d)\) from the demo buffer:</li>
+</ol>
+<p>$$L_{\text{actor}} = q_w\cdot\frac{-\,\overline{Q_1(o,\pi(o))}}{\max\big(\overline{|Q_1|},\,1\big)} \;+\; \lambda(t)\,\overline{\big\|\pi(o_d)-a_d\big\|^2}$$</p>
+<p class="ref">The Q term is normalised by the batch mean of \(|Q|\), so \(\lambda\) has a meaning that does not depend on the reward scale. The <b>floor of 1</b> in the
+denominator is a repo fix (journal &ldquo;R1-fix&rdquo;): early on \(|Q|\) is near zero and dividing by it blows the Q term up into noise. \(q_w\)&nbsp;=&nbsp;1 in training.</p>
+
+<h3>The decay &lambda;(t), and why it must not reach zero</h3>
+<svg viewBox="0 0 640 230" role="img" aria-label="Imitation weight lambda of t falls linearly from 2.5 to a floor of 1.0 at the decay step and stays there; the R1 variant continues to 0" style="width:100%;max-width:640px;font-family:var(--mono);font-size:11px">
+  <line x1="60" y1="190" x2="610" y2="190" stroke="var(--muted)"/>
+  <line x1="60" y1="20" x2="60" y2="190" stroke="var(--muted)"/>
+  <text x="335" y="220" text-anchor="middle" fill="var(--muted)">environment steps t</text>
+  <text x="52" y="46" text-anchor="end" fill="var(--muted)">2.5</text>
+  <text x="52" y="119" text-anchor="end" fill="var(--muted)">1.0</text>
+  <text x="52" y="194" text-anchor="end" fill="var(--muted)">0</text>
+  <line x1="60" y1="119" x2="610" y2="119" stroke="var(--line)" stroke-dasharray="3 3"/>
+  <!-- R1: decays to 0 -->
+  <polyline points="60,42 400,190 610,190" fill="none" stroke="var(--loss)" stroke-width="1.8" stroke-dasharray="5 4"/>
+  <text x="520" y="180" fill="var(--loss)">R1: to 0, collapse</text>
+  <!-- R1b/R4: floor -->
+  <polyline points="60,42 400,119 610,119" fill="none" stroke="var(--accent)" stroke-width="2.4"/>
+  <text x="440" y="110" fill="var(--accent)">R4: floor 1.0 stays</text>
+  <line x1="400" y1="190" x2="400" y2="184" stroke="var(--muted)"/>
+  <text x="400" y="204" text-anchor="middle" fill="var(--muted)">bc_decay_steps</text>
+  <text x="70" y="36" fill="var(--ink)">&lambda;(t) = floor + (start &minus; floor)&middot;max(0, 1 &minus; t / decay)</text>
+</svg>
+<p>$$\lambda(t)=\lambda_{\text{floor}}+(\lambda_{\text{start}}-\lambda_{\text{floor}})\,\max\!\Big(0,\;1-\frac{t}{T_{\text{decay}}}\Big),\qquad \lambda_{\text{start}}=2.5,\ \lambda_{\text{floor}}=1.0$$</p>
+<p class="ref">The imitation weight starts strong, so the actor first becomes the expert on the states the expert visited, then gives the critic more say as the agent explores.
+You can see it live in the <em>Imitation</em> chart (<code>bc_weight</code>, with the imitation error <code>bc_loss</code>).</p>
+<p>The first attempt (R1) decayed the weight all the way to <b>0</b> over 100k steps. Three seeds climbed to 35&ndash;40&nbsp;% evaluation success by 30&ndash;70k steps and then
+<b>collapsed to 0 at 80&ndash;100k, exactly when the weight reached 0</b>: with nothing anchoring it, the actor fell back into dive-and-abort. Keeping a floor
+of 1.0 (R1b) fixed that, and is the whole difference between a mean of 38.8&nbsp;% and 58.4&nbsp;% on the same five seeds.</p>
+
+<h3>The case study: how the recipe was found</h3>
+<p>Everything below is from the repo&rsquo;s journal (<code>docs/progress/journal.jsonl</code>) and <code>docs/FINDINGS.md</code>; each line was measured on 50 unseen holes per seed.</p>
+<table class="out">
+<tr><th>experiment</th><th>result</th><th>verdict</th></tr>
+<tr><td>baseline TD3, F/T, seeds 0&ndash;4</td><td>9, 6, 0, 49, 0 &nbsp; (mean 25.6&nbsp;%)</td><td>the lottery</td></tr>
+<tr><td>R1: demos + BC 2.5 &rarr; 0</td><td>20, 6, 19, 37, 15 &nbsp; (38.8&nbsp;%)</td><td>collapse when &lambda; hits 0</td></tr>
+<tr><td><b>R1b: demos + BC 2.5 &rarr; floor 1.0</b></td><td>45, 7, 44, 6, 44 &nbsp; (58.4&nbsp;%)</td><td><b>kept</b></td></tr>
+<tr><td>R2: asymmetric critic that sees the hole</td><td>12, 17, 7, 6, 13 &nbsp; (22&nbsp;%)</td><td>no gain, reverted</td></tr>
+<tr><td>R3a/c: stronger BC 5.0 &rarr; 2.5</td><td>same 5/10 seeds &ge; 80&nbsp;%, same 62.2&nbsp;% over 10 seeds</td><td>imitation strength is not the lever</td></tr>
+<tr><td>R3d: rim speed limit</td><td>3/10 seeds &ge; 80&nbsp;%, mean 47.4&nbsp;%</td><td>failures turn into hover-timeouts: the dive was a symptom</td></tr>
+<tr><td>R3e: lateral actions as positions</td><td>&le; 19/50</td><td>too imprecise for 0.5&nbsp;mm clearance</td></tr>
+<tr><td>R3: offline pretraining on the demos (probe)</td><td>pretrained actors abort in 10/10 episodes</td><td>the expert&rsquo;s own rim contact (35&ndash;42&nbsp;N) sits on a knife edge against the 60&nbsp;N abort</td></tr>
+</table>
+<p class="ref">The &ldquo;asymmetric critic&rdquo; feeds the critic the true hole position that the actor never sees. Most of these ideas are standard remedies; on this task they
+did nothing or made it worse. What worked was the unglamorous one: demonstrations plus an imitation term that never switches off.</p>
+
+<h3>The headline, and what it does not say</h3>
+<table class="out">
+<tr><th>R4, 10 seeds each, 150k steps</th><th>mean success</th><th>seeds &ge; 80&nbsp;%</th></tr>
+<tr><td>with force/torque</td><td><b>62.2&nbsp;%</b></td><td>5 / 10</td></tr>
+<tr><td>without force/torque</td><td>14.8&nbsp;%</td><td>0 / 10</td></tr>
+</table>
+<p>Holes more than 1&nbsp;mm off-centre: 58&nbsp;% inserted with force against 7&nbsp;% without; a one-sided permutation test on the per-seed means gives
+<b>p&nbsp;=&nbsp;0.0014</b>. So the sensor decides it, and the recipe makes learning from reward far more reliable than the 25.6&nbsp;% / 1-in-5 baseline.</p>
+<p><b>But it is still bimodal.</b> The repo&rsquo;s own goal (80&nbsp;% or better in 4 of 5 force seeds) was <em>not</em> met: only half the seeds become reliable, and the rest
+collapse early into dive-and-abort. <b>One run in this lab lands in one of those modes</b> (the table above has seeds scoring 5/50 next to 50/50), so a single seed tells you
+almost nothing about whether a change helped; the 62.2&nbsp;% needs ten. Also note the lab default is 100k steps and a decay over 66k, a shorter run than the repo&rsquo;s
+150k / 100k (same ratio). And for this task, behaviour cloning with the right regularisation reaches 50/50: RL is here to learn the recipe, not to beat the imitator.</p>
+
+<h3>What to watch</h3>
+<ul>
+<li><b>Demonstrations collected</b> first (about a minute at the default). Then the <em>Imitation</em> chart: <code>bc_loss</code> should be small and
+\(\lambda\) falls from 2.5 to 1.0 and stays there.</li>
+<li><b>Success rate</b>: with the demos it should leave zero early; a collapse later (the R1 pattern) is the sign that the imitation anchor is too weak.</li>
+<li><b>Actor loss</b> now includes the imitation term, so it no longer simply falls as Q rises.</li>
+</ul>
+
+<h3>Knobs</h3>
+<ul>
+<li><b>Expert demonstrations</b>: 100 as in R4. <b>BC weight at the start / floor / decay</b>: 2.5, 1.0, 66k. Set the floor to 0 to reproduce R1&rsquo;s collapse; set the
+start to 0 for plain TD3 with demos in the buffer only.</li>
+<li>The rest is task 6: environment steps, seed, exploration noise, reward terms, <em>Feed the force channels</em> (off = the zeroed twin), evaluation, video.</li>
+</ul>

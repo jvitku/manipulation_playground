@@ -128,6 +128,13 @@ def _save(ctx, agent, meta: dict, t: int, label: str, metrics: dict | None = Non
 
 # ------------------------------------------------------------------------------------- training
 def train(ctx) -> None:
+    _run(ctx, None)
+
+
+def _run(ctx, hooks) -> None:
+    """Build env + agent and run the loop. `hooks` (task 7) adds demos and a BC term: an object
+    with `prepare(ctx, env, buf, rng) -> bool` (False = stopped), `update(agent, buf, rng, t) ->
+    dict` (replaces `agent.update(buf, rng)`) and `meta() -> dict` (merged into the ckpt meta)."""
     import torch
 
     P = ctx.params
@@ -137,13 +144,13 @@ def train(ctx) -> None:
     world = None
     try:
         env, world, p, rp = _make_env(P)
-        _train_loop(ctx, P, env, p, rp)
+        _train_loop(ctx, P, env, p, rp, hooks)
     finally:
         if world is not None:
             world.close()
 
 
-def _train_loop(ctx, P: dict, env, p, rp) -> None:
+def _train_loop(ctx, P: dict, env, p, rp, hooks=None) -> None:
     from fvb.policy.td3 import ReplayBuffer
 
     steps, eval_every = int(P["env_steps"]), int(P["eval_every"])
@@ -158,6 +165,8 @@ def _train_loop(ctx, P: dict, env, p, rp) -> None:
             "xy_scale": float(env.scale[0]), "z_scale": float(env.scale[2]),
             "norm": str(NORM_PATH), "args": dict(P), "task_params": asdict(p),
             "reward": asdict(rp), "td3": asdict(cfg)}  # fmt: skip
+    if hooks is not None:
+        meta.update(hooks.meta())
     ctx.set_status(step=0, total_steps=steps, message=f"TD3 on the arm task, {dev}")
 
     eval_seeds = [MONITOR_SEED0 + i for i in range(n_eval)]
@@ -175,6 +184,9 @@ def _train_loop(ctx, P: dict, env, p, rp) -> None:
             ctx.log(t, **{k: round(float(np.mean(v)), 4) for k, v in acc.items()})
             acc = {}
 
+    if hooks is not None and not hooks.prepare(ctx, env, buf, rng):
+        ctx.set_status(state="stopped")
+        return
     o = env.reset(train_seed)
     ep_ret = 0.0
     for t in range(1, steps + 1):
@@ -193,7 +205,8 @@ def _train_loop(ctx, P: dict, env, p, rp) -> None:
         o = o2
         ep_ret += r
         if t > start_steps:
-            for k, v in agent.update(buf, rng).items():
+            upd = agent.update(buf, rng) if hooks is None else hooks.update(agent, buf, rng, t)
+            for k, v in upd.items():
                 acc.setdefault(k, []).append(v)
             n_upd += 1
             if n_upd % LOSS_EVERY == 0:
