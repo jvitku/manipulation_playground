@@ -47,7 +47,7 @@ section.card h2{margin:0 0 4px;font-size:15px}
 section.card h2 .k{color:var(--muted);font-weight:500}
 .lesson p{max-width:70ch;margin:.5em 0}
 .lesson .ref{color:var(--muted);font-size:12.5px}
-.lesson svg{max-width:100%;height:auto}
+.lesson svg:not(.katex *){max-width:100%;height:auto}
 .schema,.lesson-body{overflow-x:auto}
 .params{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px 14px;margin:12px 0}
 .param label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:3px}
