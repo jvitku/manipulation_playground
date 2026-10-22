@@ -1,24 +1,25 @@
 <h3>The task</h3>
 <p>Two small problems, trained back to back in one run. <b>T1</b> is one step: an obstacle sits at position
-<code>c</code> in [-0.4, 0.4]; the policy must output a 2-D waypoint that gets past it. <b>T2</b> is closed
+\(c \in [-0.4,\, 0.4]\); the policy must output a 2-D waypoint that gets past it. <b>T2</b> is closed
 loop: a point mass starts near (0, -1) and must reach a goal near (0, 1) without touching a disc of radius 0.3
 near the origin; the action is a velocity in [-1, 1]&sup2; (0.04 per step) and the policy emits a chunk of
 <code>horizon</code> future actions at a time.</p>
 
 <h3>The data</h3>
 <p>The expert is scripted and <em>bimodal</em>. In T1 it passes the obstacle on the left or the right with equal
-probability: <code>a = (c &plusmn; 0.5, 0.5) + noise</code>. In T2 it picks a side at random per episode and holds
+probability: \(a = (c \pm 0.5,\ 0.5) + \text{noise}\). In T2 it picks a side at random per episode and holds
 it. Both sides are equally good, so both are in the data; the <em>Expert noise</em> knob sets the Gaussian
 jitter on every demonstrated action.</p>
 
 <h3>The method</h3>
 <p>Behaviour cloning is supervised regression: given the observation, predict the expert's action chunk. The
 loss, with the padding mask for chunks that run past the end of an episode:</p>
-<p><code>L = &Sigma;<sub>h</sub> mask<sub>h</sub> &middot; mean<sub>d</sub>( (&acirc;<sub>h,d</sub> &minus; a*<sub>h,d</sub>)&sup2; ) / &Sigma;<sub>h</sub> mask<sub>h</sub></code></p>
+<p>$$L = \frac{\sum_h m_h \cdot \operatorname{mean}_d\!\left[(\hat a_{h,d} - a^*_{h,d})^2\right]}{\sum_h m_h}$$</p>
+<p class="ref">where \(m_h\) is the padding mask, \(\hat a\) the predicted chunk and \(a^*\) the expert chunk.</p>
 <p>The network is the same one the later tasks use, but it is fed zeros instead of a noisy chunk and a zero time
 embedding, so it cannot do anything except map the observation to one answer. Minimising squared error then makes
-that answer the conditional <b>mean</b> of the expert's actions. With two equally likely modes at c &minus; 0.5 and
-c + 0.5, the mean is c: straight into the obstacle.</p>
+that answer the conditional <b>mean</b> of the expert's actions. With two equally likely modes at \(c - 0.5\) and
+\(c + 0.5\), the mean is \(c\): straight into the obstacle.</p>
 
 <h3>The architecture</h3>
 <svg viewBox="0 0 720 270" role="img" aria-label="MLPDenoiser with the MSE loss node" style="width:100%;max-width:720px;font-family:var(--mono);font-size:11px">
@@ -79,7 +80,7 @@ replace the zeros with a noisy chunk and the time embedding with the real one &m
 <p>Both losses fall smoothly and converge, and that is the trap: a low loss says nothing about whether the
 policy can do the job. Watch <b>T1 collision</b>. In this repo's tutorial T1 run (docs/ta_tutorial.md, 20k steps,
 3 seeds) the MSE head put 100% of its samples inside the obstacle while a flow head put 3.0% there. The scatter
-below shows why: the predictions cluster on the line a<sub>x</sub> = c, between the two expert modes at c &plusmn; 0.5,
+below shows why: the predictions cluster on the line \(a_x = c\), between the two expert modes at \(c \pm 0.5\),
 inside the shaded band. In closed loop (T2) the effect is milder, since the mean of two half-chunks is
 partially corrected on the next step (tutorial T2, MSE with H = 16: 87% success vs DDPM 67.5%). Do not assume the
 two numbers move together.</p>

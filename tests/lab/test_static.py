@@ -55,3 +55,27 @@ def test_static_and_lessons_revalidate(client):
     assert client.get("/").headers["cache-control"] == "no-cache"
     assert client.get("/static/app.js").headers["cache-control"] == "no-cache"
     assert client.get("/lessons/flow-bc.html").headers["cache-control"] == "no-cache"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "vendor/katex/katex.min.js",
+        "vendor/katex/katex.min.css",
+        "vendor/katex/auto-render.min.js",
+        "vendor/katex/fonts/KaTeX_Main-Regular.woff2",
+    ],
+)
+def test_katex_assets(client, path):
+    assert client.get(f"/static/{path}").status_code == 200
+
+
+def test_index_loads_katex(client):
+    html = client.get("/").text
+    for s in ("vendor/katex/katex.min.css", "vendor/katex/katex.min.js", "vendor/katex/auto-render.min.js"):
+        assert f"/static/{s}" in html
+
+
+@pytest.mark.parametrize("lesson", ["bc-mse", "flow", "flow-bc"])
+def test_lessons_have_display_equations(client, lesson):
+    assert "$$" in client.get(f"/lessons/{lesson}.html").text

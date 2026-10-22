@@ -484,6 +484,22 @@
     return el("table", { class: "out" }, el("tr", {}, el("th"), el("th", { text: "value" }), el("th", { text: "95 % CI" })), ...rows);
   }
 
+  // Typeset $$..$$ / \(..\) inside the lesson only. KaTeX is `defer`red, so it may not have run yet:
+  // retry once on window load. If it never loads, the raw LaTeX stays visible.
+  function typesetMath(container) {
+    const run = () => {
+      try {
+        if (window.renderMathInElement)
+          window.renderMathInElement(container, {
+            delimiters: [{ left: "$$", right: "$$", display: true }, { left: "\\(", right: "\\)", display: false }],
+            throwOnError: false,
+          });
+      } catch (e) { /* leave the raw LaTeX visible */ }
+    };
+    if (window.renderMathInElement) run();
+    else window.addEventListener("load", run, { once: true });
+  }
+
   async function loadLesson(url, container) {
     try {
       const r = await fetch(url);
@@ -491,6 +507,7 @@
       const text = await r.text();
       if (text.trimStart().startsWith("<")) container.innerHTML = text; // trusted: served from our own /lessons
       else container.replaceChildren(...text.split(/\n{2,}/).map((p) => el("p", { text: p })));
+      typesetMath(container);
     } catch (e) {
       container.replaceChildren(el("p", { class: "note", text: "lesson coming soon" }));
     }

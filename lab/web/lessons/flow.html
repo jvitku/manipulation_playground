@@ -1,6 +1,6 @@
 <h3>The task</h3>
 <p>The same two problems as the previous task, with the same scripted bimodal expert and the same data. <b>T1</b>: an
-obstacle at <code>c</code> in [-0.4, 0.4], the policy outputs a 2-D waypoint that passes it on the left or on the right.
+obstacle at \(c \in [-0.4,\, 0.4]\), the policy outputs a 2-D waypoint that passes it on the left or on the right.
 <b>T2</b>: a closed-loop point mass from near (0, -1) to near (0, 1) around a disc of radius 0.3, with action chunks of
 <code>horizon</code> steps of which the first <code>n_exec</code> are played before re-planning. The only thing that
 changes is the head: instead of regressing one action, the network models the whole <em>distribution</em> of expert
@@ -13,21 +13,28 @@ the obstacle in this repo's tutorial run). A generative head is trained on the s
 average.</p>
 
 <h3>The method</h3>
-<p><b>Flow matching</b> (the default head; the convention of pi0 / SmolVLA). Draw noise <code>e ~ N(0, I)</code> and a time
-<code>t</code> in (0, 1], and put the expert chunk <code>x<sub>0</sub></code> and the noise on a straight line:</p>
-<p><code>x<sub>t</sub> = t&middot;e + (1 &minus; t)&middot;x<sub>0</sub></code> &nbsp; (t = 1 is pure noise, t = 0 is data)</p>
-<p>The line has a constant velocity <code>e &minus; x<sub>0</sub></code>. The network sees <code>(x<sub>t</sub>, t, obs)</code>
-and predicts a velocity <code>v</code>; the loss compares the two:</p>
-<p><code>L = &#8214; v &minus; (e &minus; x<sub>0</sub>) &#8214;&sup2;</code></p>
-<p>Many different <code>(x<sub>0</sub>, e)</code> pairs pass through the same point <code>x<sub>t</sub></code>; regression
+<p><b>Flow matching</b> (the default head; the convention of pi0 / SmolVLA). Draw noise \(e \sim \mathcal{N}(0, I)\) and a time
+\(t \in (0, 1]\), and put the expert chunk \(x_0\) and the noise on a straight line:</p>
+<p>$$x_t = t\,e + (1 - t)\,x_0$$</p>
+<p class="ref">\(t = 1\) is pure noise, \(t = 0\) is data.</p>
+<p>The line has a constant velocity \(e - x_0\). The network sees \((x_t, t, \text{obs})\)
+and predicts a velocity \(v\); the loss compares the two:</p>
+<p>$$L = \left\lVert v - (e - x_0) \right\rVert^2$$</p>
+<p>Many different \((x_0, e)\) pairs pass through the same point \(x_t\); regression
 averages their velocities, which gives the <em>marginal velocity field</em> &mdash; a field that carries the noise
-distribution onto the data distribution. <b>Sampling</b>: start at <code>x = e</code> (pure noise) and take
-<code>K</code> Euler steps, <code>x &larr; x &minus; (1/K)&middot;v(x, t)</code>, from t = 1 to t = 0. Each draw of noise
+distribution onto the data distribution. <b>Sampling</b>: start at \(x = e\) (pure noise) and take
+\(K\) Euler steps from \(t = 1\) to \(t = 0\):</p>
+<p>$$x \leftarrow x - \frac{1}{K}\, v(x, t)$$</p>
+<p> Each draw of noise
 ends on one mode or the other: the multimodality lives in the noise, not in the network output.</p>
 <p><b>DDPM / DDIM</b> (the alternative head, Diffusion Policy). A cosine schedule noises the chunk,
-<code>x<sub>k</sub> = &radic;&#x0101;<sub>k</sub>&middot;x<sub>0</sub> + &radic;(1 &minus; &#x0101;<sub>k</sub>)&middot;e</code>, and the
-network predicts the <b>noise</b> <code>&epsilon;</code> with <code>L = &#8214; &epsilon; &minus; e &#8214;&sup2;</code>. Sampling is
-deterministic DDIM over a subsequence of <code>K</code> of the 100 training timesteps. Same idea, curved path, different
+</p>
+<p>$$x_k = \sqrt{\bar\alpha_k}\, x_0 + \sqrt{1 - \bar\alpha_k}\, e$$</p>
+<p>The
+network predicts the <b>noise</b> \(\hat\epsilon\):</p>
+<p>$$L = \left\lVert \hat\epsilon - e \right\rVert^2$$</p>
+<p>Sampling is
+deterministic DDIM over a subsequence of \(K\) of the 100 training timesteps. Same idea, curved path, different
 target.</p>
 
 <h3>The architecture</h3>
@@ -95,7 +102,7 @@ target.</p>
   <text x="440" y="306" fill="var(--muted)">t runs 1 &#8594; 0; the result is the action chunk</text>
 </svg>
 <p class="ref">B = batch, H = action chunk (1 in T1, <em>Action chunk</em> in T2). The loss node sits on the comparison of the
-network's velocity with the line's velocity <code>e &minus; x<sub>0</sub></code> &mdash; the interpolation is the only place the
+network's velocity with the line's velocity \(e - x_0\) &mdash; the interpolation is the only place the
 expert data enters. Compared to the previous task, the zeros fed to the net are replaced by the noisy chunk and the
 real time embedding.</p>
 

@@ -4,7 +4,7 @@ deep, and sits at a random x in [-8, 8] cm; the policy is told only a <em>noisy 
 by default), and the height of the surface (&plusmn;3 cm) is not told at all. The peg is driven by an
 <b>impedance controller</b>: the action (a in [-1, 1]&sup2;) moves a reference point by 1 cm per step, the peg follows the
 reference until the surface blocks it, and then the controller's spring presses with
-<code>F = k&middot;(pos &minus; ref)</code>, where the stiffness k (200&ndash;1000 N per unit) is drawn per episode and is unobservable
+\(F = k\,(\text{pos} - \text{ref})\), where the stiffness \(k\) (200&ndash;1000 N per unit) is drawn per episode and is unobservable
 without the force sensor. Push the reference deeper into the surface and the force rises; above <b>15 N</b> a protective
 stop aborts the episode. The hole is surrounded by a 45&deg; <b>chamfer</b> 1.2 cm wide, on which the reaction force tilts
 toward the hole: Fx tells which way to slide. The estimate is wrong by more than the chamfer catches (1.8 cm) in about half
@@ -19,9 +19,11 @@ kept for training; the run's status line says how many survived. Each observatio
 noisy (sensor noise 0.05 N by default).</p>
 
 <h3>The method</h3>
-<p>The same flow-matching recipe as the previous task: the expert chunk is noised along a straight line,
-<code>x<sub>t</sub> = t&middot;e + (1 &minus; t)&middot;x<sub>0</sub></code>, and the net regresses the velocity,
-<code>L = &#8214; v &minus; (e &minus; x<sub>0</sub>) &#8214;&sup2;</code>; sampling integrates <code>K</code> Euler steps from noise.
+<p>The same flow-matching recipe as the previous task: the expert chunk is noised along a straight line,</p>
+<p>$$x_t = t\,e + (1 - t)\,x_0$$</p>
+<p>and the net regresses the velocity,</p>
+<p>$$L = \left\lVert v - (e - x_0) \right\rVert^2$$</p>
+<p>Sampling integrates \(K\) Euler steps from noise, \(x \leftarrow x - \tfrac{1}{K}\,v(x, t)\).
 What is new is the input: contact. The policy plays the first <code>n_exec</code> actions of each sampled chunk and then
 re-plans from the freshest force history, so the force window is what lets it notice that the peg touched down, that it is
 sliding down a chamfer, or that it is pressing too hard.</p>
