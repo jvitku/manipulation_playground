@@ -63,6 +63,22 @@ repo (`src/fvb`), so every lesson's claims are backed by experiments that alread
 8. **residual-rl** — RL fine-tuning a generative policy: residual TD3 over a frozen flow
    policy from task 3 (T5 pattern, scripts/42). Depends on a task-3 checkpoint. Long, flagged.
 
+### Additions (owner, 2026-10-22, during execution)
+
+- **Embeddings & conditioning task** (ladder position 3, after flow matching; later tasks shift
+  down): on the 2-D contact world with two holes and four commands (insert red / insert blue /
+  press gently / press firmly), train the same policy once per conditioning representation —
+  one-hot(4), binary (2 bits), text tokens through a learned embedding, and a continuous
+  goal vector (target hole x-offset + target press force). Overlaid success curves per
+  encoding; eval picks the encoding. Lesson: how the conditioning representation changes
+  sample efficiency and generalization.
+- **Vector-grid visualization (`vecgrid`)**: reusable renderer drawing any vector/matrix as a
+  grid of colored cells (diverging palette: −1 red, 0 black, +1 green; hover shows the value;
+  tokens-based so themes/colorblind variants work). Wired into the embeddings task (the four
+  encodings side by side) and into the rollout viewers of the early tasks (normalized
+  observation, torque history, sampled action chunk, synced to the scrubber). One
+  **show/hide toggle per task page**, persisted in the browser, in case rendering drags.
+
 ## How it gets made (owner delegated these to the builder)
 
 - **Location**: new top-level `lab/` in this repo; branch `lab`.
