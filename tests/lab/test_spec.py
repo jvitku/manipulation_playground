@@ -57,3 +57,28 @@ def test_all_specs_sorted():
     registry.register(_spec("zz_a", order=901))
     ids = [s.id for s in registry.all_specs() if s.id.startswith("zz_")]
     assert ids == ["zz_a", "zz_b"]
+
+
+def test_which_selects_key_space():
+    spec = _spec()
+    spec.eval_params = [Param("episodes", "Episodes", "int", 5, min=1, max=50)]
+    with pytest.raises(ValueError):
+        registry.validate_params(spec, {"episodes": 3}, which="train")
+    assert registry.validate_params(spec, {"episodes": "3"}, which="eval") == {"episodes": 3}
+    with pytest.raises(ValueError):
+        registry.validate_params(spec, {"lr": 0.2}, which="eval")
+    assert registry.validate_params(spec, {"episodes": 3, "lr": 0.2})["lr"] == 0.2
+
+
+def test_register_rejects_name_in_both_lists():
+    spec = _spec("zz_dup")
+    spec.eval_params = [Param("lr", "LR", "float", 0.1)]
+    with pytest.raises(ValueError):
+        registry.register(spec)
+
+
+@pytest.mark.parametrize("bad", ["inf", "-inf", "nan", float("inf"), float("nan")])
+@pytest.mark.parametrize("name", ["lr", "steps"])
+def test_non_finite_rejected(name, bad):
+    with pytest.raises(ValueError):
+        registry.validate_params(_spec(), {name: bad})
