@@ -1,0 +1,124 @@
+<h3>The question</h3>
+<p>A robot policy usually has to be told <em>what to do</em>. The command reaches the network as a vector, and there are
+many ways to make that vector. This task trains the <b>same</b> flow-matching policy four times on the <b>same</b>
+demonstrations and the same closed-loop test scenes, changing only how the command is encoded, so the four success curves are
+directly comparable. The commands are the four of the contact scene: <em>insert into the red hole</em>, <em>insert into the
+blue hole</em>, <em>press gently</em> (2&nbsp;N) and <em>press firmly</em> (6&nbsp;N). There is no camera: the network sees the
+peg position, the last 10 force readings, and the command.</p>
+
+<h3>The four encodings</h3>
+<ul>
+<li><b>One-hot</b> (4 numbers): a 1 in the slot of the command, 0 elsewhere. No notion of similarity: all commands are
+equally far apart.</li>
+<li><b>Binary</b> (2 numbers): the two bits of the command id (0&ndash;3). The <em>same information</em> as one-hot in half the
+width, but a different geometry: <em>insert red</em> and <em>press firmly</em> become neighbours along one axis only because of an
+arbitrary numbering.</li>
+<li><b>Text</b> (<code>d_embed</code> numbers): the command's words as token ids, looked up in an <code>nn.Embedding</code> table and
+averaged. The table is <b>trained together with the policy</b>: the network must discover, from the loss alone, that
+&ldquo;gently&rdquo; and &ldquo;firmly&rdquo; mean different forces. This is a miniature of how a VLA conditions on language:
+<code>TAVLAMini</code> in <code>src/fvb/ta_tutorial/nets.py</code> has the same <code>self.lang = nn.Embedding(vocab, d)</code>
+and feeds the looked-up word vectors into the transformer prefix; here the pooled vector is just concatenated to the MLP input.</li>
+<li><b>Continuous</b> (3 numbers): the command written in robot terms &mdash; [perceived x of the target hole (0 for a press), target
+force in N (0 for an insert), is-insert flag]. It is the only code that carries <em>meaning</em> rather than identity.</li>
+</ul>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 760 330" role="img" aria-label="Four alternative command-encoding blocks concatenated with state and force history into the MLPDenoiser, then the flow loss node" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="emA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+    <marker id="emL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--loss)"/></marker>
+    <marker id="emG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+  </defs>
+  <rect x="10" y="10" width="170" height="40" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="95" y="27" text-anchor="middle" fill="var(--ink)">noisy chunk x_t, time t</text>
+  <text x="95" y="41" text-anchor="middle" fill="var(--muted)">(B, H, 2) and (B, 64)</text>
+  <rect x="10" y="60" width="170" height="40" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="95" y="77" text-anchor="middle" fill="var(--ink)">state (+ hole xs)</text>
+  <text x="95" y="91" text-anchor="middle" fill="var(--muted)">z-scored</text>
+  <rect x="10" y="110" width="170" height="40" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="95" y="127" text-anchor="middle" fill="var(--ink)">force history 10 &times; 2</text>
+  <text x="95" y="141" text-anchor="middle" fill="var(--muted)">z-scored</text>
+  <!-- encoding blocks -->
+  <text x="95" y="178" text-anchor="middle" fill="var(--accent)" font-weight="700">command: one of four blocks</text>
+  <rect x="10" y="186" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="95" y="205" text-anchor="middle" fill="var(--ink)">one-hot (4), as is</text>
+  <rect x="10" y="222" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="95" y="241" text-anchor="middle" fill="var(--ink)">binary (2), as is</text>
+  <rect x="10" y="258" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <text x="95" y="277" text-anchor="middle" fill="var(--ink)">tokens &#8594; nn.Embedding (d), mean</text>
+  <rect x="10" y="294" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="95" y="313" text-anchor="middle" fill="var(--ink)">[x, force N, insert] z-scored</text>
+  <line x1="180" y1="30" x2="296" y2="130" stroke="var(--muted)" marker-end="url(#emA)"/>
+  <line x1="180" y1="80" x2="296" y2="138" stroke="var(--muted)" marker-end="url(#emA)"/>
+  <line x1="180" y1="130" x2="296" y2="146" stroke="var(--muted)" marker-end="url(#emA)"/>
+  <line x1="180" y1="201" x2="296" y2="156" stroke="var(--accent)" marker-end="url(#emG)"/>
+  <line x1="180" y1="237" x2="296" y2="162" stroke="var(--accent)" marker-end="url(#emG)"/>
+  <line x1="180" y1="273" x2="296" y2="168" stroke="var(--accent)" stroke-width="2" marker-end="url(#emG)"/>
+  <line x1="180" y1="309" x2="296" y2="174" stroke="var(--accent)" marker-end="url(#emG)"/>
+  <rect x="298" y="120" width="62" height="64" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="329" y="148" text-anchor="middle" fill="var(--ink)">concat</text>
+  <text x="329" y="163" text-anchor="middle" fill="var(--muted)">+ enc</text>
+  <line x1="360" y1="152" x2="396" y2="152" stroke="var(--muted)" marker-end="url(#emA)"/>
+  <rect x="398" y="118" width="140" height="68" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="468" y="142" text-anchor="middle" fill="var(--ink)">MLPDenoiser</text>
+  <text x="468" y="158" text-anchor="middle" fill="var(--muted)">4 &times; Linear(512) + GELU</text>
+  <text x="468" y="172" text-anchor="middle" fill="var(--muted)">same in all four arms</text>
+  <line x1="538" y1="152" x2="574" y2="152" stroke="var(--muted)" marker-end="url(#emA)"/>
+  <rect x="576" y="133" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="621" y="149" text-anchor="middle" fill="var(--ink)">v (predicted</text>
+  <text x="621" y="163" text-anchor="middle" fill="var(--ink)">velocity)</text>
+  <rect x="576" y="228" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="621" y="244" text-anchor="middle" fill="var(--ink)">u = e &minus; x&#8320;</text>
+  <text x="621" y="258" text-anchor="middle" fill="var(--muted)">(target)</text>
+  <line x1="666" y1="152" x2="696" y2="168" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#emL)"/>
+  <line x1="621" y1="228" x2="705" y2="200" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#emL)"/>
+  <rect x="680" y="170" width="72" height="30" rx="15" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <text x="716" y="189" text-anchor="middle" fill="var(--loss)" font-weight="700">L (loss)</text>
+  <text x="716" y="162" text-anchor="middle" fill="var(--loss)">&#8214;v &minus; u&#8214;&sup2;</text>
+  <text x="400" y="300" text-anchor="middle" fill="var(--muted)">the embedding table (thick block) receives the loss gradient too: it is trained with the policy</text>
+</svg>
+<p class="ref">Exactly one encoding block feeds the network in an arm. All arms use the same loss as the earlier tasks,
+$$L = \left\lVert v_\theta(x_t, t, s, c) - (e - x_0) \right\rVert^2,\qquad x_t = t\,e + (1-t)\,x_0,$$
+with \(s\) the state and force history and \(c\) the encoded command.</p>
+
+<h3>The data and the knobs</h3>
+<p>The expert is the contact scene's scripted expert on two holes (red and blue); only successful demonstrations are used.
+Each hole's position reaches the network as a <em>perceived</em> value: the true x plus a 1&nbsp;cm error drawn once per episode
+(the stand-in for a perception module). The <b>Tell every arm where the holes are</b> option controls whether these two numbers are
+in the state of <em>every</em> arm. Turn it off and you get a confounded comparison: the continuous code still contains the target
+hole's x, while one-hot, binary and text can only guess which hole is meant, so they could not do better than choose a
+hole by feel. Leave it on to compare the encodings on what they are for: telling <em>which</em> command.
+Each arm trains <em>Training steps per encoding</em> steps, so a full run costs about four single trainings; use
+<em>Encodings to train</em> to run one arm.</p>
+
+<h3>Normalisation is part of the representation</h3>
+<p>State and force are z-scored with the training set's statistics, as everywhere. One-hot and binary vectors are passed through
+<b>unnormalised</b>: they are categories, and z-scoring {0,&nbsp;1} would silently make the value of a bit depend on how common the
+command is. Token ids have no scale at all, and the embedding table is learned. The continuous code <b>is</b> z-scored, because it
+mixes metres (|x| &lt; 0.13), newtons (0&ndash;6) and a flag: without it the 6&nbsp;N entry would dominate the 0.1&nbsp;m one by
+a factor of sixty. The scale of a representation is a design decision, not a detail.</p>
+
+<h3>What to expect &mdash; measure, don't assume</h3>
+<p>There are no prior numbers for this comparison in the repository, so none are quoted here; the charts are the result. These
+are the hypotheses the run lets you test, with the reasoning behind each:</p>
+<ul>
+<li><b>One-hot and binary carry identical information</b>; any gap between their curves is geometry plus optimisation noise.
+Binary packs four commands into two axes, so the network must carve more complicated regions out of a smaller space.
+Do not trust a single run: a few points of difference between two arms is usually seed noise at this size (the viewer's table gives a
+Wilson 95% interval).</li>
+<li><b>Text must learn its mapping.</b> It starts from random word vectors and has to organise them from the loss; it may lag early
+and catch up, or stay behind if the budget is small. What it can offer in return is shared structure (&ldquo;insert&rdquo; appears in
+two commands, &ldquo;press&rdquo; in two) &mdash; whether the network exploits that at four commands is exactly what the per-command
+charts show.</li>
+<li><b>Continuous can interpolate</b> &mdash; a force of 4&nbsp;N is a meaningful input between gentle and firm, while a one-hot
+vector for a fifth command is meaningless &mdash; but this run only ever uses the four values, so the interpolation benefit is not
+tested here; what is tested is whether a physically meaningful, normalised code trains faster.</li>
+</ul>
+<p>Read the <b>success</b> overlay for the answer, the <b>per-command</b> charts for where an encoding fails (a press at the wrong force ends as a timeout or a force abort; the wrong hole is a distinct outcome), and the loss as a health check only, as in the
+earlier tasks.</p>
+
+<h3>The viewer</h3>
+<p>The evaluation table lists outcomes per command for the chosen encoding. Below it, a matrix shows the raw conditioning vector
+every encoding hands the network for every command (the text row is the pooled learned embedding after training). The rollouts
+then play back in the side view with red and blue hole markers (a box marks the commanded hole), the perceived hole positions as
+dashed ticks, and the episode's own command vector as a colour grid next to the force and action windows.</p>

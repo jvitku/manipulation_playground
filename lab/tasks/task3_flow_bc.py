@@ -202,7 +202,7 @@ def estimate(params: dict) -> float:
 
 SPEC = TaskSpec(
     id="flow-bc",
-    order=3,
+    order=4,
     title="Flow-BC from demos",
     subtitle="Search for a hole by feel: a flow policy reads the force history while it slides.",
     params=[

@@ -364,7 +364,7 @@
     const canvas = h("canvas", { width: W, height: HC, style: "width:100%;max-width:480px;height:auto;display:block;border-radius:8px;border:3px solid var(--line)" });
     const strip = h("canvas", { width: W, height: HS, style: "width:100%;max-width:480px;height:auto;display:block;margin-top:6px;border:1px solid var(--line);border-radius:6px" });
     const sel = h("select", {});
-    eps.forEach((e, i) => sel.append(h("option", { value: i, text: `episode ${i + 1}: ${e.outcome}` })));
+    eps.forEach((e, i) => sel.append(h("option", { value: i, text: `episode ${i + 1}: ${e.task ? e.task + " - " : ""}${e.outcome}` })));
     const btn = h("button", { type: "button", text: "Pause" });
     const slider = h("input", { type: "range", min: 0, max: 1, value: 0, step: 1, style: "flex:1;min-width:120px" });
     const label = h("span", { style: "font:12px var(--mono);color:var(--muted)" });
@@ -382,7 +382,7 @@
         + "one chosen at this step (newest last; grey = no action, the episode has ended). Red negative, black zero, green positive; hover for values." }));
     }
     container.replaceChildren(wrap);
-    let gridEp = null, forceG = null, actG = null;
+    let gridEp = null, forceG = null, actG = null, encG = null;
     function drawGrids(e, st) {
       if (!vgBox) return;
       const HW = 10, win = [];
@@ -393,6 +393,9 @@
         vgBox.replaceChildren();
         forceG = window.LabVecGrid.render(vgBox, win, { title: blind ? "force window (blinded: zeros)" : "force window 10x2 (N)", vmax: C2_FABORT });
         actG = hasAct ? window.LabVecGrid.render(vgBox, [[0, 0]], { title: "actions 10x2 (ax, az): previous 9 + chosen now", vmax: 1 }) : null;
+        // embeddings task: the command vector the net consumed for this episode (raw; text = pooled learned embedding)
+        encG = Array.isArray(e.enc) && e.enc.length
+          ? window.LabVecGrid.render(vgBox, e.enc, { title: `command encoding (${(result && result.encoding) || "enc"}, ${e.enc.length}-D)`, cols: Math.min(e.enc.length, 8) }) : null;
         gridEp = e;
       }
       forceG.update(blind ? win.map(() => [0, 0]) : win);
@@ -427,11 +430,21 @@
       g.lineTo(W, HC); g.lineTo(0, HC); g.closePath();
       g.fillStyle = css("--chip", "#eceef2"); g.fill();
       g.strokeStyle = css("--ink", "#1f2430"); g.lineWidth = 1.5; g.stroke();
-      // the policy's hole estimate (dashed) and the true target hole
+      // the policy's hole estimate (dashed); two-hole scenes (embeddings task): perceived xs per hole + red/blue hole markers
       g.setLineDash([4, 4]); g.strokeStyle = css("--muted", "#6b7280"); g.lineWidth = 1;
-      g.beginPath(); g.moveTo(px(ep.est), 0); g.lineTo(px(ep.est), HC * 0.25); g.stroke(); g.setLineDash([]);
       g.fillStyle = css("--muted", "#6b7280"); g.font = "10px monospace";
-      g.fillText("estimate", px(ep.est) + 3, 12);
+      const ests = Array.isArray(ep.est) ? ep.est : [ep.est];
+      for (const ex of ests) { g.beginPath(); g.moveTo(px(ex), 0); g.lineTo(px(ex), HC * 0.25); g.stroke(); }
+      g.setLineDash([]);
+      g.fillText(ests.length > 1 ? "perceived" : "estimate", px(ests[0]) + 3, 12);
+      if (ep.holes.length === 2) {
+        ep.holes.forEach((hx, k) => {
+          const col = k === 0 ? "#e5483d" : "#3b6ff0", isT = ep.target === k;
+          g.fillStyle = col;
+          g.beginPath(); g.moveTo(px(hx) - 6, pz(ep.z0) - 16); g.lineTo(px(hx) + 6, pz(ep.z0) - 16); g.lineTo(px(hx), pz(ep.z0) - 5); g.closePath(); g.fill();
+          if (isT) { g.strokeStyle = col; g.lineWidth = 2; g.strokeRect(px(hx) - 9, pz(ep.z0) - 20, 18, 18); }
+        });
+      }
       // trail, peg, force arrow
       g.beginPath();
       for (let i = 0; i <= step; i++) { const [x, z] = ep.pos[i]; i ? g.lineTo(px(x), pz(z)) : g.moveTo(px(x), pz(z)); }
@@ -469,7 +482,7 @@
       gs.beginPath(); gs.moveTo(tx(step), 0); gs.lineTo(tx(step), HS); gs.stroke();
       drawGrids(ep, step);
       slider.max = last; slider.value = step;
-      label.textContent = `${ep.outcome} · step ${step}/${last} · F = (${fx.toFixed(1)}, ${fz.toFixed(1)}) N`;
+      label.textContent = `${ep.task ? ep.task + " · " : ""}${ep.outcome} · step ${step}/${last} · F = (${fx.toFixed(1)}, ${fz.toFixed(1)}) N`;
     }
     const timer = setInterval(() => {
       if (!canvas.isConnected) { clearInterval(timer); return; }
@@ -486,6 +499,50 @@
     draw();
   }
 
+  // ---- embeddings: outcome table per command + vecgrid matrix (commands x encodings) + contact2d rollouts
+  function embeddings(result, container, ctx) {
+    const wrap = h("div", { class: "viewer-embeddings" });
+    const cmds = Array.isArray(result && result.commands) ? result.commands : [];
+    if (cmds.length) {
+      const tbl = h("table", { class: "out" });
+      tbl.append(h("tr", {}, ...["command", "n", "success", "95% CI", "force abort", "wrong hole", "timeout"].map((t) => h("th", { text: t }))));
+      for (const c of cmds) {
+        const k = c.counts || {}, ci = Array.isArray(c.wilson95) ? `${pct(c.wilson95[0])} – ${pct(c.wilson95[1])}` : "n/a";
+        const cell = (o) => (c.n ? pct((k[o] || 0) / c.n) : "–");
+        tbl.append(h("tr", {}, h("td", { text: c.name }), h("td", { text: String(c.n) }), h("td", { text: c.n ? pct(c.success) : "–" }),
+          h("td", { text: c.n ? ci : "–" }), h("td", { text: cell("force_abort") }), h("td", { text: cell("wrong_hole") }), h("td", { text: cell("timeout") })));
+      }
+      wrap.append(h("h4", { text: `Per-command outcomes - ${result.encoding} encoding${result.tasks && result.tasks !== "all" ? ` (${result.tasks} commands only)` : ""}` }), tbl);
+    }
+    const enc = result && result.encodings, vg = window.LabVecGrid && window.LabVecGrid.panel(ctx);
+    if (enc && Array.isArray(enc.arms) && vg) {
+      wrap.append(h("h4", { text: "What each encoding hands the network (raw conditioning vectors)" }));
+      const grid = h("div", { style: `display:grid;grid-template-columns:150px repeat(${enc.arms.length},auto);gap:10px 18px;align-items:start;margin:6px 0` });
+      grid.append(h("div", {}));
+      enc.arms.forEach((a) => grid.append(h("div", { style: "font:600 12px var(--mono)", text: `${a} (${(enc.vectors[a][0] || []).length}-D)` })));
+      const vmax = {};
+      enc.arms.forEach((a) => { vmax[a] = Math.max(1e-6, ...enc.vectors[a].flat().map(Math.abs)); });
+      (enc.commands || []).forEach((name, r) => {
+        grid.append(h("div", { style: "font:12px var(--mono);color:var(--muted)", text: name }));
+        enc.arms.forEach((a) => {
+          const cell = h("div", {});
+          const v = enc.vectors[a][r];
+          window.LabVecGrid.render(cell, v, { labels: enc.labels && enc.labels[a], vmax: vmax[a], cols: Math.min(v.length, 8), cell: 16 });
+          grid.append(cell);
+        });
+      });
+      wrap.append(grid, h("p", { class: "note", text:
+        "Rows are the four commands, columns the trained encodings; each cell is the vector the network receives, drawn with one colour scale per column "
+        + "(red negative, black zero, green positive; hover a cell for its name and value). onehot and binary carry the same information in different geometry; "
+        + "text is the learned embedding after training (the pooled word vectors); cont is in physical units - its largest entry (newtons) sets the scale, hover for the hole x. "
+        + (enc.note || "") }));
+    }
+    const rolls = h("div", {});
+    wrap.append(h("h4", { text: "Closed-loop rollouts" }), rolls);
+    container.replaceChildren(wrap);
+    contact2d(result, rolls, ctx);
+  }
+
   window.LabViewers = { register: (name, fn) => { registry[name] = fn; }, render, jsonFallback };
   window.LabViewers.register("t1scatter", t1scatter);
   window.LabViewers.register("traj2d", traj2d);
@@ -494,4 +551,5 @@
   window.LabViewers.register("stepsweep", stepsweep);
   window.LabViewers.register("flow", flow);
   window.LabViewers.register("contact2d", contact2d);
+  window.LabViewers.register("embeddings", embeddings);
 })();
