@@ -83,6 +83,7 @@ lab:
 lab-stop:
 	$(COMPOSE) stop lab
 
-# one-off container (not the running service), same image
-lab-test:
+# Runs in the fvb-lab image (the dev image lacks fastapi), in a one-off container, not the running
+# service. Depends on lab-build so the image exists and is current (cached when unchanged).
+lab-test: lab-build
 	$(COMPOSE) run --rm -T --no-deps lab pytest tests/lab -q

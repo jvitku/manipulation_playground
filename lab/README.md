@@ -9,11 +9,14 @@ FastAPI backend (`lab/server`), static front end (`lab/web`), tasks in `lab/task
 make lab-build   # build fvb-lab:latest (FROM fvb-train; needs fvb-train built: make build-train)
 make lab         # docker compose up -d lab; prints the URLs
 make lab-stop    # stop the service
-make lab-test    # pytest tests/lab in a one-off lab container (not the running service)
+make lab-test    # builds the image if needed, then pytest tests/lab in a one-off fvb-lab container (not the running service)
 ```
 
+Tests run in the fvb-lab image (the dev image has no fastapi); `make lab-test` runs `lab-build` first.
+`make lab` does not rebuild a stale image: run `make lab-build` first after Dockerfile changes.
+
 URL: `http://<host>:8430` (port bound on 0.0.0.0). The service has `restart: unless-stopped`, so it
-survives reboots until `make lab-stop`. It runs as uid 1001 (the host user) with the repo mounted at
+survives reboots until `make lab-stop`. It runs as uid 1001 (this machine's owner uid; adjust `user:` in compose if different) with the repo mounted at
 `/workspace`. After editing server or task code, `docker compose -f docker/compose.yaml restart lab`
 (task modules are imported at startup; `calib.json` is re-read per request).
 
