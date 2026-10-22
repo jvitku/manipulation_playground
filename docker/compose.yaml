@@ -68,3 +68,30 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+
+  # Experiment lab web app (lab/): FastAPI on :8430, runs training/eval subprocesses on the GPU.
+  # `make lab-build`, `make lab`, `make lab-stop`. Runs as the host user so lab/data isn't root-owned.
+  lab:
+    image: fvb-lab:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.lab
+    user: "1001:1001"
+    restart: unless-stopped
+    volumes:
+      - ..:/workspace
+    working_dir: /workspace
+    shm_size: 2gb
+    ports:
+      - "8430:8430"
+    environment:
+      - HOME=/tmp
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: uvicorn lab.server.app:app --host 0.0.0.0 --port 8430

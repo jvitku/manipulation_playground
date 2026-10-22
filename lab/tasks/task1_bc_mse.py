@@ -251,7 +251,9 @@ def estimate(params: dict) -> float:
     cal = registry.calib("bc-mse")
     steps_per_s = cal.get("steps_per_s") or FALLBACK_STEPS_PER_S
     collect = cal.get("collect_s_per_ep") or FALLBACK_COLLECT_S_PER_EP
-    return params["steps"] / steps_per_s + params["demos"] * collect + OVERHEAD_S
+    overhead = cal.get("overhead_s", OVERHEAD_S)
+    # steps_per_s is "per-model steps": the run trains two models, so it is ~half the raw rate.
+    return params["steps"] / steps_per_s + params["demos"] * collect + overhead
 
 
 SPEC = TaskSpec(
