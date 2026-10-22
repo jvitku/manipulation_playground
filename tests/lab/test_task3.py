@@ -56,7 +56,7 @@ def test_task3_eval_episode_payload(tmp_path, trained):
     for e in res["episodes"]:
         assert set(e) == EPISODE_KEYS
         assert len(e["pos"]) == len(e["force"]) >= 1 and len(e["pos"][0]) == 2
-    assert res["force_zeroed"] is False
+    assert res["force_zeroed"] is False and res["trained_with_force"] is True
     assert sum(res["counts"].values()) == 20
     assert len(res["wilson95"]) == 2
 
@@ -70,3 +70,13 @@ def test_task3_force_zeroed_twin(tmp_path, trained):
     t3.evaluate(ev)
     res = json.loads((ev.dir / "result.json").read_text())
     assert res["force_zeroed"] is True
+
+
+def test_task3_trained_without_force_flags(tmp_path):
+    tr = make_ctx(tmp_path / "run", {**TINY, "use_force": False, "steps": 50, "eval_every": 50})
+    t3.train(tr)
+    ev = make_ctx(tmp_path / "eval", {"ckpt": str(tr.dir / "ckpt" / "last.pt"), "n_episodes": 8,
+                                      "eval_steps": 2})  # fmt: skip
+    t3.evaluate(ev)
+    res = json.loads((ev.dir / "result.json").read_text())
+    assert res["force_zeroed"] is True and res["trained_with_force"] is False

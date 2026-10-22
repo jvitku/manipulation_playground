@@ -13,7 +13,8 @@ with arch = {"act_dim": 2, "horizon", "obs_dim": 22, "hidden", "depth", "use_for
 Evaluation rebuilds the model from `arch` (`use_force`/`n_exec` included), never from the form.
 
 result.json written by `evaluate`:
-    {"n_episodes", "success", "counts": {outcome: n}, "wilson95", "force_zeroed", "sample_steps",
+    {"n_episodes", "success", "counts": {outcome: n}, "wilson95", "force_zeroed",
+     "trained_with_force", "sample_steps",
      "est_sigma", "sensor_noise",
      "episodes": [{"z0", "holes", "target", "est", "pos": [[x, z]...], "force": [[fx, fz]...],
                    "outcome"}]}     # <= 16, floats rounded to 4 decimals; pos[0] is the start
@@ -175,7 +176,9 @@ def evaluate(ctx) -> None:
         ctx.dir / "result.json",
         {
             "n_episodes": n, "success": k / n, "counts": {o: int(cnt.get(o, 0)) for o in OUTCOMES},
-            "wilson95": wilson95(k, n), "force_zeroed": zeroed, "sample_steps": K,
+            "wilson95": wilson95(k, n), "force_zeroed": zeroed,
+            "trained_with_force": bool(arch.get("use_force", True)),
+            "sample_steps": K,
             "est_sigma": est_sigma, "sensor_noise": sensor_noise, "episodes": episodes,
         },
     )  # fmt: skip

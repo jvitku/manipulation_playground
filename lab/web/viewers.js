@@ -345,7 +345,9 @@
     if (Array.isArray(result && result.wilson95) && result.wilson95.length === 2) {
       stats.append(chip("95% CI", `${pct(result.wilson95[0])} – ${pct(result.wilson95[1])}`));
     }
-    if (result && result.force_zeroed) stats.append(chip("force input", "zeroed"));
+    if (result && result.force_zeroed) {
+      stats.append(chip("force input", result.trained_with_force === false ? "zeroed (trained without force)" : "blinded at eval (trained with force)"));
+    }
     wrap.append(stats);
     if (!eps.length) {
       wrap.append(h("p", { style: "color:var(--muted)", text: "No episodes to animate in this result." }));

@@ -16,6 +16,17 @@ from lab.core import jobs
 from lab.core.runctx import atomic_write_json
 from lab.tasks import registry
 
+
+class RevalidatingStaticFiles(StaticFiles):
+    """Static files that browsers must revalidate (ETag -> cheap 304), so a restart never leaves
+    a stale cached frontend."""
+
+    def file_response(self, *args, **kwargs):
+        r = super().file_response(*args, **kwargs)
+        r.headers["Cache-Control"] = "no-cache"
+        return r
+
+
 WEB = Path(__file__).resolve().parents[1] / "web"
 SAFE = re.compile(r"^[A-Za-z0-9._-]+$")
 ACTIVE = ("pending", "queued", "running", "paused")
@@ -240,8 +251,8 @@ def create_app() -> FastAPI:
 
     if WEB.is_dir():
         (WEB / "lessons").mkdir(exist_ok=True)
-        app.mount("/lessons", StaticFiles(directory=WEB / "lessons"), name="lessons")
-        app.mount("/static", StaticFiles(directory=WEB), name="static")
+        app.mount("/lessons", RevalidatingStaticFiles(directory=WEB / "lessons"), name="lessons")
+        app.mount("/static", RevalidatingStaticFiles(directory=WEB), name="static")
     return app
 
 

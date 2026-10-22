@@ -49,3 +49,8 @@ def test_task1_lesson_served_with_schematic(client):
 def test_task1_spec_points_at_lesson(client):
     spec = client.get("/api/tasks/bc-mse").json()["spec"]
     assert spec["lesson_url"] == "/lessons/bc-mse.html"
+
+
+def test_static_and_lessons_revalidate(client):
+    assert client.get("/static/app.js").headers["cache-control"] == "no-cache"
+    assert client.get("/lessons/flow-bc.html").headers["cache-control"] == "no-cache"
