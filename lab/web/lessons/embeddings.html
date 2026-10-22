@@ -10,9 +10,10 @@ peg position, the last 10 force readings, and the command.</p>
 <ul>
 <li><b>One-hot</b> (4 numbers): a 1 in the slot of the command, 0 elsewhere. No notion of similarity: all commands are
 equally far apart.</li>
-<li><b>Binary</b> (2 numbers): the two bits of the command id (0&ndash;3). The <em>same information</em> as one-hot in half the
-width, but a different geometry: <em>insert red</em> and <em>press firmly</em> become neighbours along one axis only because of an
-arbitrary numbering.</li>
+<li><b>Binary</b> (2 numbers): the two bits of the command id (0&ndash;3), bit&nbsp;0 = id&nbsp;mod&nbsp;2 and bit&nbsp;1 = id&nbsp;div&nbsp;2.
+The <em>same information</em> as one-hot in half the width, but a different geometry: <em>insert blue</em> and <em>press firmly</em>
+share a bit (bit&nbsp;0), while <em>insert red</em> and <em>press firmly</em> differ in both. The code groups commands by an arbitrary
+numbering, unlike one-hot, where all four commands are equally far apart.</li>
 <li><b>Text</b> (<code>d_embed</code> numbers): the command's words as token ids, looked up in an <code>nn.Embedding</code> table and
 averaged. The table is <b>trained together with the policy</b>: the network must discover, from the loss alone, that
 &ldquo;gently&rdquo; and &ldquo;firmly&rdquo; mean different forces. This is a miniature of how a VLA conditions on language:
@@ -87,7 +88,9 @@ Each hole's position reaches the network as a <em>perceived</em> value: the true
 (the stand-in for a perception module). The <b>Tell every arm where the holes are</b> option controls whether these two numbers are
 in the state of <em>every</em> arm. Turn it off and you get a confounded comparison: the continuous code still contains the target
 hole's x, while one-hot, binary and text can only guess which hole is meant, so they could not do better than choose a
-hole by feel. Leave it on to compare the encodings on what they are for: telling <em>which</em> command.
+hole by feel. Leave it on to compare the encodings on what they are for: telling <em>which</em> command. Even with it on, <code>cont</code> differs from the other arms in kind: it hands the network a pre-resolved target coordinate,
+while one-hot, binary and text must learn the mapping &ldquo;command &rarr; which of the two observed hole positions&rdquo;; that
+difference is exactly what the comparison measures.
 Each arm trains <em>Training steps per encoding</em> steps, so a full run costs about four single trainings; use
 <em>Encodings to train</em> to run one arm.</p>
 
