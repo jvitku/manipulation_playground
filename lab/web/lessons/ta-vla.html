@@ -1,0 +1,172 @@
+<h3>The question</h3>
+<p>Can a transformer policy that already sees an image, a sentence and the robot state do better when it also <em>feels</em>?
+<b>TA-VLA</b> (Zhang et&nbsp;al., arXiv&nbsp;2509.07962) answers by turning the recent force/torque history into <b>one extra token</b>
+and trains the policy to predict the forces its own action chunk will cause. This task is the miniature of that recipe:
+<code>TAVLAMini</code> (<code>src/fvb/ta_tutorial/nets.py</code>), a four-layer, two-stream transformer in the layout of pi0 and SmolVLA,
+trained from scratch on the contact scene of the earlier tasks &mdash; two holes, four commands (<em>insert into the red hole</em>,
+<em>insert into the blue hole</em>, <em>press gently</em> 2&nbsp;N, <em>press firmly</em> 6&nbsp;N). Everything is in the picture:
+the policy has to <b>read the hole positions from a 32&times;32 image</b>, read the command from words, and feel the surface through
+the torque token.</p>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 800 440" role="img" aria-label="TAVLAMini: prefix stream with image patches, language and state tokens; action-expert stream with the torque token and noisy action tokens; block attention mask; cached prefix keys and values; flow loss and auxiliary future-torque loss summed into one total" style="width:100%;max-width:800px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="taA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+    <marker id="taL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--loss)"/></marker>
+    <marker id="taG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+    <pattern id="taHatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="var(--line)" stroke-width="2"/></pattern>
+  </defs>
+
+  <!-- PREFIX stream -->
+  <rect x="6" y="22" width="392" height="62" rx="9" fill="none" stroke="var(--muted)" stroke-width="1.5"/>
+  <text x="12" y="17" fill="var(--ink)" font-weight="700">prefix &#8594; &ldquo;VLM&rdquo; weights (the observation)</text>
+  <rect x="12" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="28" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="44" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="60" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="76" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="92" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="108" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="124" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="140" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="156" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="172" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="188" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="204" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="220" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="236" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="252" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="278" y="36" width="13" height="18" rx="2" fill="var(--warn-soft)" stroke="var(--warn)"/><rect x="294" y="36" width="13" height="18" rx="2" fill="var(--warn-soft)" stroke="var(--warn)"/><rect x="310" y="36" width="13" height="18" rx="2" fill="var(--warn-soft)" stroke="var(--warn)"/><rect x="326" y="36" width="13" height="18" rx="2" fill="var(--warn-soft)" stroke="var(--warn)"/><rect x="342" y="36" width="13" height="18" rx="2" fill="var(--warn-soft)" stroke="var(--warn)"/><rect x="368" y="36" width="13" height="18" rx="2" fill="var(--good-soft)" stroke="var(--good)"/>
+  <text x="140" y="70" text-anchor="middle" fill="var(--muted)">16 image patches (CNN)</text>
+  <text x="318" y="70" text-anchor="middle" fill="var(--muted)">5 words</text>
+  <text x="375" y="70" text-anchor="middle" fill="var(--muted)">state</text>
+
+  <!-- KV cache -->
+  <line x1="200" y1="84" x2="200" y2="98" stroke="var(--muted)" marker-end="url(#taA)"/>
+  <rect x="14" y="99" width="372" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="200" y="112" text-anchor="middle" fill="var(--ink)">prefix keys / values, every layer: cached</text>
+  <text x="200" y="124" text-anchor="middle" fill="var(--muted)">once per observation; reused for all K steps</text>
+  <line x1="200" y1="129" x2="200" y2="144" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#taG)"/>
+
+  <!-- SUFFIX stream -->
+  <rect x="6" y="136" width="392" height="62" rx="9" fill="none" stroke="var(--chart1)" stroke-width="1.5"/>
+  <rect x="12" y="146" width="13" height="18" rx="2" stroke-width="2.4" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="38" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="54" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="70" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="86" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="102" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="118" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="134" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="150" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/>
+  <text x="12" y="190" fill="var(--accent)" font-weight="700">torque</text>
+  <text x="76" y="190" fill="var(--muted)">8 noisy action tokens (+ time t)</text>
+  <text x="322" y="157" fill="var(--ink)" font-weight="700">suffix:</text>
+  <text x="322" y="170" fill="var(--chart1)" font-weight="700">action expert</text>
+  <text x="322" y="183" fill="var(--muted)">own weights</text>
+
+  <!-- losses: flow -->
+  <line x1="120" y1="198" x2="120" y2="214" stroke="var(--muted)" marker-end="url(#taA)"/>
+  <rect x="30" y="215" width="180" height="30" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="120" y="234" text-anchor="middle" fill="var(--ink)">action_out &#8594; &#118;&#770; (8 &times; 2)</text>
+  <rect x="30" y="262" width="180" height="30" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="120" y="281" text-anchor="middle" fill="var(--ink)">target u = e &minus; x&#8320;</text>
+  <line x1="210" y1="230" x2="258" y2="244" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#taL)"/>
+  <line x1="210" y1="277" x2="262" y2="262" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#taL)"/>
+  <rect x="252" y="236" width="104" height="34" rx="17" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <text x="304" y="252" text-anchor="middle" fill="var(--loss)" font-weight="700">L_action</text>
+  <text x="304" y="264" text-anchor="middle" fill="var(--loss)">flow, masked</text>
+
+  <!-- losses: aux -->
+  <path d="M388 198 V340 H236" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#taG)"/>
+  <text x="394" y="300" fill="var(--accent)" transform="rotate(90 394 300)" font-size="10">mean of the 8 outputs</text>
+  <rect x="30" y="322" width="206" height="36" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="133" y="338" text-anchor="middle" fill="var(--ink)">aux_head: Linear(d &#8594; 16)</text>
+  <text x="133" y="351" text-anchor="middle" fill="var(--muted)">&#375; = next 8 force readings</text>
+  <rect x="30" y="378" width="206" height="36" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="133" y="394" text-anchor="middle" fill="var(--ink)">measured future force</text>
+  <text x="133" y="407" text-anchor="middle" fill="var(--muted)">8 &times; (Fx, Fz), z-scored</text>
+  <line x1="236" y1="346" x2="282" y2="358" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#taL)"/>
+  <line x1="236" y1="396" x2="290" y2="380" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#taL)"/>
+  <rect x="270" y="350" width="104" height="34" rx="17" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" stroke-dasharray="5 3"/>
+  <text x="322" y="366" text-anchor="middle" fill="var(--loss)" font-weight="700">L_torque</text>
+  <text x="322" y="378" text-anchor="middle" fill="var(--loss)">MSE</text>
+
+  <!-- total -->
+  <path d="M356 253 H600 V312" fill="none" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#taL)"/>
+  <path d="M374 367 H450" fill="none" stroke="var(--loss)" stroke-width="1.6"/>
+  <text x="412" y="361" text-anchor="middle" fill="var(--loss)">&times; w</text>
+  <path d="M450 367 H600 V344" fill="none" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#taL)"/>
+  <rect x="470" y="314" width="260" height="30" rx="15" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2.4"/>
+  <text x="600" y="333" text-anchor="middle" fill="var(--loss)" font-weight="700">L = L_action + w &middot; L_torque</text>
+
+  <!-- MASK matrix -->
+  <text x="643" y="14" text-anchor="middle" fill="var(--ink)" font-weight="700">block attention mask</text>
+  <text x="643" y="30" text-anchor="middle" fill="var(--muted)">keys</text>
+  <text x="598" y="42" text-anchor="middle" fill="var(--muted)">prefix</text>
+  <text x="711" y="42" text-anchor="middle" fill="var(--muted)">suffix</text>
+  <text x="523" y="104" text-anchor="end" fill="var(--muted)">prefix</text>
+  <text x="523" y="196" text-anchor="end" fill="var(--muted)">suffix</text>
+  <text x="523" y="148" text-anchor="end" fill="var(--muted)">queries</text>
+  <rect x="530" y="48" width="136" height="104" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
+  <text x="598" y="104" text-anchor="middle" fill="var(--good)" font-weight="700">sees</text>
+  <rect x="666" y="48" width="90" height="104" fill="url(#taHatch)" stroke="var(--line)" stroke-width="1.5"/>
+  <text x="711" y="96" text-anchor="middle" fill="var(--bad)" font-weight="700">blocked</text>
+  <text x="711" y="110" text-anchor="middle" fill="var(--muted)">prefix never</text>
+  <text x="711" y="123" text-anchor="middle" fill="var(--muted)">sees actions</text>
+  <rect x="530" y="152" width="136" height="104" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
+  <text x="598" y="206" text-anchor="middle" fill="var(--good)" font-weight="700">sees</text>
+  <text x="598" y="220" text-anchor="middle" fill="var(--muted)">the observation</text>
+  <rect x="666" y="152" width="90" height="104" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+  <rect x="666" y="152" width="90" height="8" fill="var(--accent)" opacity="0.55"/>
+  <rect x="666" y="152" width="8" height="104" fill="var(--accent)" opacity="0.55"/>
+  <text x="718" y="206" text-anchor="middle" fill="var(--accent)" font-weight="700">sees</text>
+  <text x="718" y="220" text-anchor="middle" fill="var(--muted)">the suffix</text>
+  <text x="643" y="276" text-anchor="middle" fill="var(--muted)">orange stripe = the torque token</text>
+  <text x="643" y="290" text-anchor="middle" fill="var(--muted)">(suffix variant)</text>
+</svg>
+<p class="ref">One attention sequence, two sets of weights. The <b>prefix</b> (image patches, words, state) runs through the
+&ldquo;VLM&rdquo; weights; the <b>suffix</b> (the torque token and the noisy action chunk) runs through the &ldquo;action expert&rdquo;
+weights. In every layer each stream computes its own queries, keys and values, but attention is joint and <em>masked in blocks</em>
+(right): prefix queries see only the prefix; suffix queries see the whole prefix <em>and</em> the whole suffix. Orange is the torque
+token; dashed is the auxiliary branch, present only when the weight <i>w</i> is above zero.</p>
+
+<h3>Why the block mask matters: the KV cache</h3>
+<p>Because the prefix never looks at the noisy actions, its keys and values do not depend on the denoising step. At run time the
+policy encodes the prefix <b>once per observation</b> (<code>with model.cache(cond): ...</code>), stores the keys and values of
+every layer, and reuses them for all <i>K</i> flow-matching steps; only the cheap suffix is recomputed <i>K</i> times. Each
+denoising step is one pass of the action expert over 9 tokens that attend to the cached prefix. (The image is rendered from the
+5-number scene state inside the prefix encoder, so the training set stores numbers, not pixels, and the camera is simulated.)</p>
+
+<h3>Two losses</h3>
+<p>The action tokens are trained exactly like the earlier flow tasks. With \(x_t = t\,e + (1-t)\,x_0\) a noisy chunk,
+\(\hat v\) the expert's output and \(m\) the mask of real (not padded) chunk positions,
+$$L_\text{action} = \frac{\sum m\,\lVert \hat v_\theta(x_t, t, o) - (e - x_0) \rVert^2}{\sum m}.$$
+The second loss is TA-VLA's: a linear <b>auxiliary head</b> reads the mean of the expert's action-token outputs and must predict the
+next 8 force readings that the demonstration produced (<i>F</i>, z-scored), so the expert's representation has to model the contact
+forces the chunk will cause:
+$$L = L_\text{action} + w\;L_\text{torque},\qquad L_\text{torque} = \lVert \hat F_{i+1:i+8} - F_{i+1:i+8} \rVert^2 / 16.$$
+The weight is the <b>Aux weight</b> knob (0 removes the head; 0.1 in the repository's experiments). The aux-MSE chart shows
+\(L_\text{torque}\) itself, not the weighted term.</p>
+
+<h3>Where does the torque token go?</h3>
+<ul>
+<li><b>suffix</b> (decoder; TA-VLA's choice): the token sits next to the actions being denoised, so every step of the expert can
+read it directly. Its keys are in the suffix, so the prefix cache is unchanged.</li>
+<li><b>prefix</b> (encoder): the token joins the observation; it is cached with it and the actions see it through the prefix keys.</li>
+<li><b>none</b>: no token (no force). <b>Zero the torque input</b> keeps the token and its weights but feeds zeros: the &ldquo;blind
+twin&rdquo;, the cleanest ablation, because the parameter count is identical.</li>
+</ul>
+<p>The paper found the decoder placement better. This repository measured it at small scale (below) and could not reproduce a
+gap there.</p>
+
+<h3>What this repository measured (and where it did not hold)</h3>
+<p>These are the repository's own results (<code>docs/ta_tutorial.md</code>, <code>docs/FINDINGS.md</code>), quoted with their setups:</p>
+<ul>
+<li><b>T3, peg search with unknown surface</b> (400 demos, 3 seeds): torque token zeroed / prefix / suffix / suffix + aux =
+<b>61.3 / 85.5 / 86.7 / 84.3&nbsp;%</b>. Force is the difference between guessing and knowing when the peg has touched down; without it
+the failures are mostly force aborts.</li>
+<li><b>T4, this task's world</b> (four commands, 400 episodes, 2 seeds): zeroed / prefix / suffix / suffix + aux =
+<b>62.9 / 91.3 / 91.4 / 91.8&nbsp;%</b>. The sharpest row is <b>press gently (2&nbsp;N): 98&nbsp;% with the token against 31&nbsp;% zeroed</b>;
+the insertion commands are equal (96&ndash;97&nbsp;%). A policy that cannot feel cannot tell 2&nbsp;N from 6&nbsp;N.</li>
+<li><b>Position and aux at this scale</b>: prefix &asymp; suffix within seed noise, and the auxiliary loss did not help
+(&minus;2 points in T3, +0.4 in T4). The paper's decoder advantage is not reproduced here.</li>
+</ul>
+<p><b>The honest counterpoint.</b> With the real model the sign flipped. In the SmolVLA (450M) insertion experiments, 100 held-out
+set-ups per arm, the torque token fed real force <em>hurt</em>: raw token <b>53&nbsp;%</b> and <b>48&nbsp;%</b> (two seeds) against the
+zeroed twin <b>66&nbsp;%</b> and <b>61&nbsp;%</b>; pooled 101/200 vs 127/200, Fisher <b>p&nbsp;=&nbsp;0.011</b>. The same 158 demonstrations
+let a small MLP gain from force (28.8 vs 6.8&nbsp;%), so the signal was there; the working hypothesis is that the large model
+latches onto the torque history as a shortcut. The auxiliary loss (<i>w</i>&nbsp;=&nbsp;0.1) did not repair it (50&nbsp;%). So the
+lesson is not &ldquo;force tokens help&rdquo;: they help a small model on a task where force carries the missing information, and
+they were harmful in a large model with few demonstrations. Measure the zeroed twin every time.</p>
+
+<h3>Running it</h3>
+<ul>
+<li>The default (800 demos, 15&nbsp;000 steps, width 128, about four minutes on a GPU) reaches roughly 95&nbsp;% on the two presses but only around 50&ndash;60&nbsp;% on the insertions: localising a 1.2&nbsp;cm hole from a 32&times;32 image (one pixel is 1&nbsp;cm) is the hard part and wants data. The tutorial's reference runs used 1&nbsp;600 demos and 30&nbsp;000 steps and reached 93&nbsp;% overall; raise <i>Demonstrations</i> and <i>Training steps</i> to approach that, or use width 64 and fewer steps for a quick look. A
+closed-loop evaluation on 200 fixed scenes runs every <i>Eval every</i> steps and feeds the <b>success per command</b> chart: watch
+<em>press gently</em> and <em>press firmly</em> separately from the two insertions.</li>
+<li>Train two runs that differ in one knob: position <i>suffix</i> vs <i>prefix</i>, or <i>Zero the torque input</i> on/off, or
+<i>w</i> = 0 vs 0.1. One run is one seed; a few points of difference is seed noise at this size, so read the 95&nbsp;% interval in the
+viewer table.</li>
+<li><b>Blind at evaluation</b> takes a checkpoint trained <em>with</em> force and zeroes the token input only while testing. If its
+press-gently success collapses toward chance while the insertions barely move, the policy was really using the force, which is what
+the viewer's &ldquo;force input&rdquo; chip reports. A checkpoint trained with zeroed input shows the chip already.</li>
+<li>The viewer lists outcomes per command, then replays rollouts in the side view with the red and blue holes (a box marks the
+commanded hole) and the force window; the policy has no hole-position input other than the image.</li>
+</ul>
