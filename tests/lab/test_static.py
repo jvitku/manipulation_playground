@@ -73,7 +73,11 @@ def test_katex_assets(client, path):
 
 def test_index_loads_katex(client):
     html = client.get("/").text
-    for s in ("vendor/katex/katex.min.css", "vendor/katex/katex.min.js", "vendor/katex/auto-render.min.js"):
+    for s in (
+        "vendor/katex/katex.min.css",
+        "vendor/katex/katex.min.js",
+        "vendor/katex/auto-render.min.js",
+    ):
         assert f"/static/{s}" in html
 
 
