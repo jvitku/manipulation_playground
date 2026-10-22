@@ -1,5 +1,7 @@
 """Entry point of a job subprocess: `python -m lab.run_job {train|eval} <job_dir>`."""
 
+import importlib
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -13,6 +15,9 @@ def main(argv: list[str] | None = None) -> int:
     kind, job_dir = (argv if argv is not None else sys.argv[1:])[:2]
     if kind not in ("train", "eval"):
         raise SystemExit(f"kind must be train|eval, got {kind!r}")
+    # Test hook: comma-separated module names whose import registers extra tasks.
+    for mod in filter(None, os.environ.get("LAB_EXTRA_TASKS", "").split(",")):
+        importlib.import_module(mod)
     ctx = RunContext(Path(job_dir))
     ctx.set_status(state="running")
     try:
