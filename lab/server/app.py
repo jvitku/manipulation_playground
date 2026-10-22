@@ -197,10 +197,14 @@ def create_app() -> FastAPI:
     def start_eval(task_id: str, body: dict):
         s = _spec(task_id)
         run_id, _, fname = str(body.get("ckpt", "")).partition("/")
-        if not (SAFE.match(run_id) and SAFE.match(fname)):
-            raise HTTPException(404, "checkpoint not found")
-        ckpt = data_root() / "runs" / s.id / run_id / "ckpt" / fname
-        if not ckpt.is_file():
+        try:
+            _safe(run_id)
+            _safe(fname)
+        except HTTPException:
+            raise HTTPException(404, "checkpoint not found") from None
+        runs_dir = (data_root() / "runs" / s.id).resolve()
+        ckpt = (runs_dir / run_id / "ckpt" / fname).resolve()
+        if not ckpt.is_relative_to(runs_dir) or not ckpt.is_file():
             raise HTTPException(404, "checkpoint not found")
         try:
             params = registry.validate_params(s, body.get("params") or {}, which="eval")

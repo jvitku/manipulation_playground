@@ -117,3 +117,41 @@ def test_gpu_endpoint_shape(client):
     r = client.get("/api/gpu").json()
     assert set(r) == {"used_mb", "total_mb"}
     assert isinstance(r["used_mb"], int) and isinstance(r["total_mb"], int)
+
+
+def _handler(client, path_suffix, method="GET"):
+    """Route endpoint, called directly with a literal '..' (HTTP clients normalise it)."""
+    for r in client.app.routes:
+        if getattr(r, "path", "").endswith(path_suffix) and method in getattr(r, "methods", ()):
+            return r.endpoint
+    raise AssertionError(path_suffix)
+
+
+def test_eval_ckpt_traversal_404(client):
+    rid = _start(client, steps=2)
+    _wait(client, f"/api/runs/dummy/{rid}")
+    for bad in ("../x", "..", "../..", f"{rid}/..", f"{rid}/../index.json", "./x", "/etc/passwd"):
+        r = client.post("/api/tasks/dummy/evals", json={"ckpt": bad, "params": {}})
+        assert r.status_code == 404, bad
+
+
+def test_run_id_dotdot_404(client):
+    from fastapi import HTTPException
+
+    h = _handler(client, "/api/runs/{task_id}/{run_id}")
+    for bad in ("..", "."):
+        with pytest.raises(HTTPException) as e:
+            h("dummy", bad)
+        assert e.value.status_code == 404
+
+
+def test_eval_file_dotdot_404(client):
+    from fastapi import HTTPException
+
+    h = _handler(client, "/file/{name}")
+    with pytest.raises(HTTPException) as e:
+        h("dummy", "..", "..")
+    assert e.value.status_code == 404
+    with pytest.raises(HTTPException) as e:
+        h("dummy", "x", "..")
+    assert e.value.status_code == 404
