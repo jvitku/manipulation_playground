@@ -68,6 +68,15 @@ class _Norm:
         return out
 
 
+def _load_part(ck: dict, part: str, dev: str):
+    """Rebuild one trained part ("t1"/"t2") from a checkpoint's own arch: (model, norm, arch)."""
+    arch = ck[part]["arch"]
+    m = _build(arch)
+    m.load_state_dict(ck[part]["ema"])
+    norm = {k: (mm.to(dev), s.to(dev)) for k, (mm, s) in ck[part]["norm"].items()}
+    return m.to(dev).eval(), _Norm(arch["horizon"], norm, dev), arch
+
+
 def _collect(n: int, seed: int, noise: float) -> list[dict]:
     """Like `toy.t2_collect` (must track it) but with the expert noise as a parameter."""
     env = toy.ObstacleReach(n, seed)
@@ -98,11 +107,12 @@ def _t1_eval(
     return toy.t1_metrics(c, a), c, a
 
 
-def _run_t2(model, ds_like, gen, n, seed, n_exec, radius=None, record=0):
+def _run_t2(model, ds_like, gen, n, seed, n_exec, radius=None, record=0, steps=1):
+    record = min(record, n)
     env = toy.ObstacleReach(n, seed)
     if radius is not None:
         env.RADIUS = radius
-    pol = ChunkPolicy(model, gen, ds_like, lambda o: {"obs": o}, n_exec, 1, seed=seed)
+    pol = ChunkPolicy(model, gen, ds_like, lambda o: {"obs": o}, n_exec, steps, seed=seed)
     paths = [[env.p[i].tolist()] for i in range(record)]
     while not env.done.all():
         live = ~env.done.copy()
@@ -212,19 +222,12 @@ def evaluate(ctx) -> None:
     dev = _device()
     gen = Regression()
 
-    def load(part):
-        arch = ck[part]["arch"]
-        m = _build(arch)
-        m.load_state_dict(ck[part]["ema"])
-        norm = {k: (mm.to(dev), s.to(dev)) for k, (mm, s) in ck[part]["norm"].items()}
-        return m.to(dev).eval(), _Norm(arch["horizon"], norm, dev), arch
-
-    m1, n1, _ = load("t1")
+    m1, n1, _ = _load_part(ck, "t1", dev)
     metrics, c, a = _t1_eval(m1, n1, gen, n, grid, seed)
     sel = np.linspace(0, len(c) - 1, min(len(c), MAX_POINTS)).astype(int)
     points = [[float(c[i]), float(a[i, 0]), float(a[i, 1])] for i in sel]
 
-    m2, n2, arch2 = load("t2")
+    m2, n2, arch2 = _load_part(ck, "t2", dev)
     env, paths = _run_t2(m2, n2, gen, n, 20_000 + seed, arch2["horizon"], radius, MAX_VIEW_EPISODES)
     k = int(env.success.sum())
     episodes = []

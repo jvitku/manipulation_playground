@@ -86,3 +86,12 @@ def test_task1_stop_during_t2_is_stopped_not_done(tmp_path):
     ctx.should_continue = flaky
     t1.train(ctx)
     assert read_status(ctx.dir)["state"] == "stopped"
+
+
+def test_task1_eval_fewer_episodes_than_view_cap(tmp_path):
+    tctx = make_ctx(tmp_path / "run", TINY)
+    t1.train(tctx)
+    ev = make_ctx(tmp_path / "eval", {"ckpt": str(tctx.dir / "ckpt" / "last.pt"), "n_episodes": 10})
+    t1.evaluate(ev)
+    res = json.loads((ev.dir / "result.json").read_text())
+    assert 0 < len(res["t2"]["episodes"]) <= 10

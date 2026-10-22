@@ -27,7 +27,6 @@ import torch
 from fvb.ta_tutorial import toy
 from fvb.ta_tutorial.data import ChunkDataset, split_episodes
 from fvb.ta_tutorial.generative import make
-from fvb.ta_tutorial.train import ChunkPolicy
 from lab.core.loop import train_loop
 from lab.core.runctx import atomic_write_json
 from lab.tasks import registry
@@ -40,7 +39,8 @@ from lab.tasks.task1_bc_mse import (
     _build,
     _collect,
     _device,
-    _Norm,
+    _load_part,
+    _run_t2,
     wilson95,
 )
 
@@ -61,22 +61,6 @@ def _t1_sample(model, ds_like, gen, n, grid, seed, steps):
     with torch.no_grad():
         a = gen.sample(model.eval(), (n, 1, 2), cond, steps, g).clamp(-1, 1)[:, 0].cpu().numpy()
     return toy.t1_metrics(c, a), c, a
-
-
-def _run_t2(model, ds_like, gen, n, seed, n_exec, steps, radius=None, record=0):
-    env = toy.ObstacleReach(n, seed)
-    if radius is not None:
-        env.RADIUS = radius
-    pol = ChunkPolicy(model, gen, ds_like, lambda o: {"obs": o}, n_exec, steps, seed=seed)
-    record = min(record, n)
-    paths = [[env.p[i].tolist()] for i in range(record)]
-    while not env.done.all():
-        live = ~env.done.copy()
-        env.step(pol.act(torch.as_tensor(env.obs(), device=ds_like.device)))
-        for i in range(record):
-            if live[i]:
-                paths[i].append(env.p[i].tolist())
-    return env, paths
 
 
 def train(ctx) -> None:
@@ -131,7 +115,7 @@ def train(ctx) -> None:
     m2 = _build(arch2)
 
     def t2_eval(model):
-        env, _ = _run_t2(model, ds2, gen, 64, 10_000 + seed, n_exec, K)
+        env, _ = _run_t2(model, ds2, gen, 64, 10_000 + seed, n_exec, steps=K)
         return {
             "t2_success": float(env.success.mean()),
             "t2_collision": float(env.collided.mean()),
@@ -164,14 +148,7 @@ def evaluate(ctx) -> None:
     gen = make(ck["gen"])
     n_exec_ck = int((ck.get("params") or {}).get("n_exec", 0)) or ck["t2"]["arch"]["horizon"]
 
-    def load(part):
-        arch = ck[part]["arch"]
-        m = _build(arch)
-        m.load_state_dict(ck[part]["ema"])
-        norm = {k: (mm.to(dev), s.to(dev)) for k, (mm, s) in ck[part]["norm"].items()}
-        return m.to(dev).eval(), _Norm(arch["horizon"], norm, dev), arch
-
-    m1, n1, _ = load("t1")
+    m1, n1, _ = _load_part(ck, "t1", dev)
     metrics, c, a = _t1_sample(m1, n1, gen, n, grid, seed, K)
     sel = np.linspace(0, len(c) - 1, min(len(c), MAX_POINTS)).astype(int)
     points = [[float(c[i]), float(a[i, 0]), float(a[i, 1])] for i in sel]
@@ -189,9 +166,9 @@ def evaluate(ctx) -> None:
     xs = xs[:, :, 0].cpu().numpy()  # (K+1, n, 2)
     trace = {"c": [float(x) for x in ct], "xs": xs.round(4).tolist()}
 
-    m2, n2, arch2 = load("t2")
+    m2, n2, arch2 = _load_part(ck, "t2", dev)
     n_exec = max(1, min(n_exec_ck, arch2["horizon"]))
-    env, paths = _run_t2(m2, n2, gen, n, 20_000 + seed, n_exec, K, radius, MAX_VIEW_EPISODES)
+    env, paths = _run_t2(m2, n2, gen, n, 20_000 + seed, n_exec, radius, MAX_VIEW_EPISODES, steps=K)
     k = int(env.success.sum())
     episodes = []
     for i in range(min(n, MAX_VIEW_EPISODES)):
