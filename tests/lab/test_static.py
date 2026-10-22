@@ -34,5 +34,18 @@ def test_static_assets(client, path):
 
 def test_index_references_scripts_in_order(client):
     html = client.get("/").text
-    order = [html.index(f"/static/{s}") for s in ("vendor/uplot.iife.min.js", "charts.js", "viewers.js", "app.js")]
+    scripts = ("vendor/uplot.iife.min.js", "charts.js", "viewers.js", "app.js")
+    order = [html.index(f"/static/{s}") for s in scripts]
     assert order == sorted(order)
+
+
+def test_task1_lesson_served_with_schematic(client):
+    r = client.get("/lessons/bc-mse.html")
+    assert r.status_code == 200
+    assert "<svg" in r.text
+    assert "<html" not in r.text.lower()
+
+
+def test_task1_spec_points_at_lesson(client):
+    spec = client.get("/api/tasks/bc-mse").json()["spec"]
+    assert spec["lesson_url"] == "/lessons/bc-mse.html"

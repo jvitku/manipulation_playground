@@ -290,6 +290,6 @@ SPEC = TaskSpec(
     estimate=estimate,
     train=train,
     evaluate=evaluate,
-    lesson="task1_bc_mse.md",
+    lesson="bc-mse.html",
 )  # fmt: skip
 registry.register(SPEC)

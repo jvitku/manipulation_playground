@@ -1,0 +1,100 @@
+<h3>The task</h3>
+<p>Two small problems, trained back to back in one run. <b>T1</b> is one step: an obstacle sits at position
+<code>c</code> in [-0.4, 0.4]; the policy must output a 2-D waypoint that gets past it. <b>T2</b> is closed
+loop: a point mass starts near (0, -1) and must reach a goal near (0, 1) without touching a disc of radius 0.3
+near the origin; the action is a velocity in [-1, 1]&sup2; (0.04 per step) and the policy emits a chunk of
+<code>horizon</code> future actions at a time.</p>
+
+<h3>The data</h3>
+<p>The expert is scripted and <em>bimodal</em>. In T1 it passes the obstacle on the left or the right with equal
+probability: <code>a = (c &plusmn; 0.5, 0.5) + noise</code>. In T2 it picks a side at random per episode and holds
+it. Both sides are equally good, so both are in the data; the <em>Expert noise</em> knob sets the Gaussian
+jitter on every demonstrated action.</p>
+
+<h3>The method</h3>
+<p>Behaviour cloning is supervised regression: given the observation, predict the expert's action chunk. The
+loss, with the padding mask for chunks that run past the end of an episode:</p>
+<p><code>L = &Sigma;<sub>h</sub> mask<sub>h</sub> &middot; mean<sub>d</sub>( (&acirc;<sub>h,d</sub> &minus; a*<sub>h,d</sub>)&sup2; ) / &Sigma;<sub>h</sub> mask<sub>h</sub></code></p>
+<p>The network is the same one the later tasks use, but it is fed zeros instead of a noisy chunk and a zero time
+embedding, so it cannot do anything except map the observation to one answer. Minimising squared error then makes
+that answer the conditional <b>mean</b> of the expert's actions. With two equally likely modes at c &minus; 0.5 and
+c + 0.5, the mean is c: straight into the obstacle.</p>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 720 270" role="img" aria-label="MLPDenoiser with the MSE loss node" style="width:100%;max-width:720px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="bcA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--muted)"/>
+    </marker>
+    <marker id="bcL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--loss)"/>
+    </marker>
+  </defs>
+  <!-- inputs -->
+  <rect x="10" y="22" width="130" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="75" y="38" text-anchor="middle" fill="var(--ink)">obs</text>
+  <text x="75" y="52" text-anchor="middle" fill="var(--muted)">(B, obs_dim)</text>
+  <rect x="10" y="84" width="130" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="75" y="100" text-anchor="middle" fill="var(--ink)">chunk &#8594; zeros</text>
+  <text x="75" y="114" text-anchor="middle" fill="var(--muted)">(B, H&middot;2)</text>
+  <rect x="10" y="146" width="130" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="75" y="162" text-anchor="middle" fill="var(--ink)">time embed (t = 0)</text>
+  <text x="75" y="176" text-anchor="middle" fill="var(--muted)">(B, 64)</text>
+  <!-- concat -->
+  <line x1="140" y1="41" x2="188" y2="95" stroke="var(--muted)" marker-end="url(#bcA)"/>
+  <line x1="140" y1="103" x2="188" y2="103" stroke="var(--muted)" marker-end="url(#bcA)"/>
+  <line x1="140" y1="165" x2="188" y2="111" stroke="var(--muted)" marker-end="url(#bcA)"/>
+  <rect x="190" y="82" width="64" height="42" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="222" y="107" text-anchor="middle" fill="var(--ink)">concat</text>
+  <text x="222" y="72" text-anchor="middle" fill="var(--muted)">(B, H&middot;2+obs+64)</text>
+  <!-- mlp -->
+  <line x1="254" y1="103" x2="298" y2="103" stroke="var(--muted)" marker-end="url(#bcA)"/>
+  <rect x="300" y="70" width="170" height="68" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="385" y="95" text-anchor="middle" fill="var(--ink)">MLP: 4 &times; Linear(512) + GELU</text>
+  <text x="385" y="112" text-anchor="middle" fill="var(--muted)">hidden, depth</text>
+  <text x="385" y="126" text-anchor="middle" fill="var(--muted)">last layer: Linear(H&middot;2)</text>
+  <!-- output -->
+  <line x1="470" y1="103" x2="518" y2="103" stroke="var(--muted)" marker-end="url(#bcA)"/>
+  <text x="494" y="95" text-anchor="middle" fill="var(--muted)">(B, H, 2)</text>
+  <rect x="520" y="82" width="90" height="42" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="565" y="100" text-anchor="middle" fill="var(--ink)">predicted</text>
+  <text x="565" y="114" text-anchor="middle" fill="var(--ink)">chunk &acirc;</text>
+  <!-- dataset chunk -->
+  <rect x="520" y="200" width="90" height="42" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="565" y="218" text-anchor="middle" fill="var(--ink)">expert chunk</text>
+  <text x="565" y="232" text-anchor="middle" fill="var(--ink)">a* (dataset)</text>
+  <text x="565" y="260" text-anchor="middle" fill="var(--muted)">(B, H, 2)</text>
+  <!-- loss node -->
+  <line x1="565" y1="124" x2="640" y2="150" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#bcL)"/>
+  <line x1="565" y1="200" x2="640" y2="182" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#bcL)"/>
+  <rect x="620" y="150" width="96" height="32" rx="16" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <text x="668" y="171" text-anchor="middle" fill="var(--loss)" font-weight="700">L (loss)</text>
+  <text x="668" y="136" text-anchor="middle" fill="var(--loss)">mean &#8214;&acirc;&minus;a*&#8214;&sup2; &middot; mask</text>
+</svg>
+<p class="ref">B = batch, H = action chunk (1 in T1, <em>Action chunk</em> in T2), 2 = action dims. The loss node
+sits where the network output meets the dataset's expert chunk; nothing else trains the net. Later tasks
+replace the zeros with a noisy chunk and the time embedding with the real one &mdash; the rest stays.</p>
+
+<h3>What to watch</h3>
+<p>Both losses fall smoothly and converge, and that is the trap: a low loss says nothing about whether the
+policy can do the job. Watch <b>T1 collision</b>. In this repo's tutorial T1 run (docs/ta_tutorial.md, 20k steps,
+3 seeds) the MSE head put 100% of its samples inside the obstacle while a flow head put 3.0% there. The scatter
+below shows why: the predictions cluster on the line a<sub>x</sub> = c, between the two expert modes at c &plusmn; 0.5,
+inside the shaded band. In closed loop (T2) the effect is milder, since the mean of two half-chunks is
+partially corrected on the next step (tutorial T2, MSE with H = 16: 87% success vs DDPM 67.5%). Do not assume the
+two numbers move together.</p>
+
+<h3>Knobs</h3>
+<ul>
+<li><b>Demonstrations</b>: how many expert episodes are collected. More demos shrink the noise in the mean but
+cannot split it into modes.</li>
+<li><b>Training steps</b>: optimiser steps per part (T1 and T2 each get this many). Loss keeps improving long after the
+behaviour stops changing &mdash; compare the curves with collision.</li>
+<li><b>Learning rate</b>: step size of AdamW with warmup and cosine decay. Too high and the loss spikes; too low and
+the run is undertrained at the step budget.</li>
+<li><b>Batch size</b>: samples per gradient step. Mostly changes loss noise and speed, not the mode-averaging.</li>
+<li><b>Action chunk (T2)</b>: how many future actions the net predicts at once. Longer chunks commit to a side for
+longer but make the averaged chunk bend further into the obstacle.</li>
+<li><b>Expert noise</b>: jitter on demonstrated actions. Higher noise blurs the data and widens the prediction error
+without changing the fact that the mean lies between the modes.</li>
+</ul>
