@@ -1,0 +1,72 @@
+<h3>Why not just fine-tune the flow policy with RL?</h3>
+<p>You have a decent policy from imitation (task&nbsp;4, Flow-BC). The natural next step is to improve it with reward. But a flow-matching policy does not hand you a likelihood
+or a one-step action: an action is the end point of an ODE integrated over \(K\) network calls, and it is only trained to match demonstrations.
+That makes the textbook policy-gradient and actor-critic recipes awkward. Two lines of recent work attack exactly this; both are <b>literature context only</b>, nothing in this lab
+reproduces them and none of their numbers are ours.</p>
+<p><b>DPPO</b> (Ren et al., &ldquo;Diffusion Policy Policy Optimization&rdquo;, arXiv&nbsp;2409.00588) treats the <em>denoising chain</em> as an inner Markov decision process
+and runs PPO through it: every denoising step becomes a Gaussian action whose log-probability is available, so the policy gradient flows back through the whole chain. It works,
+but the effective horizon is the environment horizon times the number of denoising steps, which makes credit assignment and compute heavy.</p>
+<p><b>FQL</b> (Park et al., &ldquo;Flow Q-Learning&rdquo;, arXiv&nbsp;2502.02538) avoids back-propagating through the ODE: it distils the multi-step flow into a
+<em>one-step</em> policy and trains that policy against the critic while a distillation term keeps it close to the flow (the behaviour prior). The price is a second network
+and a regularisation weight to tune.</p>
+
+<h3>Why a residual is the pragmatic first rung</h3>
+<p>The simplest way to leave the generative model alone is to <b>not touch it</b>. Freeze the flow policy and learn a small, cheap, ordinary actor that adds a correction:</p>
+<p>$$a_t=\operatorname{clip}\big(a^{\text{base}}_t+\alpha\,\delta_t\big),\qquad \delta_t=\pi_\theta\big(o_t,\;a^{\text{base}}_t\big)\in[-1,1]^2$$</p>
+<svg viewBox="0 0 660 250" role="img" aria-label="Schematic: the observation goes into a frozen flow policy and into a residual actor which also sees the base action; their outputs are summed with the scale alpha and clipped; TD3 critics train only the residual actor" style="width:100%;max-width:660px;font-family:var(--mono);font-size:11px">
+  <defs><marker id="rrA" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--muted)"/></marker></defs>
+  <rect x="10" y="95" width="70" height="40" rx="6" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="45" y="119" text-anchor="middle" fill="var(--ink)">obs o</text>
+  <rect x="150" y="20" width="190" height="52" rx="8" fill="var(--chip)" stroke="var(--muted)" stroke-width="1.5"/>
+  <text x="245" y="42" text-anchor="middle" fill="var(--ink)">frozen flow policy</text>
+  <text x="245" y="58" text-anchor="middle" fill="var(--muted)">K steps, no gradient</text>
+  <rect x="150" y="150" width="190" height="52" rx="8" fill="var(--chip)" stroke="var(--accent)" stroke-width="2"/>
+  <text x="245" y="172" text-anchor="middle" fill="var(--accent)">residual actor (TD3)</text>
+  <text x="245" y="188" text-anchor="middle" fill="var(--muted)">sees [o, a_base]</text>
+  <circle cx="450" cy="111" r="20" fill="var(--panel)" stroke="var(--ink)" stroke-width="1.5"/>
+  <text x="450" y="116" text-anchor="middle" fill="var(--ink)" font-size="16">+</text>
+  <text x="450" y="146" text-anchor="middle" fill="var(--muted)">&alpha; &middot; &delta;</text>
+  <rect x="520" y="95" width="125" height="40" rx="6" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="582" y="119" text-anchor="middle" fill="var(--ink)">clip &rarr; env</text>
+  <line x1="80" y1="108" x2="150" y2="50" stroke="var(--muted)" marker-end="url(#rrA)"/>
+  <line x1="80" y1="122" x2="150" y2="170" stroke="var(--muted)" marker-end="url(#rrA)"/>
+  <line x1="340" y1="46" x2="440" y2="100" stroke="var(--muted)" marker-end="url(#rrA)"/>
+  <text x="400" y="62" fill="var(--muted)">a_base</text>
+  <line x1="245" y1="72" x2="245" y2="150" stroke="var(--muted)" stroke-dasharray="3 3" marker-end="url(#rrA)"/>
+  <line x1="340" y1="176" x2="440" y2="122" stroke="var(--accent)" marker-end="url(#rrA)"/>
+  <line x1="470" y1="111" x2="520" y2="115" stroke="var(--muted)" marker-end="url(#rrA)"/>
+  <text x="340" y="232" text-anchor="middle" fill="var(--loss)">TD3 losses (critic TD error, actor &minus;Q) update ONLY the residual actor and the critics</text>
+</svg>
+<p class="ref">The critics see the same input \([o,a^{\text{base}}]\) and the stored action is \(\delta\) (not the sum), so the learning problem is an ordinary continuous-control TD3 problem
+whose &ldquo;environment&rdquo; happens to contain a good controller. The last layer of the actor starts near zero, so training <b>begins at the base policy&rsquo;s own
+behaviour</b> and can only walk away from it if the critic says so.</p>
+
+<h3>What gets trained</h3>
+<p>The standard TD3 pair (Fujimoto et al., 2018; the repo&rsquo;s <code>fvb.policy.td3</code>, the same one task&nbsp;6 uses) with no demonstrations and no imitation term:</p>
+<p>$$L_Q=\sum_{i=1,2}\big(Q_i(s,\delta)-y\big)^2,\quad y=r+\gamma\,(1-d)\min_i \bar Q_i\big(s',\,\bar\pi(s')+\varepsilon\big),\qquad L_\pi=-\,Q_1\big(s,\pi_\theta(s)\big)$$</p>
+<p>The flow weights never appear in either loss. <b>Residual scale</b> \(\alpha\) is the safety dial: it bounds how far the correction can push (a delta of 1 moves the action by \(\alpha\)).
+A small \(\alpha\) is safe but can only polish the base; a large one can repair a bad base but also break a good one.</p>
+
+<h3>The reward (this lab&rsquo;s own definition)</h3>
+<p>The repo has no residual-RL experiment to copy: <code>scripts/42_ta_tutorial_t5.py</code> (&ldquo;T5&rdquo;) is a <em>supervised</em> flow policy on MuJoCo insertion, not RL, and its recorded
+result is that the force token gave no measurable benefit (zeroed 34.7&nbsp;% / suffix 35.3&nbsp;% / suffix + aux 40.0&nbsp;%, aux vs zeroed p&nbsp;=&nbsp;0.40), with failures mostly timeouts.
+So the reward here is defined in the same spirit as the arm task&rsquo;s (<code>fvb.policy.rl_env</code>, task&nbsp;6), on the contact world&rsquo;s own signals:</p>
+<ul>
+<li><b>depth progress</b>: the change of the peg&rsquo;s depth below the local surface level, scaled so that a full insertion is worth about 1;</li>
+<li><b>potential-based shaping</b> toward the true hole (privileged: only the reward sees it, the actor does not), weight <em>Hole-shaping</em>;</li>
+<li><b>time cost</b> every step; <b>force penalty</b> on the excess above half the abort level; <b>+10</b> on success, <b>&minus;5</b> on a force abort.</li>
+</ul>
+<p>Timeouts bootstrap (the observation does not know the clock); success and abort end the episode.</p>
+
+<h3>What to watch</h3>
+<ul>
+<li>The <em>Success</em> chart has a flat line, <b>the frozen base&rsquo;s success</b>, measured once on the same fixed scenes at the start. The only question that matters is whether the
+residual curve climbs above it. A residual that sits on or under the line has learned nothing useful (or has hurt a base that was already good).</li>
+<li><em>Residual size</em> starts near 0. If it grows while success does not, the critic is chasing noise; check the <em>Q estimate</em> chart for divergence.</li>
+<li>With a base that is already near-perfect there is no headroom; with a weak base (few steps, few demos) there is plenty. Try both, and compare <b>Residual off</b> in the evaluation.</li>
+</ul>
+
+<h3>How to read the evaluation</h3>
+<p>Evaluate once with the residual on and once with <em>Residual off</em> (the same checkpoint, the base alone) on the same seed: the same 400 scenes, so the difference is the residual.
+In the viewer the action grids show the base policy&rsquo;s action, the residual that was added, and the summed action that reached the peg. The numbers from <em>your</em> runs are the
+result of this task; nothing on this page is a measurement. The checkpoint embeds the base weights it needs, so it still evaluates after the Flow-BC run it started from is deleted.</p>

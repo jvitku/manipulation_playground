@@ -12,5 +12,6 @@ from lab.tasks import (
     task5_tavla,  # noqa: F401
     task6_td3,  # noqa: F401
     task7_td3bc,  # noqa: F401
+    task8_residual,  # noqa: F401
     task_embed,  # noqa: F401
 )

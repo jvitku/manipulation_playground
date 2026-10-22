@@ -382,7 +382,7 @@
         + "one chosen at this step (newest last; grey = no action, the episode has ended). Red negative, black zero, green positive; hover for values." }));
     }
     container.replaceChildren(wrap);
-    let gridEp = null, forceG = null, actG = null, encG = null;
+    let gridEp = null, forceG = null, actG = null, encG = null, baseG = null, deltaG = null;
     function drawGrids(e, st) {
       if (!vgBox) return;
       const HW = 10, win = [];
@@ -393,6 +393,10 @@
         vgBox.replaceChildren();
         forceG = window.LabVecGrid.render(vgBox, win, { title: blind ? "force window (blinded: zeros)" : "force window 10x2 (N)", vmax: C2_FABORT });
         actG = hasAct ? window.LabVecGrid.render(vgBox, [[0, 0]], { title: "actions 10x2 (ax, az): previous 9 + chosen now", vmax: 1 }) : null;
+        // residual-rl task: the frozen base policy's action and the residual that was added to it
+        const hasRes = hasAct && Array.isArray(e.base_act) && e.base_act.length === e.act.length && Array.isArray(e.delta);
+        baseG = hasRes ? window.LabVecGrid.render(vgBox, [[0, 0]], { title: "base policy action 10x2 (frozen flow net)", vmax: 1 }) : null;
+        deltaG = hasRes ? window.LabVecGrid.render(vgBox, [[0, 0]], { title: "residual added 10x2 (scale x delta)", vmax: 0.5 }) : null;
         // embeddings task: the command vector the net consumed for this episode (raw; text = pooled learned embedding)
         encG = Array.isArray(e.enc) && e.enc.length
           ? window.LabVecGrid.render(vgBox, e.enc, { title: `command encoding (${(result && result.encoding) || "enc"}, ${e.enc.length}-D)`, cols: Math.min(e.enc.length, 8) }) : null;
@@ -404,6 +408,12 @@
         // act[i] is chosen at step i (moves pos[i] -> pos[i+1]); beyond the last step it does not exist -> n/a
         for (let i = st - HW + 1; i <= st; i++) acts.push(i < 0 ? [NaN, NaN] : i < e.act.length ? e.act[i] : [NaN, NaN]);
         actG.update(acts);
+        for (const [g2, key] of [[baseG, "base_act"], [deltaG, "delta"]]) {
+          if (!g2) continue;
+          const rows = [];
+          for (let i = st - HW + 1; i <= st; i++) rows.push(i < 0 ? [NaN, NaN] : i < e[key].length ? e[key][i] : [NaN, NaN]);
+          g2.update(rows);
+        }
       }
     }
     const g = canvas.getContext("2d"), gs = strip.getContext("2d");

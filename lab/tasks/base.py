@@ -6,9 +6,17 @@ from dataclasses import dataclass
 
 @dataclass
 class Param:
+    """A tunable parameter. `kind` is "int" | "float" | "choice" | "bool" | "ckpt".
+
+    kind "ckpt": a checkpoint of another task, picked from a dropdown the frontend fills from
+    `ckpt_task`'s checkpoints (GET /api/tasks/<ckpt_task>). The form sends the checkpoint id
+    "<run_id>/<file>"; on a training start the server checks that the id exists under that
+    task's runs (422 otherwise) and replaces it with the absolute file path in the run's config.
+    """
+
     name: str
     label: str
-    kind: str  # "int" | "float" | "choice" | "bool"
+    kind: str  # "int" | "float" | "choice" | "bool" | "ckpt"
     default: object
     min: float | None = None
     max: float | None = None
@@ -16,6 +24,7 @@ class Param:
     choices: list | None = None
     help: str = ""
     long: bool = False  # True marks params that make runs hours-long
+    ckpt_task: str = ""  # kind "ckpt": the task whose checkpoints the dropdown lists
 
 
 @dataclass

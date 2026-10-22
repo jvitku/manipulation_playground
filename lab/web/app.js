@@ -52,6 +52,19 @@
   }
 
   // ---------- param forms ----------
+  async function fillCkptSelect(select, taskId) {
+    let cks = [];
+    try { cks = ((await api("GET", `/api/tasks/${encodeURIComponent(taskId)}`)).checkpoints) || []; } catch (e) { /* empty list */ }
+    select.replaceChildren();
+    for (const c of cks) {
+      const m = c.metrics || {};
+      const key = Object.keys(m).find((k) => typeof m[k] === "number");
+      const head = key ? ` · ${key} ${Number(m[key]).toPrecision(3)}` : "";
+      select.append(el("option", { value: c.id, text: `step ${fmtInt(c.step)}${c.label ? " · " + c.label : ""}${head} · run ${c.run_id}` }));
+    }
+    if (!select.options.length) select.append(el("option", { value: "", text: `no ${taskId} checkpoints yet — train one first` }));
+  }
+
   function buildForm(params, container) {
     container.replaceChildren();
     const inputs = {};
@@ -67,6 +80,11 @@
       } else if (p.kind === "bool") {
         input = el("input", { type: "checkbox" });
         input.checked = !!p.default;
+      } else if (p.kind === "ckpt") {
+        // a checkpoint of another task (p.ckpt_task): options come from that task's detail endpoint
+        input = el("select");
+        input.append(el("option", { value: "", text: "loading checkpoints…" }));
+        fillCkptSelect(input, p.ckpt_task);
       } else {
         input = el("input", { type: "number", step: p.step != null ? p.step : p.kind === "int" ? 1 : "any" });
         if (p.min != null) input.min = p.min;
@@ -85,6 +103,7 @@
         for (const { p, input } of Object.values(inputs)) {
           if (p.kind === "choice") out[p.name] = p.choices[Number(input.value)];
           else if (p.kind === "bool") out[p.name] = input.checked;
+          else if (p.kind === "ckpt") out[p.name] = input.value;
           else if (input.value === "") out[p.name] = p.default;
           else out[p.name] = p.kind === "int" ? parseInt(input.value, 10) : parseFloat(input.value);
         }
@@ -97,7 +116,11 @@
             const i = p.choices.findIndex((c) => c === v);
             input.value = String(i < 0 ? 0 : i);
           } else if (p.kind === "bool") input.checked = !!v;
-          else input.value = v;
+          else if (p.kind === "ckpt") {
+            // a started run stores the resolved file path; match the option whose id ends it
+            const o = Array.from(input.options).find((x) => x.value && typeof v === "string" && (v === x.value || v.endsWith("/runs/" + p.ckpt_task + "/" + x.value.replace("/", "/ckpt/"))));
+            if (o) input.value = o.value;
+          } else input.value = v;
         }
       },
       reset() { this.set(null); },

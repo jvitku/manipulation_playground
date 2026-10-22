@@ -44,6 +44,8 @@ def _coerce(p, value):
         if value not in (p.choices or []):
             raise ValueError(f"param {p.name!r}: {value!r} not in {p.choices}")
         return value
+    if p.kind == "ckpt":
+        return "" if value is None else str(value)
     if p.kind in ("int", "float"):
         try:
             num = float(value)

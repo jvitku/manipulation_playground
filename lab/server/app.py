@@ -63,6 +63,22 @@ def _spec(task_id: str):
         raise HTTPException(404, f"unknown task {task_id!r}") from None
 
 
+def _resolve_ckpt(task_id: str, ckpt_id: str) -> Path:
+    """Checkpoint id "<run_id>/<file>" of `task_id` -> its file; 404 if unsafe/missing/foreign."""
+    run_id, _, fname = str(ckpt_id or "").partition("/")
+    try:
+        _safe(task_id)
+        _safe(run_id)
+        _safe(fname)
+    except HTTPException:
+        raise HTTPException(404, "checkpoint not found") from None
+    runs_dir = (data_root() / "runs" / task_id).resolve()
+    ckpt = (runs_dir / run_id / "ckpt" / fname).resolve()
+    if not ckpt.is_relative_to(runs_dir) or not ckpt.is_file():
+        raise HTTPException(404, "checkpoint not found")
+    return ckpt
+
+
 def _params_dicts(params) -> list[dict]:
     return [dataclasses.asdict(p) for p in params]
 
@@ -176,6 +192,17 @@ def create_app() -> FastAPI:
             params = registry.validate_params(s, body.get("params") or {}, which="train")
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
+        for p in s.params:  # kind "ckpt": a checkpoint of another task, id -> absolute path
+            if p.kind != "ckpt":
+                continue
+            if not params.get(p.name):
+                raise HTTPException(422, f"param {p.name!r}: pick a {p.ckpt_task} checkpoint")
+            try:
+                params[p.name] = str(_resolve_ckpt(p.ckpt_task, params[p.name]))
+            except HTTPException:
+                raise HTTPException(
+                    422, f"param {p.name!r}: no such {p.ckpt_task} checkpoint"
+                ) from None
         d = _start("train", "runs", s.id, {"task": s.id, "params": params})
         return {"run_id": d.name}
 
@@ -207,16 +234,7 @@ def create_app() -> FastAPI:
     @app.post("/api/tasks/{task_id}/evals")
     def start_eval(task_id: str, body: dict):
         s = _spec(task_id)
-        run_id, _, fname = str(body.get("ckpt", "")).partition("/")
-        try:
-            _safe(run_id)
-            _safe(fname)
-        except HTTPException:
-            raise HTTPException(404, "checkpoint not found") from None
-        runs_dir = (data_root() / "runs" / s.id).resolve()
-        ckpt = (runs_dir / run_id / "ckpt" / fname).resolve()
-        if not ckpt.is_relative_to(runs_dir) or not ckpt.is_file():
-            raise HTTPException(404, "checkpoint not found")
+        ckpt = _resolve_ckpt(s.id, str(body.get("ckpt", "")))
         try:
             params = registry.validate_params(s, body.get("params") or {}, which="eval")
         except ValueError as e:
