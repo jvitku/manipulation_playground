@@ -50,8 +50,9 @@ def train_loop(
     payload_wrap: Callable[[dict], dict] | None = None,
 ):
     """Train `model`; returns True if all steps ran, False if stopped early
-    (a final ckpt is saved). `prefix` is prepended to loss/val_loss/lr metric names; `step_offset`/`total_steps` place this phase inside a longer multi-phase status bar and
-    keep checkpoint file names unique across phases."""
+    (a final ckpt is saved). `prefix` is prepended to loss/val_loss/lr metric names;
+    `step_offset`/`total_steps` place this phase inside a longer multi-phase run (status bar,
+    metric and checkpoint step numbering) and keep checkpoint file names unique across phases."""
     torch.manual_seed(seed)
     dev = ds.device
     model.to(dev)
