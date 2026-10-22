@@ -30,8 +30,11 @@ def frames_to_mp4(frames_iter: Iterable[np.ndarray], path: str | Path, fps: int 
         for f in frames_iter:
             w.append_data(np.ascontiguousarray(f))
             n += 1
-    finally:
+    except BaseException:
         w.close()
+        tmp.unlink(missing_ok=True)
+        raise
+    w.close()
     if n == 0:
         tmp.unlink(missing_ok=True)
         raise ValueError("frames_to_mp4: no frames")

@@ -13,7 +13,7 @@ opening; &gt;60 N aborts; 8 s is the time limit.</p>
 <b>H = 10</b> past observations and the next <b>K = 5</b> expert actions. Each observation has 18 numbers: position (3),
 velocity (3), <b>compensated force and torque (6)</b>, <b>a summary of the high-rate force over the interval (3)</b> and the last action (3).
 The 9 force numbers are the <b>force token</b>. <em>Demo action noise</em> perturbs the <em>executed</em> action while collecting
-(labels stay the clean expert action); Stage 1's own data used none, so set it to 0 for the closest replica.</p>
+(labels stay the clean expert action). The default is <b>0</b>, a replica of Stage 1, which used none; <b>0.5 mm</b> is a robustness experiment (in a check run it lifted the no-force twin from 5/50 to 14/50 while the force policy stayed at 50/50, so the gap narrows).</p>
 
 <h3>The method: ACT-lite</h3>
 <p>A small action-chunking transformer. The H observation tokens go through a linear embedding plus learned positions and a 3-layer
@@ -115,6 +115,6 @@ video; the grid is the force part of the window the net reads at that moment. A 
 <li><b>Policy</b>: <code>act</code> (history transformer) or <code>mlp</code> (flattened window). <b>History H</b> and <b>chunk K</b> default to the Stage-1 10 and 5.</li>
 <li><b>Feed the force channels</b>: off = the zeroed twin, trained blind.</li>
 <li><b>Epochs</b> (default 40) and <b>learning rate</b> (3e-4, cosine decay, AdamW, batch 256). A checkpoint is kept at each validation improvement and at the end.</li>
-<li><b>Demo action noise</b>: see &ldquo;The data&rdquo;. Evaluation: <em>Hole offset sigma</em> (trained at 1.5; the repo reports that the force policy still reaches 50/50 at 3 mm),
+<li><b>Demo action noise</b> (default 0 = Stage-1 replica; 0.5 = robustness experiment): see &ldquo;The data&rdquo;. Evaluation: <em>Hole offset sigma</em> (trained at 1.5; the repo reports that the force policy still reaches 50/50 at 3 mm),
 <em>Clearance</em>, <em>Zero the force input</em>, <em>Episodes to render</em> (the video concatenates them, each behind a short title card) and the eval seed.</li>
 </ul>

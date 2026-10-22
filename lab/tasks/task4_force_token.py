@@ -52,7 +52,7 @@ from lab.tasks.task1_bc_mse import OVERHEAD_S, wilson95
 
 FPS = 20  # control rate = real time
 OUTCOMES = ("success", "force_abort", "timeout")
-BUCKET_EDGES = [0.0, 0.5, 1.0, 2.0, 3.0, 6.0]  # |hole offset| mm (script 11's bins)
+BUCKET_EDGES = [0.0, 0.5, 1.0, 2.0, 3.0, 6.0, None]  # |offset| mm; last bucket open-ended (6+)
 DEMO_SEED0, EVAL_SEED0 = 1000, 50000  # eval seeds are disjoint from data (train seed <= 40)
 BATCH, WD, VAL_FRAC = 256, 1e-4, 0.1
 ACT_KW = {"dropout": 0.1, "input_norm": True}  # script 10 defaults
@@ -253,6 +253,14 @@ def _episode(policy, p: TaskParams, seed: int, render: bool):
                         cv2.LINE_AA)  # fmt: skip
         return img
 
+    try:
+        return (yield from _run(policy, task, render, frame, fmag, fz, ser, seed))
+    finally:
+        if rend is not None:
+            rend.close()
+
+
+def _run(policy, task, render, frame, fmag, fz, ser, seed):
     if render:
         yield frame()
     done, reason, peak, n_jams, retracting = False, None, 0.0, 0, False
@@ -280,7 +288,6 @@ def _episode(policy, p: TaskParams, seed: int, render: bool):
         last = frame(reason)
         for _ in range(FPS):  # hold the result for 1 s
             yield last
-        rend.close()
     rec = {"seed": seed, "offset_mm": np.round(1e3 * task.hole_xy, 3).tolist(), "outcome": reason,
            "steps": task.k, "peak_F_N": round(peak, 3), "recoveries": n_jams,
            "final_depth_mm": round(1e3 * task.depth(), 3)}  # fmt: skip
@@ -314,8 +321,14 @@ def evaluate(ctx) -> None:
 
     rows, rendered = [], []
 
+    stopped = False
+
     def frames():
+        nonlocal stopped
         for i in range(render_n):
+            if not ctx.should_continue():
+                stopped = True
+                return
             gen = _episode(policy, p, seeds[i], True)
             ox, oy = (1e3 * GantryTask(p, seeds[i]).hole_xy).tolist()
             title = [f"episode {i + 1} of {render_n}", f"seed {seeds[i]}",
@@ -326,9 +339,23 @@ def evaluate(ctx) -> None:
             rec = yield from gen
             rendered.append(rec)
 
+    video = None
     if render_n:
-        frames_to_mp4(frames(), ctx.dir / "rollout.mp4", fps=FPS)
-        rows.extend(rendered)
+        try:
+            frames_to_mp4(frames(), ctx.dir / "rollout.mp4", fps=FPS)
+            video = "rollout.mp4"
+            rows.extend(rendered)
+        except Exception as e:  # noqa: BLE001 - a render failure must not lose the statistics
+            print(f"video rendering failed ({type(e).__name__}: {e}); re-running unrendered")
+            ctx.set_status(message=f"video failed: {type(e).__name__}: {e}")
+            (ctx.dir / "rollout.mp4").unlink(missing_ok=True)
+            # the rendered episodes are re-run without rendering: same seeds, so same outcomes,
+            # but no per-step series (the viewer then shows tables only)
+            for i in range(render_n):
+                rows.append(_drain(_episode(policy, p, seeds[i], False)))
+        if stopped:
+            ctx.set_status(state="stopped")
+            return
         ctx.set_status(step=render_n, total_steps=n)
     for i in range(render_n, n):
         if not ctx.should_continue():
@@ -344,7 +371,7 @@ def evaluate(ctx) -> None:
     edges = BUCKET_EDGES
     buckets = []
     for lo, hi in zip(edges[:-1], edges[1:], strict=True):
-        sel = (mags >= lo) & (mags < hi)
+        sel = (mags >= lo) & (mags < hi) if hi is not None else (mags >= lo)
         buckets.append({"lo": lo, "hi": hi, "n": int(sel.sum()),
                         "success": float(ok[sel].mean()) if sel.any() else None})  # fmt: skip
     atomic_write_json(
@@ -353,7 +380,7 @@ def evaluate(ctx) -> None:
          "counts": {o: int(cnt.get(o, 0)) for o in OUTCOMES}, "wilson95": wilson95(k, n),
          "force_zeroed": zeroed, "trained_with_force": trained_with_force,
          "model": policy.meta["model"], "H": policy.H, "K": policy.K, "clearance_mm": clearance,
-         "offset_sigma_mm": sigma, "fps": FPS, "video": "rollout.mp4" if render_n else None,
+         "offset_sigma_mm": sigma, "fps": FPS, "video": video,
          "buckets": buckets, "episodes": rows[:render_n]},
     )  # fmt: skip
     ctx.done("evaluated")
@@ -384,8 +411,9 @@ SPEC = TaskSpec(
         Param("lr", "Learning rate", "float", 3e-4, min=1e-4, max=3e-3),
         Param("H", "History length H", "int", 10, min=4, max=20, step=1),
         Param("K", "Action chunk K", "int", 5, min=1, max=10, step=1),
-        Param("noise_mm", "Demo action noise (mm)", "float", 0.5, min=0.0, max=2.0, step=0.1,
-              help="noise on the executed expert action while collecting; labels stay clean"),
+        Param("noise_mm", "Demo action noise (mm)", "float", 0.0, min=0.0, max=2.0, step=0.1,
+              help="expert execution noise (mm), labels stay clean; 0 = Stage-1 replica, "
+              "0.5 = robustness experiment"),
         Param("train_seed", "Training seed", "int", 0, min=0, max=40),
     ],
     eval_params=[

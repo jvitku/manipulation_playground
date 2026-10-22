@@ -101,3 +101,67 @@ def test_task4_force_zeroed_twin(tmp_path, trained):
     t4.evaluate(ev)
     res = json.loads((ev.dir / "result.json").read_text())
     assert res["force_zeroed"] is True and res["trained_with_force"] is True
+
+
+def test_task4_default_noise_is_zero():
+    spec = registry.get("force-token")
+    assert registry.validate_params(spec, {}, which="train")["noise_mm"] == 0.0
+
+
+def test_task4_buckets_open_ended_at_large_sigma(tmp_path, trained):
+    ev = make_ctx(tmp_path / "eval", {"ckpt": str(trained.dir / "ckpt" / "last.pt"),
+                                      "n_episodes": 12, "render_n": 0,
+                                      "offset_sigma_mm": 3.0})  # fmt: skip
+    t4.evaluate(ev)
+    res = json.loads((ev.dir / "result.json").read_text())
+    assert sum(b["n"] for b in res["buckets"]) == 12
+    assert res["buckets"][-1]["hi"] is None
+
+
+def test_task4_render_failure_keeps_stats(tmp_path, trained, monkeypatch):
+    def boom(frames, path, fps=20):
+        next(iter(frames))  # start rendering, then fail mid-way
+        (tmp_path / "x").write_text("")
+        raise RuntimeError("ffmpeg exploded")
+
+    monkeypatch.setattr(t4, "frames_to_mp4", boom)
+    ev = make_ctx(tmp_path / "eval", {"ckpt": str(trained.dir / "ckpt" / "last.pt"),
+                                      "n_episodes": 3, "render_n": 2})  # fmt: skip
+    t4.evaluate(ev)
+    assert read_status(ev.dir)["state"] == "done"
+    res = json.loads((ev.dir / "result.json").read_text())
+    assert res["video"] is None and sum(res["counts"].values()) == 3
+    assert len(res["episodes"]) == 2 and all("force" not in e for e in res["episodes"])
+    assert not (ev.dir / "rollout.mp4").exists()
+
+
+def test_frames_to_mp4_error_removes_partial(tmp_path):
+    import numpy as np
+
+    def gen():
+        yield np.zeros((32, 48, 3), np.uint8)
+        raise RuntimeError("x")
+
+    with pytest.raises(RuntimeError):
+        frames_to_mp4(gen(), tmp_path / "a.mp4")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_task4_stop_mid_epochs_keeps_usable_ckpt(tmp_path):
+    ctx = make_ctx(tmp_path / "run", {**TINY, "epochs": 5})
+    real = ctx.should_continue
+    from lab.core.runctx import POLL_S  # noqa: F401
+
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] > TINY["demos"] + 2:  # collection ok, epoch 0 and 1 run, then stop
+            ctx._stop = True
+        return real()
+
+    ctx.should_continue = flaky
+    t4.train(ctx)
+    assert read_status(ctx.dir)["state"] == "stopped"
+    ck = torch.load(ctx.dir / "ckpt" / "last.pt", weights_only=False)
+    assert ck["epoch"] >= 1 and ck["meta"]["model"] == "act"

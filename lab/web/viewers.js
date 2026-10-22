@@ -574,7 +574,7 @@
     if (bk.length) {
       const bt = h("table", { class: "out", style: "margin-top:8px" });
       bt.append(h("tr", {}, ...["|hole offset| mm", "episodes", "success"].map((t) => h("th", { text: t }))));
-      for (const b of bk) bt.append(h("tr", {}, h("td", { text: `${b.lo} – ${b.hi}` }), h("td", { text: String(b.n) }), h("td", { text: pct(b.success) })));
+      for (const b of bk) bt.append(h("tr", {}, h("td", { text: b.hi == null ? `${b.lo}+` : `${b.lo} – ${b.hi}` }), h("td", { text: String(b.n) }), h("td", { text: pct(b.success) })));
       wrap.append(bt, h("p", { class: "note", text: `Clearance ${r.clearance_mm} mm: offsets under about half of it go in without any search; the force policy earns its keep on the larger ones.` }));
     }
     const vid = h("video", { controls: "", preload: "metadata", style: "width:100%;max-width:640px;display:block;margin:10px 0;border-radius:8px;background:#000" });
