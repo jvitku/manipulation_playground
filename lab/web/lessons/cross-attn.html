@@ -1,0 +1,179 @@
+<h3>The question</h3>
+<p>Tasks 6 and 7 used <em>self</em>-attention: every token asks a question of the other tokens of the <em>same</em> sequence.
+Many problems have two sequences instead. A translator reads a sentence and writes another one; a robot policy reads a history
+of observations and writes a chunk of actions. The writer needs to look at the reader's notes, but the notes are not part of
+its own sequence. <b>Cross-attention</b> is attention where the questions come from one sequence and the keys and values from
+another. This task is the smallest honest case: rewrite a date written three different ways as an ISO date, one character at a
+time, and watch which source character the decoder reads for each character it writes.</p>
+
+<h3>The task</h3>
+<p>The source is a date between 1970 and 2070 in one of three formats, drawn uniformly: <code>23 Oct 2026</code>,
+<code>Oct 23, 2026</code> or <code>23/10/2026</code>. The target is always <code>2026-10-23</code>. The model works on
+characters (36 symbols plus padding, start and end markers: a vocabulary of 39). The 36&thinsp;890 days are split <b>by day</b>
+with a fixed hash: 33&thinsp;200 days for training and 3&thinsp;690 held out, so a day is never in both. The chart
+<em>held-out exact-match</em> decodes held-out days with the model's own output and counts a date as right only if all ten
+characters match, so it cannot be passed by memorising the training dates. Chance is essentially 0: the first measured value
+of the default run is 0.0.</p>
+<p>The loss is the cross-entropy of every target character. Training uses <b>teacher forcing</b>: the decoder is fed
+<code>&lt;bos&gt;</code> followed by the <em>true</em> target characters, shifted right by one, and at every position must predict
+the next one (and finally <code>&lt;eos&gt;</code>), all positions in one parallel pass:</p>
+<p>$$L = -\frac{1}{N}\sum_{t}\log p_\theta\!\left(y_t \mid y_{<t},\, x\right)$$</p>
+<p class="ref">\(x\) is the source, \(y_t\) the target character at position \(t\), padding positions are ignored. At test time
+there is no target: <code>greedy_decode</code> starts from <code>&lt;bos&gt;</code> alone and feeds back its <em>own</em> most
+likely character until it emits <code>&lt;eos&gt;</code>.</p>
+
+<h3>The method: where Q, K and V come from</h3>
+<p>In self-attention one sequence produces all three. In cross-attention they come from two places. With \(X\) the decoder's
+hidden states (one row per output position) and \(M\) the encoder's output, the <b>memory</b> (one row per source character):</p>
+<p>$$Q = X W_Q,\qquad K = M W_K,\qquad V = M W_V,\qquad
+A = \operatorname{softmax}\!\left(\frac{Q K^{\top}}{\sqrt{d_k}}\right),\qquad \text{out} = A\,V$$</p>
+<p class="ref">\(A\) has one row per <em>output</em> position and one column per <em>source</em> position
+(11 &times; 12 here): row \(t\) says how much of each source character output \(t\) reads. That matrix is the
+<b>alignment</b> the app draws. Nothing else changes from task 6: the same <code>MHA</code> code in
+<code>lab/tasks/minitf.py</code> is called with <code>x_q = X</code> and <code>x_kv = M</code> instead of one input twice.</p>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 790 350" role="img" aria-label="Source characters go through embeddings and an encoder block to the memory. The decoder, fed the start token and the target shifted right, runs causal self-attention, then cross-attention whose queries come from the decoder and whose keys and values come from the encoder memory, then an MLP, a linear head and the cross-entropy loss." style="width:100%;max-width:790px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="caA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--muted)"/>
+    </marker>
+    <marker id="caK" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--accent)"/>
+    </marker>
+    <marker id="caL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--loss)"/>
+    </marker>
+  </defs>
+  <text x="115" y="14" text-anchor="middle" fill="var(--ink)" font-weight="700">ENCODER (reads the source)</text>
+  <text x="520" y="14" text-anchor="middle" fill="var(--ink)" font-weight="700">DECODER (writes the target)</text>
+  <!-- encoder column -->
+  <rect x="15" y="298" width="200" height="40" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="115" y="315" text-anchor="middle" fill="var(--ink)">source chars</text>
+  <text x="115" y="329" text-anchor="middle" fill="var(--muted)">"23 Oct 2026" (12 ids)</text>
+  <line x1="115" y1="298" x2="115" y2="276" stroke="var(--muted)" marker-end="url(#caA)"/>
+  <rect x="15" y="240" width="200" height="34" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="115" y="261" text-anchor="middle" fill="var(--ink)">char emb + position emb</text>
+  <line x1="115" y1="240" x2="115" y2="218" stroke="var(--muted)" marker-end="url(#caA)"/>
+  <rect x="15" y="150" width="200" height="66" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="115" y="172" text-anchor="middle" fill="var(--ink)">encoder Block</text>
+  <text x="115" y="188" text-anchor="middle" fill="var(--muted)">self-attention (Q, K, V all</text>
+  <text x="115" y="202" text-anchor="middle" fill="var(--muted)">from the source) + MLP</text>
+  <line x1="115" y1="150" x2="115" y2="128" stroke="var(--muted)" marker-end="url(#caA)"/>
+  <rect x="15" y="88" width="200" height="38" rx="8" fill="var(--chip)" stroke="var(--ink)" stroke-width="1.6"/>
+  <text x="115" y="104" text-anchor="middle" fill="var(--ink)" font-weight="700">memory M</text>
+  <text x="115" y="118" text-anchor="middle" fill="var(--muted)">(12, d_model)</text>
+  <!-- decoder column -->
+  <rect x="320" y="298" width="400" height="40" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="520" y="315" text-anchor="middle" fill="var(--ink)">&lt;bos&gt; 2 0 2 6 - 1 0 - 2 3 (11 ids)</text>
+  <text x="520" y="329" text-anchor="middle" fill="var(--muted)">training: the true target, shifted right. Inference: its own output</text>
+  <line x1="520" y1="298" x2="520" y2="276" stroke="var(--muted)" marker-end="url(#caA)"/>
+  <rect x="320" y="240" width="400" height="34" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="520" y="261" text-anchor="middle" fill="var(--ink)">char emb + position emb</text>
+  <rect x="300" y="52" width="440" height="184" rx="10" fill="none" stroke="var(--line)" stroke-dasharray="4 3"/>
+  <text x="318" y="68" fill="var(--muted)">CrossBlock</text>
+  <line x1="520" y1="240" x2="520" y2="214" stroke="var(--muted)" marker-end="url(#caA)"/>
+  <rect x="340" y="176" width="360" height="36" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="520" y="192" text-anchor="middle" fill="var(--ink)">masked self-attention</text>
+  <text x="520" y="206" text-anchor="middle" fill="var(--muted)">looks only at earlier output chars</text>
+  <line x1="520" y1="176" x2="520" y2="154" stroke="var(--accent)" stroke-width="2" marker-end="url(#caK)"/>
+  <text x="530" y="168" fill="var(--accent)" font-weight="700">Q</text>
+  <rect x="340" y="110" width="360" height="42" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <text x="520" y="127" text-anchor="middle" fill="var(--ink)" font-weight="700">cross-attention</text>
+  <text x="520" y="142" text-anchor="middle" fill="var(--muted)">A = softmax(Q K&#7511; / &radic;d_k) : (11 out, 12 src)</text>
+  <!-- K,V from memory -->
+  <path d="M215 107 L270 107 L270 131 L338 131" fill="none" stroke="var(--accent)" stroke-width="2" marker-end="url(#caK)"/>
+  <text x="222" y="100" fill="var(--accent)" font-weight="700">K, V</text>
+  <text x="242" y="146" fill="var(--muted)">from M, not from the decoder</text>
+  <line x1="520" y1="110" x2="520" y2="92" stroke="var(--muted)" marker-end="url(#caA)"/>
+  <rect x="340" y="72" width="360" height="20" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="520" y="86" text-anchor="middle" fill="var(--ink)">MLP</text>
+  <line x1="520" y1="52" x2="520" y2="36" stroke="var(--muted)" marker-end="url(#caA)"/>
+  <rect x="340" y="20" width="250" height="16" rx="6" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="465" y="32" text-anchor="middle" fill="var(--ink)">LayerNorm + linear -&gt; 39 chars</text>
+  <line x1="590" y1="28" x2="624" y2="28" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#caL)"/>
+  <rect x="626" y="14" width="150" height="28" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <text x="701" y="32" text-anchor="middle" fill="var(--loss)" font-weight="700">L = CE(next char)</text>
+</svg>
+<p class="ref">The wiring is the whole idea: the arrow into the cross-attention box labelled <b>Q</b> comes from the decoder's own
+stream; the arrow labelled <b>K, V</b> comes from the encoder's memory. The loss sits only at the decoder's output; the
+encoder is trained solely through the K and V it supplies. The models are 1 encoder Block and 1 CrossBlock (masked
+self-attention, cross-attention, MLP), width <code>d_model</code> and <code>heads</code> as set; the defaults (64, 4) have
+125&thinsp;863 parameters. The shapes shown are for the defaults of the date formats: 12 source positions (padded), 11 decoder
+positions (&lt;bos&gt; plus the 10 target characters; the 11th output is &lt;eos&gt;).</p>
+
+<h3>What to watch</h3>
+<p>While training, the <b>live attention</b> panel under the charts shows one heatmap per head: the cross-attention of a fixed
+probe pair (<code>Oct 23, 2026</code> &rarr; <code>2026-10-23</code>, teacher-forced), rows = decoder positions, columns = source
+characters (hover for the character). It starts as a near-uniform grey and organises as the loss falls. After training,
+<b>evaluate</b> a checkpoint: the viewer shows the alignment matrix for held-out dates with the character on both axes (pick
+the head), plus the decoder's and encoder's self-attention, and a <b>decode step</b> slider that outlines the row used to emit
+each output character &mdash; slide it and read which source character was fetched at each step.</p>
+<p>Measured in this app (defaults: d_model 64, 4 heads, 1500 steps, batch 128, lr 2e-3, GPU shared with other jobs, about
+12 s a run; seeds 0, 1, 2):</p>
+<ul>
+<li><b>Exact-match on unseen days is 100%</b> (2000 held-out day/format pairs, all three seeds). The curve is a plateau
+followed by a cliff: loss 3.84 at step 5 (a uniform guess over 39 characters is \(\ln 39 = 3.66\)), 2.88 at step 25, 1.46 at
+step 50, 0.92 at step 75 (exact-match still 0.0), 0.10 at step 125, 0.022 at step 150 where the held-out exact-match is
+already 0.998, then 0.0005 at step 1500. In 500-step runs the first check at or above 95% came at step 165, 135 and 135 for the
+three seeds.</li>
+<li>The model is no bigger than it needs to be: 1 head at d_model 32 and 2 heads at d_model 64 also score 100% (2000 examples,
+seed 0).</li>
+<li><b>The decoder really aligns.</b> Measured on 500 held-out days per format, teacher-forced: the share of a head's
+cross-attention weight that falls on the source characters of the field being written (year, month or day) is, averaged over
+the four heads, 0.60&ndash;0.75 for the year (4 of the 12 source positions, so uniform attention would give 0.33), 0.48&ndash;0.71 for the month (uniform 0.17&ndash;0.25) and 0.58&ndash;0.83 for
+the day (uniform 0.17). The best single head reaches 0.69&ndash;0.99 on every field and format. The mean of each row's largest
+weight is 0.67&ndash;0.78 against 0.083 for uniform attention. Heads divide the work rather than all doing the same: on the live probe
+(<code>Oct 23, 2026</code>, seed 0) the units digit of the day, "3" at source column 5, is the peak of all four heads (weights
+0.79&ndash;1.00), the last two year digits (columns 10 and 11) are the peak of heads 0 and 2, and the other rows are spread
+across heads and neighbouring columns. A head may also park on a padding column when it has nothing to fetch: in the first
+evaluation example (<code>11/10/2046</code>), head 0 puts 87% of its weight on a padding column while the month's second digit
+is written.</li>
+<li>The format never matters to the result: the same output position points at a different source column per format ("26"
+of the year is column 10&ndash;11 in <code>Oct 23, 2026</code> but 8&ndash;9 in <code>23/10/2026</code>), and the alignment moves
+with it. That is what cross-attention buys over a fixed mapping: the <em>content</em> of the question, not the position, selects
+the answer.</li>
+</ul>
+
+<h3>Where cross-attention is used</h3>
+<ul>
+<li><b>Sequence-to-sequence models.</b> The original encoder&ndash;decoder Transformer for translation has this exact layout in
+every decoder layer, with the encoder run once and its memory re-read at every output step; speech models that write text from
+an audio encoder do the same.</li>
+<li><b>Perceiver-style latent queries.</b> A small, fixed array of learned vectors (the queries) cross-attends into a very large
+input (the keys and values), so the cost grows with the input only once, linearly, and the latents become a fixed-size summary
+of it. Q comes from the learned array, K and V from the data.</li>
+<li><b>Vision-language models.</b> Some of them let text tokens cross-attend into image features; others instead place the image
+tokens in the same sequence as the text and use self-attention. They are two ways to the same read.</li>
+<li><b>ACT in this repository (Stage 1).</b> <code>ACTLite</code> in <code>src/fvb/policy/models.py</code> is the policy that
+<code>scripts/10_train_bc.py</code> trains for the gantry insertion task (the force-token comparison of task 5 uses it). Its
+history of observation tokens goes through a <code>nn.TransformerEncoder</code> into a memory <code>mem</code>; <code>K</code>
+<em>learned</em> query vectors (<code>self.queries</code>) are run through a <code>nn.TransformerDecoder</code> as
+<code>self.decoder(q, mem)</code>, i.e. the action-chunk queries cross-attend into the observation memory, and a linear head
+turns the result into <code>K</code> actions. Compared with this task: the queries are constants (the &ldquo;slot&rdquo; for
+action 0, 1, &hellip;), so there is no text being written one character at a time, no causal mask and no teacher forcing &mdash;
+all <code>K</code> actions come out in one pass &mdash; but Q from the decoder side and K, V from the encoder side is exactly
+the wiring above.</li>
+</ul>
+
+<h3>Relation to task 10 (ta-vla)</h3>
+<p>TAVLAMini (task 10) has no separate cross-attention module. It concatenates the <em>prefix</em> (image patches, words, state)
+and the <em>suffix</em> (the torque token and the noisy action chunk) into one sequence and uses a <b>block attention mask</b>:
+suffix queries see the prefix keys and values <em>and</em> the suffix's own; prefix queries see only the prefix. The suffix's
+read of the prefix is the same &ldquo;Q from one stream, K and V from another&rdquo; as here, only done inside one softmax
+(the suffix attends to prefix and suffix together) and expressed as a mask pattern instead of as a second attention layer.
+The practical payoff the lesson of task 10 describes, caching the prefix keys and values across denoising steps, is the same as
+running a cross-attention encoder once and re-reading its memory: it works because the memory side never looks back at the
+writer.</p>
+
+<h3>Knobs</h3>
+<ul>
+<li><b>Model width d_model</b> and <b>heads</b>: width of the embeddings and number of parallel attention patterns (d_model must divide by
+heads). The cross-attention matrix has one map per head; they specialise (see above), so look at several.</li>
+<li><b>Training steps, learning rate, seed</b>: batch 128 and the split of days are fixed. Curves are flat for the first ~75 steps and then
+fall quickly, so very short runs show the plateau only.</li>
+<li><b>Evaluation:</b> the eval seed picks which held-out days are shown and the number of examples; the exact-match figure is
+always measured on 2000 held-out day/format pairs.</li>
+</ul>
+<p class="ref">Previous: task 7 (vit-mnist) used self-attention over image patches. Next: task 9 (find-digit) lets a language query read
+an image, which is cross-attention again; task 10 (ta-vla) applies it to a robot policy.</p>

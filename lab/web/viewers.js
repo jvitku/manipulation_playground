@@ -874,6 +874,67 @@
     show(0);
   }
 
+  // xattn(result, container, ctx): the cross-attention alignment of one translated date (see
+  //   task_crossattn.py): output chars (rows) x source chars (columns), a head picker, and a decode
+  //   stepper that outlines the row used at step t and shows what the decoder had generated so far.
+  function xattn(result, container, ctx) {
+    const ex = result && result.examples;
+    const ok = Array.isArray(ex) && ex.length && ex.every((e) => Array.isArray(e.cross_attn) && Array.isArray(e.src_labels) && Array.isArray(e.out_labels) && Array.isArray(e.in_labels));
+    if (!ok) return jsonFallback(result, container);
+    const sel = (opts, label) => {
+      const s2 = h("select", {});
+      opts.forEach((t, i) => s2.append(h("option", { value: String(i), text: t })));
+      return [h("label", { style: "margin-right:12px" }, document.createTextNode(label + " "), s2), s2];
+    };
+    const [exL, exS] = sel(ex.map((e, i) => `#${i}: ${e.source.trim()} -> ${e.decoded}${e.correct ? "" : " (wrong)"}`), "date");
+    const [hdL, hdS] = sel(Array.from({ length: ex[0].cross_attn.length }, (_, i) => `head ${i}`), "head");
+    const slider = h("input", { type: "range", min: "0", max: "0", value: "0", step: "1", style: "width:220px" });
+    const stepLbl = h("b", { text: "" }), info = h("p", { class: "note", text: "" });
+    const board = h("div", { style: "display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;margin:8px 0" });
+    // matrix(title, m, rowLabels, colLabels, hi): table of cells shaded with the vecgrid palette (weight 0..1);
+    //   hi = index of the row to outline. Hover a cell for its weight.
+    function matrix(title, m, rl, cl, hi) {
+      const cell = "width:22px;height:22px;text-align:center;font:11px var(--mono);padding:0;";
+      const t = h("table", { style: "border-collapse:collapse" });
+      t.append(h("tr", {}, h("th", { style: cell }), ...cl.map((c) => h("th", { style: cell + "color:var(--muted);font-weight:400", text: c }))));
+      m.forEach((r, i) => {
+        const hl = i === hi;
+        t.append(h("tr", {}, h("th", { style: cell + "color:" + (hl ? "var(--ink)" : "var(--muted)") + ";font-weight:" + (hl ? "700" : "400"), text: rl[i] }),
+          ...r.map((v, j) => {
+            const p = Math.max(0, Math.min(1, v)) * 100;
+            return h("td", { title: `${rl[i]} -> ${cl[j]}: ${v.toFixed(3)}`, style: cell + `background:color-mix(in srgb, var(--vec-pos, #2a4) ${p.toFixed(1)}%, var(--vec-zero, #101114));` +
+              (hl ? "border-top:2px solid var(--accent);border-bottom:2px solid var(--accent);" : "") });
+          })));
+      });
+      return h("div", {}, h("div", { class: "vg-title", text: title }), t);
+    }
+    container.replaceChildren(
+      h("div", { style: "margin-bottom:6px" }, chip("held-out exact-match", pct(result.exact)), chip("checked on", `${result.n_eval} dates`),
+        chip("heads", String(result.heads)), chip("d_model", String(result.d_model))),
+      h("div", { style: "margin:6px 0" }, exL, hdL),
+      h("div", { style: "display:flex;gap:12px;align-items:center;margin:6px 0" }, h("span", { text: "decode step" }), slider, stepLbl),
+      board, info);
+    function draw() {
+      const e = ex[Number(exS.value)], hh = Number(hdS.value), L = e.out_labels.length;
+      slider.max = String(L - 1);
+      const t = Math.min(Number(slider.value), L - 1);
+      slider.value = String(t);
+      const row = e.cross_attn[hh][t], j = row.indexOf(Math.max(...row));
+      stepLbl.textContent = `step ${t}: reads ${e.in_labels[t]} -> emits ${e.out_labels[t]}`;
+      board.replaceChildren(
+        matrix(`cross-attention, head ${hh}: output char (rows) x source char (columns)`, e.cross_attn[hh], e.out_labels, e.src_labels, t),
+        matrix("decoder self-attention (causal)", e.dec_attn[hh], e.in_labels, e.in_labels, t),
+        matrix("encoder self-attention", e.enc_attn[hh], e.src_labels, e.src_labels, -1));
+      const so_far = e.out_labels.slice(0, t).join("");
+      info.textContent = `source "${e.source}", target "${e.target}", decoded "${e.decoded}" (${e.correct ? "correct" : "wrong"}). ` +
+        `Generated so far: "${so_far}". To emit ${e.out_labels[t]} this head puts ${pct(row[j])} of its weight on source char ${e.src_labels[j]} (column ${j}) ` +
+        `and ${pct(row.reduce((a, b) => a + b, 0) - row[j])} on the rest.`;
+    }
+    [exS, hdS].forEach((x) => x.addEventListener("change", () => { slider.value = "0"; draw(); }));
+    slider.addEventListener("input", draw);
+    draw();
+  }
+
   window.LabViewers = { register: (name, fn) => { registry[name] = fn; }, get: (name) => registry[name], render, jsonFallback };
   window.LabViewers.register("t1scatter", t1scatter);
   window.LabViewers.register("traj2d", traj2d);
@@ -888,4 +949,5 @@
   window.LabViewers.register("attnlive", attnlive);
   window.LabViewers.register("attnstep", attnstep);
   window.LabViewers.register("vitattn", vitattn);
+  window.LabViewers.register("xattn", xattn);
 })();
