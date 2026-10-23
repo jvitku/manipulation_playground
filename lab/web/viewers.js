@@ -685,28 +685,72 @@
   }
 
   // ---- attention task: live heatmaps (training) and the inference stepper (evaluation) ------
+  // Drawing helpers shared by attnlive and vitattn. paint(canvas, img, vals, grid): the 28x28 digit in
+  // grey with the attention weights (vals, grid[0]*grid[1] numbers, scaled to their own max) laid over
+  // it as translucent cells; vals null = digit only.
+  function paintOverlay(cv, img, vals, grid) {
+    const n = img.length, S = cv.width / n, ctx2 = cv.getContext("2d");
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const v = img[y][x];
+      ctx2.fillStyle = `rgb(${v},${v},${v})`;
+      ctx2.fillRect(x * S, y * S, S, S);
+    }
+    if (!vals) return;
+    const [gh, gw] = grid, mx = Math.max(1e-9, ...vals), cw = cv.width / gw, ch = cv.height / gh;
+    vals.forEach((a, i) => {
+      ctx2.fillStyle = `rgba(255,90,20,${(0.8 * a / mx).toFixed(3)})`;
+      ctx2.fillRect((i % gw) * cw, Math.floor(i / gw) * ch, cw, ch);
+    });
+    ctx2.strokeStyle = "rgba(255,255,255,0.25)";
+    for (let i = 1; i < gw; i++) { ctx2.beginPath(); ctx2.moveTo(i * cw, 0); ctx2.lineTo(i * cw, cv.height); ctx2.stroke(); }
+    for (let i = 1; i < gh; i++) { ctx2.beginPath(); ctx2.moveTo(0, i * ch); ctx2.lineTo(cv.width, i * ch); ctx2.stroke(); }
+  }
+  function overlayCanvas(size) {
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = size;
+    cv.style.cssText = `width:${size}px;height:${size}px;image-rendering:pixelated;border:1px solid var(--line);border-radius:4px`;
+    return cv;
+  }
+
   // attnlive(row, container, ctx): row.attn = [H][Tq][Tk] weights in 0..1 (one heatmap per head,
   //   vecgrid palette, vmax 1); row.qkv = {labels, heads: [{q, k, v}]} -> Q/K/V grids when
-  //   ctx.vecgrids. The DOM is cached on the container and updated in place on later calls.
+  //   ctx.vecgrids. When the row also has row.img ([28][28] uint8) and row.grid ([gh, gw]) and each
+  //   map's first query row has 1 + gh*gw weights (CLS first), every map is drawn instead as the
+  //   CLS row reshaped to the patch grid over the digit (row.names: per-map titles).
+  //   The DOM is cached on container._live (tagged with this viewer's name) and updated in place.
   function attnlive(row, container, ctx) {
     const A = row && row.attn;
     if (!Array.isArray(A) || !Array.isArray(A[0]) || !Array.isArray(A[0][0]) || !window.LabVecGrid) {
+      container._live = null;
       return jsonFallback(row, container);
     }
+    const grid = Array.isArray(row.grid) && row.grid.length === 2 ? row.grid : null;
+    const overlay = !!(grid && Array.isArray(row.img) && A[0][0].length === 1 + grid[0] * grid[1]);
     const qkv = row.qkv && Array.isArray(row.qkv.heads) ? row.qkv : null;
     const useQkv = !!(qkv && ctx && ctx.vecgrids);
     const labels = qkv && qkv.labels;
-    const key = [A.length, A[0].length, A[0][0].length, useQkv ? qkv.heads.length : -1].join("x");
-    let st = container._attnlive;
-    if (!st || st.key !== key) {
+    const key = [A.length, A[0].length, A[0][0].length, useQkv ? qkv.heads.length : -1, overlay ? "img" : "grid"].join("x");
+    let st = container._live;
+    if (!st || st.viewer !== "attnlive" || st.key !== key) {
       const title = h("h3", { text: "" });
-      const attnBox = h("div", { class: "vecgrids" });
+      const attnBox = h("div", overlay ? { class: "vecgrids", style: "display:flex;flex-wrap:wrap;gap:10px" } : { class: "vecgrids" });
       const qkvBox = h("div", { class: "vecgrids" });
-      const note = h("p", { class: "note", text: "Each head's row is the query token's attention over the tokens (columns, left to right as in the probe); bright = more weight. Hover a cell for the token." });
+      const note = h("p", { class: "note", text: overlay
+        ? "Each picture is where the CLS token looks (one head of one block) over the probe digit; orange = more attention weight, scaled per picture."
+        : "Each head's row is the query token's attention over the tokens (columns, left to right as in the probe); bright = more weight. Hover a cell for the token." });
       container.replaceChildren(title, attnBox, note, qkvBox);
       const lab = labels && labels.length === A[0][0].length ? labels : null;
-      st = container._attnlive = { key, title, attn: [], qkv: [] };
-      A.forEach((m, i) => st.attn.push(window.LabVecGrid.render(attnBox, m, { title: `head ${i}`, vmax: 1, labels: lab, cell: 22 })));
+      st = container._live = { viewer: "attnlive", key, title, attn: [], qkv: [] };
+      A.forEach((m, i) => {
+        const name = (row.names && row.names[i]) || `head ${i}`;
+        if (overlay) {
+          const cv = overlayCanvas(112);
+          attnBox.append(h("div", {}, h("div", { class: "vg-title", text: name }), cv));
+          st.attn.push({ update: (mm) => paintOverlay(cv, st.row.img, mm[0].slice(1), st.row.grid) });
+        } else {
+          st.attn.push(window.LabVecGrid.render(attnBox, m, { title: name, vmax: 1, labels: lab, cell: 22 }));
+        }
+      });
       if (useQkv) {
         qkv.heads.forEach((hd, i) => {
           st.qkv.push(["q", "k", "v"].map((n) => window.LabVecGrid.render(qkvBox, hd[n],
@@ -714,9 +758,44 @@
         });
       }
     }
+    st.row = row;
     st.title.textContent = `live attention - probe example` + (row.step != null ? `, step ${row.step}` : "");
     A.forEach((m, i) => st.attn[i] && st.attn[i].update(m, 1));
     if (useQkv) qkv.heads.forEach((hd, i) => st.qkv[i] && ["q", "k", "v"].forEach((n, j) => st.qkv[i][j].update(hd[n])));
+  }
+
+  // vitattn(result, container, ctx): pick a digit, a block and a head; the CLS attention over the
+  //   patch grid is laid over the digit (see task_vit.py for the schema).
+  function vitattn(result, container, ctx) {
+    const ex = result && result.examples, grid = result && result.grid;
+    if (!Array.isArray(ex) || !ex.length || !Array.isArray(grid) || !Array.isArray(ex[0].attn)) return jsonFallback(result, container);
+    const sel = (opts, label) => {
+      const s2 = h("select", {});
+      opts.forEach((t, i) => s2.append(h("option", { value: String(i), text: t })));
+      return [h("label", { style: "margin-right:12px" }, document.createTextNode(label + " "), s2), s2];
+    };
+    const [exL, exS] = sel(ex.map((e, i) => `#${i}: label ${e.label}, pred ${e.pred}${e.pred === e.label ? "" : " (wrong)"}`), "digit");
+    const [lyL, lyS] = sel(Array.from({ length: result.depth }, (_, i) => `block ${i}`), "block");
+    const [hdL, hdS] = sel(Array.from({ length: result.heads }, (_, i) => `head ${i}`), "head");
+    const big = overlayCanvas(280), plain = overlayCanvas(280), info = h("p", { class: "note", text: "" });
+    const row = h("div", { style: "display:flex;gap:16px;flex-wrap:wrap;margin:8px 0" },
+      h("div", {}, h("div", { class: "vg-title", text: "digit" }), plain),
+      h("div", {}, h("div", { class: "vg-title", text: "CLS attention over the patch grid" }), big));
+    container.replaceChildren(
+      h("div", { style: "margin-bottom:6px" }, chip("test accuracy", pct(result.acc)), chip("patch", `${result.patch}px`),
+        chip("grid", `${grid[0]}x${grid[1]}`), chip("blocks", String(result.depth)), chip("heads", String(result.heads))),
+      h("div", { style: "margin:6px 0" }, exL, lyL, hdL), row, info);
+    function draw() {
+      const e = ex[Number(exS.value)], l = Number(lyS.value), hh = Number(hdS.value);
+      const m = e.attn[l][hh].flat();
+      paintOverlay(plain, e.pixels, null, grid);
+      paintOverlay(big, e.pixels, m, grid);
+      info.textContent = `predicted ${e.pred} with confidence ${pct(e.conf)} (label ${e.label}). ` +
+        `This head puts ${pct(e.cls_self[l][hh])} of its weight on the CLS token itself and ${pct(m.reduce((a, b) => a + b, 0))} on the patches; ` +
+        `the strongest patch gets ${pct(Math.max(...m))}.`;
+    }
+    [exS, lyS, hdS].forEach((x) => x.addEventListener("change", draw));
+    draw();
   }
 
   // attnstep(result, container, ctx): the stage slider over result.stages (see task_attention.py)
@@ -808,4 +887,5 @@
   window.LabViewers.register("video", video);
   window.LabViewers.register("attnlive", attnlive);
   window.LabViewers.register("attnstep", attnstep);
+  window.LabViewers.register("vitattn", vitattn);
 })();

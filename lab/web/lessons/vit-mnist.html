@@ -1,0 +1,123 @@
+<h3>The question</h3>
+<p>Task 6 showed attention as a lookup between a handful of hand-made tokens. Real inputs do not come as tokens: an image is
+a grid of pixels. The trick that turned transformers into image models is to <em>make</em> tokens out of it &mdash; cut the
+picture into small squares (patches), treat every patch as a word, and let attention work out which patches matter for the
+answer. The robot policy in task 10 (ta-vla) uses the same recipe on camera and force tokens. Here it is on the smallest
+vision problem there is: reading handwritten digits (MNIST), with a transformer small enough to train in seconds.</p>
+
+<h3>The task</h3>
+<p>The input is a 28&times;28 grey digit, the output one of 10 classes. Training uses <code>train_n</code> images (default
+10&thinsp;000 of the 60&thinsp;000); the validation curve is measured on a fixed set of 1000 held-out test digits, so it is
+never trained on. Chance is 10% accuracy, loss \(\ln 10 \approx 2.30\). The loss is the cross-entropy of the class
+prediction:</p>
+<p>$$\mathcal{L} = -\log p_\theta(\text{label}\mid\text{image})$$</p>
+
+<h3>The method</h3>
+<p>The image is cut into \(N = (28/\text{patch})^2\) patches (16 of 7&times;7 pixels by default, or 4 of 14&times;14),
+each flattened to a vector and embedded by one linear layer. Attention itself ignores order, so a learned <em>position
+vector</em> is added to every patch token; in front goes a learned <b>CLS</b> token that belongs to no patch:</p>
+<p>$$x_0 = [\,c;\; p_1 W_E;\; \dots;\; p_N W_E\,] + E_\text{pos}\in\mathbb{R}^{(N+1)\times d_\text{model}}$$</p>
+<p>Then <code>depth</code> transformer blocks (<code>minitf.Block</code>, shared with the next tasks) refine the tokens. Each block
+does self-attention &mdash; every token queries all tokens, as in task 6 &mdash; and then a small MLP, both wrapped in a
+LayerNorm and a residual connection:</p>
+<p>$$x \leftarrow x + \operatorname{MHA}(\operatorname{LN}(x)),\qquad x \leftarrow x + \operatorname{MLP}(\operatorname{LN}(x))$$</p>
+<p class="ref">The residual "+ x" lets a layer add information without erasing what is already there, and keeps gradients healthy
+through a deep stack. The final CLS vector, after one more LayerNorm and a linear layer, is the class score: only CLS is read
+out, so it has to <em>collect</em> from the patches whatever tells the digits apart. Where it collects from is its attention
+row, which is what the app draws.</p>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 760 292" role="img" aria-label="Image to patches to tokens with CLS and positions, then transformer blocks with attention and MLP, CLS readout, loss" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="vtA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--muted)"/>
+    </marker>
+    <marker id="vtL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--loss)"/>
+    </marker>
+  </defs>
+  <!-- image cut into a 4x4 patch grid -->
+  <rect x="10" y="40" width="80" height="80" fill="var(--chip)" stroke="var(--line)"/>
+  <path d="M30 40V120M50 40V120M70 40V120M10 60H90M10 80H90M10 100H90" stroke="var(--accent)" stroke-width="1"/>
+  <text x="50" y="30" text-anchor="middle" fill="var(--ink)">image</text>
+  <text x="50" y="136" text-anchor="middle" fill="var(--muted)">28 x 28</text>
+  <text x="50" y="149" text-anchor="middle" fill="var(--muted)">16 patches 7 x 7</text>
+  <line x1="92" y1="80" x2="124" y2="80" stroke="var(--muted)" marker-end="url(#vtA)"/>
+  <rect x="126" y="52" width="86" height="56" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="169" y="73" text-anchor="middle" fill="var(--ink)">flatten + W_E</text>
+  <text x="169" y="89" text-anchor="middle" fill="var(--muted)">(16, 49) &rarr;</text>
+  <text x="169" y="102" text-anchor="middle" fill="var(--muted)">(16, d_model)</text>
+  <line x1="212" y1="80" x2="244" y2="80" stroke="var(--muted)" marker-end="url(#vtA)"/>
+  <!-- token row -->
+  <rect x="246" y="52" width="46" height="56" rx="6" fill="var(--bad-soft)" stroke="var(--loss)"/>
+  <text x="269" y="76" text-anchor="middle" fill="var(--ink)">CLS</text>
+  <text x="269" y="92" text-anchor="middle" fill="var(--muted)">+ pos 0</text>
+  <rect x="296" y="52" width="104" height="56" rx="6" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="348" y="76" text-anchor="middle" fill="var(--ink)">16 patch tokens</text>
+  <text x="348" y="92" text-anchor="middle" fill="var(--muted)">+ pos 1..16</text>
+  <text x="323" y="125" text-anchor="middle" fill="var(--muted)">(17, d_model)</text>
+  <line x1="402" y1="80" x2="432" y2="80" stroke="var(--muted)" marker-end="url(#vtA)"/>
+  <!-- block internals -->
+  <rect x="434" y="16" width="190" height="168" rx="10" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/>
+  <text x="529" y="32" text-anchor="middle" fill="var(--muted)">Block x depth</text>
+  <rect x="452" y="44" width="154" height="44" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="529" y="63" text-anchor="middle" fill="var(--ink)">LN &rarr; multi-head attention</text>
+  <text x="529" y="78" text-anchor="middle" fill="var(--muted)">attn (heads, 17, 17); + residual</text>
+  <rect x="452" y="108" width="154" height="44" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="529" y="127" text-anchor="middle" fill="var(--ink)">LN &rarr; MLP (4 x d_model)</text>
+  <text x="529" y="142" text-anchor="middle" fill="var(--muted)">+ residual</text>
+  <line x1="529" y1="88" x2="529" y2="106" stroke="var(--muted)" marker-end="url(#vtA)"/>
+  <text x="529" y="171" text-anchor="middle" fill="var(--muted)">(17, d_model) in and out</text>
+  <!-- readout -->
+  <line x1="624" y1="100" x2="650" y2="100" stroke="var(--muted)" marker-end="url(#vtA)"/>
+  <rect x="652" y="56" width="98" height="88" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="701" y="80" text-anchor="middle" fill="var(--ink)">take CLS</text>
+  <text x="701" y="96" text-anchor="middle" fill="var(--ink)">LN &rarr; linear</text>
+  <text x="701" y="116" text-anchor="middle" fill="var(--muted)">10 class</text>
+  <text x="701" y="130" text-anchor="middle" fill="var(--muted)">scores</text>
+  <line x1="701" y1="144" x2="701" y2="214" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#vtL)"/>
+  <rect x="610" y="216" width="180" height="32" rx="16" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <text x="700" y="236" text-anchor="middle" fill="var(--loss)" font-weight="700">L = CE(label)</text>
+  <text x="380" y="262" text-anchor="middle" fill="var(--muted)">the loss sits on the CLS readout only; every weight before it is shaped by it</text>
+</svg>
+<p class="ref">Shapes are for the defaults (patch 7: 16 patches + CLS = 17 tokens). With patch 14 there are 4 patches + CLS = 5
+tokens of 196 pixels each. Per block the attention weights have shape (heads, tokens, tokens); the app draws only row 0, the
+CLS token's row.</p>
+
+<h3>What to watch</h3>
+<p>While the run trains, the <b>live attention</b> panel under the charts shows, for one fixed probe digit (the first test
+image, a 7), one picture per block and head: the digit with the patch grid over it, tinted orange where the CLS token
+attends (about 60 snapshots per run, each picture scaled to its own maximum). After training,
+<b>evaluate</b> a checkpoint: the viewer lets you step through random test digits and choose block and head, and reports the
+prediction, its confidence and how the head's weight splits between the CLS token itself and the patches.</p>
+<p>Measured in this app (defaults: patch 7, 2 blocks, 2 heads, d_model 64, 10&thinsp;000 images, 2000 steps, batch 128,
+lr 1e-3, GPU, 105&thinsp;098 parameters, about 8 s):</p>
+<ul>
+<li>Validation accuracy on the 1000 held-out digits: <b>71.2%</b> after 132 steps, 83.0% at 264, 91.5% at 660 and then it
+flattens at <b>93.3%</b> (final; 93.4% on all 10&thinsp;000 test digits). Seed 1 ends at 92.2%.</li>
+<li>The training loss goes from 2.51 (step 6) to 0.006, i.e. the model memorises its 10&thinsp;000 training digits long before
+the validation curve stops; the gap between those two curves is the price of a small training set. More images, not more
+steps, closes it: this is what the <b>training images</b> knob is for.</li>
+<li>Bigger patches did better here: patch 14 (just 4 patches + CLS) reached <b>95.6%</b>, because a 14&times;14 patch already
+contains a whole stroke segment and the model has far fewer tokens to organise. A 1-block model with 2 heads reached 89.8%
+(below the 2-block 93.3%); 4 heads in 2 blocks 92.9%, no gain over 2 heads.</li>
+<li>Where the CLS token looks (default run, 2000 test digits): the central 2&times;2 patches hold 65% of block 0 head 0's
+attention (25% if it were uniform) and 44%, 31%, 40% for block 0 head 1 and block 1 heads 0 and 1. Of the 16 patches 38% contain
+ink on average; the share of attention that goes to those inked patches is 71%, 65%, 49% and 58% for the same four heads. The
+CLS token gives only 3&ndash;7% of its weight to itself. So early attention is broadly "look at the middle where the stroke
+is"; the sharpest single patch of a head takes 22&ndash;47% of its weight. These are averages of what a head does, not a proof
+of what the classifier relies on.</li>
+</ul>
+
+<h3>Knobs</h3>
+<ul>
+<li><b>Patch size</b>: 7 gives 16 tokens, 14 gives 4. Fewer, larger patches are cheaper and here more accurate; smaller ones give
+attention more to choose between and a sharper picture of where it looks.</li>
+<li><b>Transformer blocks</b> and <b>heads</b>: depth stacks attention-and-MLP rounds; heads split the width into parallel
+lookups (d_model must divide by heads, it does for 32, 64, 96, 128 with 2 or 4 heads).</li>
+<li><b>Model width d_model</b>, <b>learning rate</b>, <b>steps</b>, <b>seed</b>: the usual capacity and optimisation dials.</li>
+<li><b>Training images</b>: the subset of MNIST's 60&thinsp;000 images used for training. Try 1000 against 60&thinsp;000 and watch
+the validation curve; this model has no augmentation, so data is what generalisation comes from.</li>
+</ul>
+<p class="ref">Previous: task 6 (attention) built this attention layer from scratch on a lookup problem. Next: task 10 (ta-vla)
+feeds a transformer like this camera and force tokens and asks it for robot actions.</p>

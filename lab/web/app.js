@@ -235,7 +235,7 @@
       vgBox.checked = window.LabVecGrid.enabled(taskId);
       vgBox.addEventListener("change", () => {
         window.LabVecGrid.setEnabled(taskId, vgBox.checked);
-        if (liveRow) { liveEl.replaceChildren(); liveEl._attnlive = null; drawLive(); }
+        if (liveRow) { liveEl.replaceChildren(); liveEl._live = null; drawLive(); }
         if (lastShown) showResult(lastShown.result, lastShown.evalId);
       });
       if (spec.vecgrids) main.append(el("div", { class: "ctl" },
@@ -268,7 +268,7 @@
         errEl, statusEl, chartsEl, liveEl));
 
       // live panel: the newest metrics row with an `attn` key goes to the spec.live viewer, which
-      // updates its own DOM in place (cached on liveEl); the last snapshot stays after the run ends.
+      // updates its own DOM in place (cached on liveEl._live, tagged with the viewer name); the last snapshot stays after the run ends.
       let liveRow = null;
       function liveCtx() {
         return { task: taskId, taskId, evalId: null, vecgrids: !!spec.vecgrids && window.LabVecGrid.enabled(taskId) };
@@ -277,7 +277,7 @@
         const fn = spec.live && window.LabViewers.get(spec.live);
         if (!fn || !liveRow) return;
         liveEl.hidden = false;
-        try { fn(liveRow, liveEl, liveCtx()); } catch (e) { window.LabViewers.jsonFallback(liveRow, liveEl); }
+        try { fn(liveRow, liveEl, liveCtx()); } catch (e) { liveEl._live = null; window.LabViewers.jsonFallback(liveRow, liveEl); }
       }
       function pushLive(rows) {
         if (!spec.live) return;
@@ -285,7 +285,7 @@
           if (rows[i] && rows[i].attn !== undefined) { liveRow = rows[i]; drawLive(); return; }
         }
       }
-      function resetLive() { liveRow = null; liveEl.hidden = true; liveEl.replaceChildren(); liveEl._attnlive = null; }
+      function resetLive() { liveRow = null; liveEl.hidden = true; liveEl.replaceChildren(); liveEl._live = null; }
 
       form = buildForm(spec.params, paramsEl);
       charts = window.makeCharts(chartsEl, spec.charts);

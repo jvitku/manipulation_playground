@@ -15,4 +15,5 @@ from lab.tasks import (
     task8_residual,  # noqa: F401
     task_attention,  # noqa: F401
     task_embed,  # noqa: F401
+    task_vit,  # noqa: F401
 )
