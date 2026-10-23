@@ -102,6 +102,42 @@ self-attention, cross-attention, MLP), width <code>d_model</code> and <code>head
 125&thinsp;863 parameters. The shapes shown are for the defaults of the date formats: 12 source positions (padded), 11 decoder
 positions (&lt;bos&gt; plus the 10 target characters; the 11th output is &lt;eos&gt;).</p>
 
+<details class="code"><summary>Cross-attention: queries from the decoder, keys/values from the encoder</summary><pre><code class="language-python" data-src="lab/tasks/minitf.py">a, self_attn = self.self_attn(self.ln1(x), mask=self_mask)
+x = x + a
+c, cross_attn = self.cross_attn(self.ln2(x), memory)  # q from x, k/v from memory
+x = x + c
+return x + self.mlp(self.ln3(x)), self_attn, cross_attn</code></pre></details>
+<details class="code"><summary>Encoder and decoder</summary><pre><code class="language-python" data-src="lab/tasks/task_crossattn.py">def encode(self, src):
+    """src [B, S] -&gt; (memory [B, S, D], encoder self-attention [B, H, S, S])."""
+    x = self.emb_s(src) + self.pos_s(torch.arange(src.shape[1], device=src.device))
+    return self.enc(x)
+# ...
+def decode(self, dec_in, memory):
+    """dec_in [B, L] (BOS + chars so far) -&gt; (logits [B, L, V], self_attn, cross_attn)."""
+    L = dec_in.shape[1]
+# ...
+    mask = _causal(L, str(dec_in.device))
+    x, self_attn, cross_attn = self.dec(x, memory, mask)
+    return self.head(self.ln_f(x)), self_attn, cross_attn</code></pre></details>
+<details class="code"><summary>Training step (teacher forcing)</summary><pre><code class="language-python" data-src="lab/tasks/task_crossattn.py">def teacher_inputs(tgt):
+    """Decoder input for teacher forcing: BOS then the target shifted right (the last EOS drops)."""
+# ...
+        src, tgt = make_batch("train", BATCH, gen, dev)
+        loss = loss_fn(model(src, teacher_inputs(tgt))[0], tgt)
+        opt.zero_grad(set_to_none=True)
+        loss.backward()
+        opt.step()</code></pre></details>
+<details class="code"><summary>Inference: greedy decoding from BOS</summary><pre><code class="language-python" data-src="lab/tasks/task_crossattn.py">memory, _ = model.encode(src)
+ids = torch.full((src.shape[0], 1), BOS, dtype=torch.long, device=src.device)
+done = torch.zeros(src.shape[0], dtype=torch.bool, device=src.device)
+for _ in range(MAX_OUT):
+    nxt = model.decode(ids, memory)[0][:, -1].argmax(-1)
+    nxt = torch.where(done, torch.full_like(nxt, PAD), nxt)
+    ids = torch.cat([ids, nxt[:, None]], 1)
+    done = done | (nxt == EOS)
+    if bool(done.all()):
+        break</code></pre></details>
+
 <h3>What to watch</h3>
 <p>While training, the <b>live attention</b> panel under the charts shows one heatmap per head: the cross-attention of a fixed
 probe pair (<code>Oct 23, 2026</code> &rarr; <code>2026-10-23</code>, teacher-forced), rows = decoder positions, columns = source

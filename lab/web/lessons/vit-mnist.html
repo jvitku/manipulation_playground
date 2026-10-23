@@ -84,6 +84,31 @@ row, which is what the app draws.</p>
 tokens of 196 pixels each. Per block the attention weights have shape (heads, tokens, tokens); the app draws only row 0, the
 CLS token's row.</p>
 
+<details class="code"><summary>Patchify: image to a sequence of tokens</summary><pre><code class="language-python" data-src="lab/tasks/task_vit.py">x = imgs.reshape(b, gh, patch, gw, patch).permute(0, 1, 3, 2, 4)  # [B, gy, gx, py, px]
+return x.reshape(b, gh * gw, patch * patch)</code></pre></details>
+<details class="code"><summary>ViT forward: CLS token, positions, blocks</summary><pre><code class="language-python" data-src="lab/tasks/task_vit.py">x = self.embed(patchify(imgs, self.patch))
+x = torch.cat([self.cls.expand(x.shape[0], -1, -1), x], 1) + self.pos
+attns = []
+for blk in self.blocks:
+    x, a = blk(x)
+    attns.append(a)
+return self.head(self.norm(x)[:, 0]), attns</code></pre></details>
+<details class="code"><summary>Transformer block (pre-LayerNorm, residuals)</summary><pre><code class="language-python" data-src="lab/tasks/minitf.py">h = self.ln1(x)
+a, attn = self.attn(h, mask=mask)
+x = x + a
+return x + self.mlp(self.ln2(x)), attn</code></pre></details>
+<details class="code"><summary>Training step</summary><pre><code class="language-python" data-src="lab/tasks/task_vit.py">idx = torch.randint(n, (BATCH,), generator=gen, device=dev)
+loss = F.cross_entropy(model(x[idx])[0], y[idx])
+opt.zero_grad(set_to_none=True)
+loss.backward()
+opt.step()
+sched.step()</code></pre></details>
+<details class="code"><summary>Inference: argmax over the class logits</summary><pre><code class="language-python" data-src="lab/tasks/task_vit.py">def accuracy(model, x, y, dev) -&gt; float:
+    model.eval()
+    hit = 0
+    for i in range(0, len(x), 1000):
+        hit += int((model(x[i : i + 1000].to(dev))[0].argmax(-1).cpu() == y[i : i + 1000]).sum())</code></pre></details>
+
 <h3>What to watch</h3>
 <p>While the run trains, the <b>live attention</b> panel under the charts shows, for one fixed probe digit (the first test
 image, a 7), one picture per block and head: the digit with the patch grid over it, tinted orange where the CLS token

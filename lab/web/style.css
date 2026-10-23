@@ -107,3 +107,9 @@ svg .arr{stroke:var(--muted);fill:none;marker-end:url(#ah)}
 .tcard .last{font-size:10.5px;color:var(--muted);grid-column:3}
 .tcard .last.done{color:var(--good)}
 .tcard .last.failed,.tcard .last.error{color:var(--bad,#b3261e)}
+/* lesson code snippets (collapsed <details>, highlight.js colours the tokens) */
+.lesson details.code{margin:10px 0;border:1px solid var(--line);border-radius:8px;background:var(--bg);min-width:0}
+.lesson details.code>summary{cursor:pointer;padding:5px 10px;font:12px var(--mono);color:var(--muted)}
+.lesson details.code[open]>summary{border-bottom:1px solid var(--line)}
+.lesson details.code pre{margin:0;overflow-x:auto}
+.lesson details.code pre code{font:12px/1.5 var(--mono);padding:8px 10px;background:transparent;white-space:pre;display:block}

@@ -79,6 +79,30 @@ linear readout turns the result into 16 value scores. The attention code is the 
 readout only, so everything before it &mdash; the embeddings, \(W_Q, W_K, W_V, W_O\) &mdash; is shaped by whether the
 right value comes out.</p>
 
+<details class="code"><summary>Attention: scores, softmax, weighted sum</summary><pre><code class="language-python" data-src="lab/tasks/minitf.py">def forward(self, x_q, x_kv=None, mask=None):
+    x_kv = x_q if x_kv is None else x_kv  # self-attention unless told otherwise
+    q, k, v = self.split(self.q(x_q)), self.split(self.k(x_kv)), self.split(self.v(x_kv))
+    scores = q @ k.transpose(-2, -1) / self.dh**0.5  # [B, H, Tq, Tk]: how well q matches k
+    if mask is not None:
+        scores = scores.masked_fill(~mask, float("-inf"))
+    attn = scores.softmax(-1)  # each query's weights over the keys sum to 1
+    mixed = (attn @ v).transpose(1, 2).reshape(x_q.shape)  # weighted sum of values
+    return self.out(mixed), attn
+</code></pre></details>
+<details class="code"><summary>Lookup model: the query attends over the stored pairs</summary><pre><code class="language-python" data-src="lab/tasks/task_attention.py">def forward(self, keys, vals, qpos):
+    x = self.tokens(keys, vals, qpos)
+    out, attn = self.mha(x[:, -1:], x)  # attn: [B, H, 1, n+1]
+    return self.readout(out[:, 0]), x, attn</code></pre></details>
+<details class="code"><summary>Training step</summary><pre><code class="language-python" data-src="lab/tasks/task_attention.py">keys, vals, qpos = make_batch(BATCH, n, meta, gen, dev)
+target = vals.gather(1, qpos[:, None])[:, 0]
+logits, _, _ = model(keys, vals, qpos)
+loss = F.cross_entropy(logits, target)
+opt.zero_grad(set_to_none=True)
+loss.backward()
+opt.step()</code></pre></details>
+<details class="code"><summary>Inference: argmax of the logits</summary><pre><code class="language-python" data-src="lab/tasks/task_attention.py">keys, vals, qpos = make_batch(b, n, meta, gen, dev)
+pred = model(keys, vals, qpos)[0].argmax(-1)</code></pre></details>
+
 <h3>What to watch</h3>
 <p>While the run trains, the <b>live attention</b> panel under the charts shows one heatmap per head for a fixed probe
 example (the same tokens at every snapshot, about 60 snapshots per run), plus the Q, K, V vectors of that probe when the

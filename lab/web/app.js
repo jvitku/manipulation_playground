@@ -580,6 +580,15 @@
     else window.addEventListener("load", run, { once: true });
   }
 
+  // Syntax-highlight the lesson's code snippets (once per element: highlightElement marks `data-highlighted`).
+  function highlightSnippets(container) {
+    if (!window.hljs) return;
+    container.querySelectorAll("pre code").forEach((c) => {
+      if (c.dataset.highlighted) return;
+      try { window.hljs.highlightElement(c); } catch (e) { /* leave the plain text */ }
+    });
+  }
+
   async function loadLesson(url, container) {
     try {
       const r = await fetch(url);
@@ -588,6 +597,7 @@
       if (text.trimStart().startsWith("<")) container.innerHTML = text; // trusted: served from our own /lessons
       else container.replaceChildren(...text.split(/\n{2,}/).map((p) => el("p", { text: p })));
       typesetMath(container);
+      highlightSnippets(container);
     } catch (e) {
       container.replaceChildren(el("p", { class: "note", text: "lesson coming soon" }));
     }
