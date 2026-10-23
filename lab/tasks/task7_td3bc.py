@@ -174,7 +174,7 @@ def _params() -> list[Param]:
 
 SPEC = TaskSpec(
     id="td3-bc",
-    order=8,
+    order=12,
     title="TD3+BC: the recipe that makes RL reliable",
     subtitle="Put 100 expert demonstrations in the replay buffer and keep an imitation term in the "
     "actor loss: the repo's R1-R4 search, 5 of 10 seeds instead of 0.",

@@ -12,10 +12,10 @@ FastAPI backend (`lab/server`), static front end (`lab/web`), tasks in `lab/task
 | 3 | `embeddings` | one policy, four commands: one-hot / bits / learned word embeddings / continuous goal vector | ~2 min |
 | 4 | `flow-bc` | flow policy reading the force history to find a hole by feel | ~40 s |
 | 5 | `force-token` | the repo's Stage-1 gantry pipeline (ACT/MLP, force token on/off, DART noise) | ~2 min |
-| 6 | `ta-vla` | two-stream transformer with a torque token: image + words + state in, actions out | ~4 min |
-| 7 | `td3` | hidden-hole insertion learned from reward alone | ~25 min |
-| 8 | `td3-bc` | TD3 with demonstrations in the buffer and an imitation term | ~30 min |
-| 9 | `residual-rl` | frozen flow policy plus a TD3-learned residual | ~2 min |
+| 10 | `ta-vla` | two-stream transformer with a torque token: image + words + state in, actions out | ~4 min |
+| 11 | `td3` | hidden-hole insertion learned from reward alone | ~25 min |
+| 12 | `td3-bc` | TD3 with demonstrations in the buffer and an imitation term | ~30 min |
+| 13 | `residual-rl` | frozen flow policy plus a TD3-learned residual | ~2 min |
 
 The ladder page shows each card's estimate at the default parameters and the state of its newest
 run (`GET /api/tasks`: `est_label`, `last_state`). Runs of `td3`/`td3-bc` are long; they and any

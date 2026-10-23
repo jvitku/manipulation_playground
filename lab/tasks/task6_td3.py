@@ -421,7 +421,7 @@ def estimate(params: dict) -> float:
 
 SPEC = TaskSpec(
     id="td3",
-    order=7,
+    order=11,
     title="RL from scratch: TD3",
     subtitle="Learn the hidden-hole insertion from reward alone: twin critics, a delayed actor, "
     "and a seed lottery.",

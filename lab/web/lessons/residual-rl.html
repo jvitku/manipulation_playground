@@ -42,7 +42,7 @@ whose &ldquo;environment&rdquo; happens to contain a good controller. The last l
 behaviour</b> and can only walk away from it if the critic says so.</p>
 
 <h3>What gets trained</h3>
-<p>The standard TD3 pair (Fujimoto et al., 2018; the repo&rsquo;s <code>fvb.policy.td3</code>, the same one task&nbsp;7 (td3) uses) with no demonstrations and no imitation term:</p>
+<p>The standard TD3 pair (Fujimoto et al., 2018; the repo&rsquo;s <code>fvb.policy.td3</code>, the same one task&nbsp;11 (td3) uses) with no demonstrations and no imitation term:</p>
 <p>$$L_Q=\sum_{i=1,2}\big(Q_i(s,\delta)-y\big)^2,\quad y=r+\gamma\,(1-d)\min_i \bar Q_i\big(s',\,\bar\pi(s')+\varepsilon\big),\qquad L_\pi=-\,Q_1\big(s,\pi_\theta(s)\big)$$</p>
 <p>The flow weights never appear in either loss. <b>Residual scale</b> \(\alpha\) is the safety dial: it bounds how far the correction can push (a delta of 1 moves the action by \(\alpha\)).
 A small \(\alpha\) is safe but can only polish the base; a large one can repair a bad base but also break a good one.</p>
@@ -50,7 +50,7 @@ A small \(\alpha\) is safe but can only polish the base; a large one can repair 
 <h3>The reward (this lab&rsquo;s own definition)</h3>
 <p>The repo has no residual-RL experiment to copy: <code>scripts/42_ta_tutorial_t5.py</code> (&ldquo;T5&rdquo;) is a <em>supervised</em> flow policy on MuJoCo insertion, not RL, and its recorded
 result is that the force token gave no measurable benefit (zeroed 34.7&nbsp;% / suffix 35.3&nbsp;% / suffix + aux 40.0&nbsp;%, aux vs zeroed p&nbsp;=&nbsp;0.40), with failures mostly timeouts.
-So the reward here is defined in the same spirit as the arm task&rsquo;s (<code>fvb.policy.rl_env</code>, task&nbsp;7, td3), on the contact world&rsquo;s own signals:</p>
+So the reward here is defined in the same spirit as the arm task&rsquo;s (<code>fvb.policy.rl_env</code>, task&nbsp;11, td3), on the contact world&rsquo;s own signals:</p>
 <ul>
 <li><b>depth progress</b>: the change of the peg&rsquo;s depth below the local surface level, scaled so that a full insertion is worth about 1;</li>
 <li><b>potential-based shaping</b> toward the true hole (privileged: only the reward sees it, the actor does not), weight <em>Hole-shaping</em>;</li>

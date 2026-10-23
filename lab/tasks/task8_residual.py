@@ -405,7 +405,7 @@ def estimate(params: dict) -> float:
 
 SPEC = TaskSpec(
     id="residual-rl",
-    order=9,
+    order=13,
     title="Residual RL on a flow policy",
     subtitle="Freeze a flow-matching policy and let TD3 learn only a small correction on top.",
     params=[
