@@ -10,5 +10,6 @@
   "ta-vla": {"steps_per_s": 74.0, "collect_s_per_ep": 0.002, "overhead_s": 2.0, "eval_s": 1.0, "d64_speedup": 1.0},
   "attention": {"steps_per_s": 720.0, "overhead_s": 0.4},
   "vit-mnist": {"steps_per_s": 270.0, "overhead_s": 1.0},
-  "cross-attn": {"steps_per_s": 120.0, "overhead_s": 1.0}
+  "cross-attn": {"steps_per_s": 120.0, "overhead_s": 1.0},
+  "find-digit": {"steps_per_s": 40.0, "overhead_s": 3.0}
 }

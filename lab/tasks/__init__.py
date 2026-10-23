@@ -16,5 +16,6 @@ from lab.tasks import (
     task_attention,  # noqa: F401
     task_crossattn,  # noqa: F401
     task_embed,  # noqa: F401
+    task_finddigit,  # noqa: F401
     task_vit,  # noqa: F401
 )

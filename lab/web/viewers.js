@@ -685,15 +685,16 @@
   }
 
   // ---- attention task: live heatmaps (training) and the inference stepper (evaluation) ------
-  // Drawing helpers shared by attnlive and vitattn. paint(canvas, img, vals, grid): the 28x28 digit in
-  // grey with the attention weights (vals, grid[0]*grid[1] numbers, scaled to their own max) laid over
-  // it as translucent cells; vals null = digit only.
+  // Drawing helpers shared by attnlive, vitattn, fdlive and finddigit. paint(canvas, img, vals, grid): the
+  // digit image (any size, 28x28 or find-digit's 28x56) in grey with the attention weights (vals,
+  // grid[0]*grid[1] numbers, scaled to their own max) laid over it as translucent cells; vals null =
+  // image only.
   function paintOverlay(cv, img, vals, grid) {
-    const n = img.length, S = cv.width / n, ctx2 = cv.getContext("2d");
-    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const n = img.length, m = img[0].length, Sx = cv.width / m, Sy = cv.height / n, ctx2 = cv.getContext("2d");
+    for (let y = 0; y < n; y++) for (let x = 0; x < m; x++) {
       const v = img[y][x];
       ctx2.fillStyle = `rgb(${v},${v},${v})`;
-      ctx2.fillRect(x * S, y * S, S, S);
+      ctx2.fillRect(x * Sx, y * Sy, Sx, Sy);
     }
     if (!vals) return;
     const [gh, gw] = grid, mx = Math.max(1e-9, ...vals), cw = cv.width / gw, ch = cv.height / gh;
@@ -705,10 +706,10 @@
     for (let i = 1; i < gw; i++) { ctx2.beginPath(); ctx2.moveTo(i * cw, 0); ctx2.lineTo(i * cw, cv.height); ctx2.stroke(); }
     for (let i = 1; i < gh; i++) { ctx2.beginPath(); ctx2.moveTo(0, i * ch); ctx2.lineTo(cv.width, i * ch); ctx2.stroke(); }
   }
-  function overlayCanvas(size) {
-    const cv = document.createElement("canvas");
-    cv.width = cv.height = size;
-    cv.style.cssText = `width:${size}px;height:${size}px;image-rendering:pixelated;border:1px solid var(--line);border-radius:4px`;
+  function overlayCanvas(size, height) {
+    const cv = document.createElement("canvas"), hh = height || size;
+    cv.width = size; cv.height = hh;
+    cv.style.cssText = `width:${size}px;height:${hh}px;image-rendering:pixelated;border:1px solid var(--line);border-radius:4px`;
     return cv;
   }
 
@@ -795,6 +796,81 @@
         `the strongest patch gets ${pct(Math.max(...m))}.`;
     }
     [exS, lyS, hdS].forEach((x) => x.addEventListener("change", draw));
+    draw();
+  }
+
+  // fdlive(row, container, ctx): the find-digit live panel. row.attn = [H][1][gh*gw] (the query token's
+  //   cross-attention row of every head over the patches, no CLS slot), row.img ([28][56] uint8),
+  //   row.grid ([gh, gw]), row.query (digit class), row.names. One overlay canvas per head, painted in
+  //   place; anything else falls back to JSON. DOM cached on container._live tagged "fdlive".
+  function fdlive(row, container, ctx) {
+    const A = row && row.attn, grid = row && Array.isArray(row.grid) && row.grid.length === 2 ? row.grid : null;
+    if (!Array.isArray(A) || !Array.isArray(A[0]) || !Array.isArray(A[0][0]) || !grid || !Array.isArray(row.img)
+      || A[0][0].length !== grid[0] * grid[1]) {
+      container._live = null;
+      return jsonFallback(row, container);
+    }
+    const key = [A.length, grid[0], grid[1], row.img.length, row.img[0].length].join("x");
+    let st = container._live;
+    if (!st || st.viewer !== "fdlive" || st.key !== key) {
+      const title = h("h3", { text: "" });
+      const box = h("div", { class: "vecgrids", style: "display:flex;flex-wrap:wrap;gap:10px" });
+      const note = h("p", { class: "note", text: "Each picture is where the query token looks (one head) over the probe canvas; orange = more attention weight, scaled per picture. The query asks for one digit class; a trained head moves to the half that holds it." });
+      container.replaceChildren(title, box, note);
+      st = container._live = { viewer: "fdlive", key, title, cvs: [] };
+      A.forEach((m, i) => {
+        const cv = overlayCanvas(224, 112);
+        box.append(h("div", {}, h("div", { class: "vg-title", text: (row.names && row.names[i]) || `head ${i}` }), cv));
+        st.cvs.push(cv);
+      });
+    }
+    st.title.textContent = `live attention - probe canvas, query digit ${row.query}` + (row.step != null ? `, step ${row.step}` : "");
+    A.forEach((m, i) => st.cvs[i] && paintOverlay(st.cvs[i], row.img, m[0], grid));
+  }
+
+  // finddigit(result, container, ctx): pick a canvas and a head; the query's attention over the patch grid is laid
+  //   over the canvas next to the plain canvas, with verdict chips (see task_finddigit.py for the schema).
+  function finddigit(result, container, ctx) {
+    const ex = result && result.examples, grid = result && result.grid;
+    const ok = Array.isArray(ex) && ex.length && Array.isArray(grid) && grid.length === 2 &&
+      ex.every((e) => Array.isArray(e.pixels) && Array.isArray(e.attn) && Array.isArray(e.attn[0]) && num(e.query) != null);
+    if (!ok) return jsonFallback(result, container);
+    const ANS = ["left", "right", "absent"];
+    const sel = (opts, label) => {
+      const s2 = h("select", {});
+      opts.forEach((t, i) => s2.append(h("option", { value: String(i), text: t })));
+      return [h("label", { style: "margin-right:12px" }, document.createTextNode(label + " "), s2), s2];
+    };
+    const [exL, exS] = sel(ex.map((e, i) => `#${i}: find ${e.query} -> ${ANS[e.pred]}${e.pred === e.truth ? "" : " (wrong)"}`), "canvas");
+    const [hdL, hdS] = sel(ex[0].attn.map((_, i) => `head ${i}`), "head");
+    const plain = overlayCanvas(336, 168), big = overlayCanvas(336, 168), info = h("p", { class: "note", text: "" });
+    const chips = h("div", { style: "margin:6px 0" });
+    const pics = h("div", { style: "display:flex;gap:16px;flex-wrap:wrap;margin:8px 0" },
+      h("div", {}, h("div", { class: "vg-title", text: "canvas" }), plain),
+      h("div", {}, h("div", { class: "vg-title", text: "where the query looks" }), big));
+    const vg = h("div", { class: "vecgrids" });
+    container.replaceChildren(
+      h("div", { style: "margin-bottom:6px" }, chip("accuracy", pct(result.acc)), chip("absent cases", pct(result.absent_acc)),
+        chip("noise", String(result.noise)), chip("heads", String(result.heads)), chip("blocks", String(result.depth))),
+      h("div", { style: "margin:6px 0" }, exL, hdL), chips, pics, info, vg);
+    function draw() {
+      const e = ex[Number(exS.value)], hh = Number(hdS.value), m = e.attn[hh].flat();
+      paintOverlay(plain, e.pixels, null, grid);
+      paintOverlay(big, e.pixels, m, grid);
+      const right = e.pred === e.truth;
+      chips.replaceChildren(chip("query", String(e.query)), chip("truth", ANS[e.truth]), chip("predicted", ANS[e.pred]),
+        chip("confidence", pct(e.conf)), chip(right ? "correct" : "wrong", right ? "yes" : "no"));
+      const half = (c0, c1) => { let t = 0; m.forEach((v, i) => { const c = i % grid[1]; if (c >= c0 && c < c1) t += v; }); return t; };
+      const hw = grid[1] / 2, L = half(0, hw), R = half(hw, grid[1]);
+      info.textContent = `Digits on the canvas: ${e.classes ? e.classes.join(" and ") : "?"}. This head puts ${pct(L)} of its weight on the left half and ${pct(R)} on the right; ` +
+        `the strongest patch gets ${pct(Math.max(...m))}.`;
+      vg.replaceChildren();
+      if (ctx && ctx.vecgrids && window.LabVecGrid && e.vec) {
+        window.LabVecGrid.render(vg, e.vec.query, { title: `query token (1 x ${e.vec.query[0].length})`, cell: 10 });
+        window.LabVecGrid.render(vg, e.vec.keys, { title: `K of the ${e.vec.keys.length} most attended patches (${e.vec.patches.join(", ")})`, cell: 10 });
+      }
+    }
+    [exS, hdS].forEach((x) => x.addEventListener("change", draw));
     draw();
   }
 
@@ -950,4 +1026,6 @@
   window.LabViewers.register("attnstep", attnstep);
   window.LabViewers.register("vitattn", vitattn);
   window.LabViewers.register("xattn", xattn);
+  window.LabViewers.register("fdlive", fdlive);
+  window.LabViewers.register("finddigit", finddigit);
 })();

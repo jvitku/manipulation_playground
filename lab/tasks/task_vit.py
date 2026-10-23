@@ -51,10 +51,14 @@ def _device() -> str:
 
 
 def patchify(imgs: torch.Tensor, patch: int) -> torch.Tensor:
-    """[B, 28, 28] -> [B, N, patch*patch] flattened patches, row-major over the patch grid."""
-    b, g = imgs.shape[0], IMG // patch
-    x = imgs.reshape(b, g, patch, g, patch).permute(0, 1, 3, 2, 4)  # [B, gy, gx, py, px]
-    return x.reshape(b, g * g, patch * patch)
+    """[B, H, W] -> [B, N, patch*patch] flattened patches, row-major over the patch grid.
+
+    Square 28x28 digits give 28/patch squared patches; find-digit's 28x56 canvas gives 4x8.
+    """
+    b, hh, ww = imgs.shape
+    gh, gw = hh // patch, ww // patch
+    x = imgs.reshape(b, gh, patch, gw, patch).permute(0, 1, 3, 2, 4)  # [B, gy, gx, py, px]
+    return x.reshape(b, gh * gw, patch * patch)
 
 
 class ViT(nn.Module):
