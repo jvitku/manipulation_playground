@@ -44,6 +44,10 @@ class TaskSpec:
     check: Callable | None = None  # cross-param check on typed train params; raises ValueError
     # True when the task's result viewer draws vector grids (shows the "vector grids" toggle)
     vecgrids: bool = False
+    # name of a LabViewers renderer for a live panel under the charts: while a run is attached
+    # and non-terminal, the UI calls it with the newest metrics row that has an `attn` key
+    # (renderer contract fn(row, container, ctx), updating in place). "" = no live panel.
+    live: str = ""
     # checkpoints that live outside lab/data: name -> (repo-relative path, label). Listed in the
     # evaluate dropdown as id "reference/<name>"; only this allowlist is ever resolved.
     reference_ckpts: dict[str, tuple[str, str]] = field(default_factory=dict)

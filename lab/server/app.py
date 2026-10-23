@@ -226,6 +226,7 @@ def create_app() -> FastAPI:
                 "charts": s.charts,
                 "viewer": s.viewer,
                 "vecgrids": s.vecgrids,
+                "live": s.live,
                 "lesson_url": f"/lessons/{s.lesson}",
             },
             "runs": runs,

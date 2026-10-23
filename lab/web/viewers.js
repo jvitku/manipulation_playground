@@ -1,6 +1,7 @@
 /* Result viewers. Contract for real viewers (added by later tasks):
  *   LabViewers.register(name, fn)  where fn(resultObj, container, ctx) renders into container.
  *   ctx = {task, evalId, vecgrids (bool: per-task vector-grid toggle; see vecgrid.js), fileUrl(name) -> "/api/evals/<task>/<eval>/file/<name>"}.
+ *   LabViewers.get(name) -> the registered fn (live panels: spec.live, called as fn(metricsRow, container, ctx) per new row).
  *   LabViewers.render(viewerName, resultObj, container, ctx) dispatches by spec.viewer;
  *   unknown/unregistered names fall back to pretty-printed JSON. */
 (function () {
@@ -683,7 +684,118 @@
     draw();
   }
 
-  window.LabViewers = { register: (name, fn) => { registry[name] = fn; }, render, jsonFallback };
+  // ---- attention task: live heatmaps (training) and the inference stepper (evaluation) ------
+  // attnlive(row, container, ctx): row.attn = [H][Tq][Tk] weights in 0..1 (one heatmap per head,
+  //   vecgrid palette, vmax 1); row.qkv = {labels, heads: [{q, k, v}]} -> Q/K/V grids when
+  //   ctx.vecgrids. The DOM is cached on the container and updated in place on later calls.
+  function attnlive(row, container, ctx) {
+    const A = row && row.attn;
+    if (!Array.isArray(A) || !Array.isArray(A[0]) || !Array.isArray(A[0][0]) || !window.LabVecGrid) {
+      return jsonFallback(row, container);
+    }
+    const qkv = row.qkv && Array.isArray(row.qkv.heads) ? row.qkv : null;
+    const useQkv = !!(qkv && ctx && ctx.vecgrids);
+    const labels = qkv && qkv.labels;
+    const key = [A.length, A[0].length, A[0][0].length, useQkv ? qkv.heads.length : -1].join("x");
+    let st = container._attnlive;
+    if (!st || st.key !== key) {
+      const title = h("h3", { text: "" });
+      const attnBox = h("div", { class: "vecgrids" });
+      const qkvBox = h("div", { class: "vecgrids" });
+      const note = h("p", { class: "note", text: "Each head's row is the query token's attention over the tokens (columns, left to right as in the probe); bright = more weight. Hover a cell for the token." });
+      container.replaceChildren(title, attnBox, note, qkvBox);
+      const lab = labels && labels.length === A[0][0].length ? labels : null;
+      st = container._attnlive = { key, title, attn: [], qkv: [] };
+      A.forEach((m, i) => st.attn.push(window.LabVecGrid.render(attnBox, m, { title: `head ${i}`, vmax: 1, labels: lab, cell: 22 })));
+      if (useQkv) {
+        qkv.heads.forEach((hd, i) => {
+          st.qkv.push(["q", "k", "v"].map((n) => window.LabVecGrid.render(qkvBox, hd[n],
+            { title: `head ${i} ${n.toUpperCase()}`, labels: undefined, cell: 12 })));
+        });
+      }
+    }
+    st.title.textContent = `live attention - probe example` + (row.step != null ? `, step ${row.step}` : "");
+    A.forEach((m, i) => st.attn[i] && st.attn[i].update(m, 1));
+    if (useQkv) qkv.heads.forEach((hd, i) => st.qkv[i] && ["q", "k", "v"].forEach((n, j) => st.qkv[i][j].update(hd[n])));
+  }
+
+  // attnstep(result, container, ctx): the stage slider over result.stages (see task_attention.py)
+  function attnstep(result, container, ctx) {
+    const stages = result && result.stages, probe = result && result.probe;
+    if (!Array.isArray(stages) || !stages.length || !probe) return jsonFallback(result, container);
+    const toks = probe.tokens.map((t) => t.label), T = toks.length;
+    const TEXT = {
+      embed: "Each pair token is its key embedding plus its value embedding; the query token is the key to look up plus a learned '?'.",
+      qkv: "Three linear maps of the tokens: the query token asks (Q), every token advertises (K) and carries (V).",
+      scores: "Score of token j for this query: q . k_j / sqrt(d_k) - how well the key matches the question.",
+      softmax: "Softmax turns the scores into weights that sum to 1 per head.",
+      mixture: "Weighted sum of the V vectors per head, concatenated, then mixed by the output projection.",
+      readout: "A linear readout of the mixed vector gives a score for each of the possible values.",
+    };
+    const NAME = { embed: "1 embed", qkv: "2 Q / K / V", scores: "3 scores", softmax: "4 softmax", mixture: "5 mixture", readout: "6 readout" };
+    const useVg = !!(ctx && ctx.vecgrids && window.LabVecGrid);
+    const slider = h("input", { type: "range", min: "0", max: String(stages.length - 1), value: "0", step: "1", style: "width:260px" });
+    const name = h("b", { text: "" });
+    const body = h("div", { class: "vecgrids" });
+    const tstrip = h("div", { style: "margin:6px 0" });
+    toks.forEach((t, i) => tstrip.append(chip(i === T - 1 ? "query" : `token ${i}`, t)));
+    const ok = probe.pred === probe.target;
+    container.replaceChildren(
+      h("div", { style: "margin-bottom:6px" }, chip("accuracy", pct(result.acc)), chip("pairs", String(result.n_pairs)),
+        chip("heads", String(result.heads)), chip("d_k", String(result.d_k))),
+      tstrip,
+      h("div", { style: "display:flex;gap:12px;align-items:center;margin:6px 0" }, slider, name),
+      h("p", { class: "note", text: "" }), body);
+    const note = container.querySelector("p.note");
+    const grid = (title, vals, opts) => { if (useVg) window.LabVecGrid.render(body, vals, Object.assign({ title }, opts || {})); };
+    function bars(title, vals, vmax) { // one row per token: label, value, bar - works without vector grids
+      const box = h("div", { class: "vecgrid" }, h("div", { class: "vg-title", text: title }));
+      vals.forEach((v, i) => {
+        const w = Math.max(0, Math.min(1, v / vmax)) * 100;
+        box.append(h("div", { style: "display:flex;gap:6px;align-items:center;font:11px var(--mono)" },
+          h("span", { style: "width:70px", text: toks[i] }),
+          h("span", { style: `display:inline-block;height:8px;width:${w * 1.2}px;background:var(--accent)` }),
+          h("span", { style: "color:var(--muted)", text: v.toFixed(3) })));
+      });
+      body.append(box);
+    }
+    function show(i) {
+      const sg = stages[i];
+      name.textContent = NAME[sg.name] || sg.name;
+      note.textContent = TEXT[sg.name] || "";
+      body.replaceChildren();
+      if (sg.name === "embed") {
+        grid(`tokens x d_model (${T} x ${sg.tokens[0].length})`, sg.tokens, { cell: 10, labels: undefined });
+      } else if (sg.name === "qkv") {
+        sg.q.forEach((q, hh) => {
+          grid(`head ${hh} Q (1 x ${q[0].length})`, q, { cell: 12 });
+          grid(`head ${hh} K (${T} x ${q[0].length})`, sg.k[hh], { cell: 12 });
+          grid(`head ${hh} V (${T} x ${q[0].length})`, sg.v[hh], { cell: 12 });
+        });
+      } else if (sg.name === "scores") {
+        const vm = Math.max(1e-6, ...sg.pre.flat().map(Math.abs));
+        sg.pre.forEach((r, hh) => { grid(`head ${hh} scores`, [r], { cell: 22, labels: toks, vmax: vm }); bars(`head ${hh} score`, r.map((x) => Math.max(0, x)), vm); });
+      } else if (sg.name === "softmax") {
+        sg.attn.forEach((r, hh) => { grid(`head ${hh} attention`, [r], { cell: 22, labels: toks, vmax: 1 }); bars(`head ${hh} weight`, r, 1); });
+      } else if (sg.name === "mixture") {
+        sg.per_head.forEach((r, hh) => grid(`head ${hh} sum(attn * V)`, [r], { cell: 12 }));
+        grid(`concat (1 x ${sg.concat.length})`, [sg.concat], { cell: 8 });
+        grid("after output projection", [sg.projected], { cell: 8 });
+      } else if (sg.name === "readout") {
+        grid("value probabilities", [sg.probs], { cell: 18, vmax: 1 });
+        body.append(h("p", { text: `predicted v${sg.pred}, stored value v${sg.target} - ${ok ? "correct" : "wrong"}` }));
+      } else {
+        body.append(h("pre", { class: "json", text: JSON.stringify(sg, null, 2) }));
+      }
+      if (!useVg && ["embed", "qkv", "mixture"].includes(sg.name)) {
+        body.append(h("p", { class: "note", text: "Turn on 'vector grids' to see the vectors of this stage." }));
+      }
+    }
+    slider.addEventListener("input", () => show(Number(slider.value)));
+    show(0);
+  }
+
+  window.LabViewers = { register: (name, fn) => { registry[name] = fn; }, get: (name) => registry[name], render, jsonFallback };
   window.LabViewers.register("t1scatter", t1scatter);
   window.LabViewers.register("traj2d", traj2d);
   window.LabViewers.register("t1", t1);
@@ -694,4 +806,6 @@
   window.LabViewers.register("embeddings", embeddings);
   window.LabViewers.register("tavla", tavla);
   window.LabViewers.register("video", video);
+  window.LabViewers.register("attnlive", attnlive);
+  window.LabViewers.register("attnstep", attnstep);
 })();

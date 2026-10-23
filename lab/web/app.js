@@ -235,6 +235,7 @@
       vgBox.checked = window.LabVecGrid.enabled(taskId);
       vgBox.addEventListener("change", () => {
         window.LabVecGrid.setEnabled(taskId, vgBox.checked);
+        if (liveRow) { liveEl.replaceChildren(); liveEl._attnlive = null; drawLive(); }
         if (lastShown) showResult(lastShown.result, lastShown.evalId);
       });
       if (spec.vecgrids) main.append(el("div", { class: "ctl" },
@@ -259,11 +260,32 @@
       const errEl = el("div", { class: "err" });
       const statusEl = el("div", { class: "status" });
       const chartsEl = el("div", { class: "charts" });
+      const liveEl = el("div", { class: "live-panel", hidden: true }); // spec.live renderer container
       main.append(el("section", { class: "card" },
         el("h2", {}, "Training ", el("span", { class: "k", text: "· run, watch, perturb" })),
         paramsEl,
         el("div", { class: "ctl" }, startBtn, pauseBtn, stopBtn, resetBtn, runSel, estEl),
-        errEl, statusEl, chartsEl));
+        errEl, statusEl, chartsEl, liveEl));
+
+      // live panel: the newest metrics row with an `attn` key goes to the spec.live viewer, which
+      // updates its own DOM in place (cached on liveEl); the last snapshot stays after the run ends.
+      let liveRow = null;
+      function liveCtx() {
+        return { task: taskId, taskId, evalId: null, vecgrids: !!spec.vecgrids && window.LabVecGrid.enabled(taskId) };
+      }
+      function drawLive() {
+        const fn = spec.live && window.LabViewers.get(spec.live);
+        if (!fn || !liveRow) return;
+        liveEl.hidden = false;
+        try { fn(liveRow, liveEl, liveCtx()); } catch (e) { window.LabViewers.jsonFallback(liveRow, liveEl); }
+      }
+      function pushLive(rows) {
+        if (!spec.live) return;
+        for (let i = rows.length - 1; i >= 0; i--) {
+          if (rows[i] && rows[i].attn !== undefined) { liveRow = rows[i]; drawLive(); return; }
+        }
+      }
+      function resetLive() { liveRow = null; liveEl.hidden = true; liveEl.replaceChildren(); liveEl._attnlive = null; }
 
       form = buildForm(spec.params, paramsEl);
       charts = window.makeCharts(chartsEl, spec.charts);
@@ -331,6 +353,7 @@
         currentRun = runId || null;
         currentState = null;
         charts.reset();
+        resetLive();
         statusEl.replaceChildren();
         renderButtons();
         runSel.value = currentRun || "";
@@ -352,6 +375,7 @@
           errEl.textContent = "";
           next = r.next;
           charts.push(r.metrics);
+          pushLive(r.metrics || []);
           const st = r.status || {};
           const was = currentState;
           currentState = st.state;

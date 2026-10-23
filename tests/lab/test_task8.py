@@ -45,7 +45,7 @@ def runs(tmp_path_factory):
 
 def test_task8_registered_and_estimate():
     spec = registry.get("residual-rl")
-    assert spec.order == 9 and spec.viewer == "contact2d" and spec.lesson == "residual-rl.html"
+    assert spec.order == 13 and spec.viewer == "contact2d" and spec.lesson == "residual-rl.html"
     p = next(p for p in spec.params if p.name == "base_ckpt")
     assert p.kind == "ckpt" and p.ckpt_task == "flow-bc"
     steps = next(p for p in spec.params if p.name == "env_steps")

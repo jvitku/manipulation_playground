@@ -30,7 +30,7 @@ def trained(tmp_path_factory):
 
 def test_task6_registered_and_estimate():
     spec = registry.get("td3")
-    assert spec.order == 7 and spec.viewer == "video" and spec.lesson == "td3.html"
+    assert spec.order == 11 and spec.viewer == "video" and spec.lesson == "td3.html"
     assert next(p for p in spec.params if p.name == "env_steps").long is True
     assert next(p for p in spec.params if p.name == "env_steps").default == 100_000
     assert next(p for p in spec.params if p.name == "eval_every").default == 10_000

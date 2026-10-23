@@ -31,7 +31,7 @@ def trained(tmp_path_factory):
 
 def test_task7_registered_and_estimate():
     spec = registry.get("td3-bc")
-    assert spec.order == 8 and spec.viewer == "video" and spec.lesson == "td3-bc.html"
+    assert spec.order == 12 and spec.viewer == "video" and spec.lesson == "td3-bc.html"
     d = {p.name: p.default for p in spec.params}
     assert d["n_demos"] == 100 and d["bc_weight_start"] == 2.5 and d["bc_weight_floor"] == 1.0
     assert "bc" in [c["id"] for c in spec.charts]

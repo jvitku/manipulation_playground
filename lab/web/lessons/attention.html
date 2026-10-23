@@ -1,0 +1,115 @@
+<h3>The question</h3>
+<p>A transformer policy such as the one in task 10 (ta-vla) repeatedly has to answer "which of these tokens is relevant
+to this one?". Attention is the mechanism that does it, and in its simplest form it is a <em>soft dictionary lookup</em>:
+the question (query) is compared with a label on every stored item (key), and what comes back is a blend of the items'
+contents (values), weighted by how well the labels matched. This task isolates exactly that, with no robot in the way:
+a handful of key&ndash;value pairs, one key to look up, one attention layer.</p>
+
+<h3>The task</h3>
+<p>Each example has <code>n_pairs</code> pair tokens and one query token. Keys are drawn without repetition from 16 key
+ids, values are random from 16 value ids. A pair token is the <b>sum</b> of the key's embedding and the value's
+embedding, so one vector carries both. The query token is the embedding of one of those keys plus a learned "?" vector
+where the value would be. The model must output the value that went with that key. There are no position embeddings, so
+position cannot help: the only way to the answer is matching keys. The loss is the cross-entropy on the value; guessing
+gives \(1/16 = 6.25\%\) accuracy and a loss of \(\ln 16 \approx 2.77\).</p>
+
+<h3>The method</h3>
+<p>Every token \(x_i\) (width \(d_\text{model} = \text{heads} \cdot d_k\)) is multiplied by three learned matrices, so that
+each token plays three roles at once:</p>
+<p>$$q = x_\text{query} W_Q,\qquad k_i = x_i W_K,\qquad v_i = x_i W_V$$</p>
+<p class="ref">Q: "what am I looking for?", K: "what do I contain?", V: "what do I hand over if I am picked?". Only the query
+token asks, so there is one \(q\) per head and one \(k_i, v_i\) per token.</p>
+<p>The score of token \(i\) is how well its key matches the question, scaled so that long vectors do not saturate the
+softmax; the softmax turns scores into weights that sum to 1; the output is the weighted sum of the values:</p>
+<p>$$s_i = \frac{q \cdot k_i}{\sqrt{d_k}},\qquad \alpha = \operatorname{softmax}(s),\qquad o = \sum_i \alpha_i\, v_i$$</p>
+<p>Each head does this with its own matrices; the heads' outputs are concatenated and mixed by an output projection, and a
+linear readout turns the result into 16 value scores. The attention code is the shared mini-transformer in
+<code>lab/tasks/minitf.py</code> &mdash; the same module the next attention tasks use.</p>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 760 250" role="img" aria-label="Embeddings feed W_Q, W_K, W_V; scores QK^T over sqrt(d_k); softmax; weighted sum of V; readout; loss" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="atA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--muted)"/>
+    </marker>
+    <marker id="atL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--loss)"/>
+    </marker>
+  </defs>
+  <rect x="8" y="20" width="112" height="56" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="64" y="40" text-anchor="middle" fill="var(--ink)">pair tokens</text>
+  <text x="64" y="55" text-anchor="middle" fill="var(--muted)">E_key[k] + E_val[v]</text>
+  <text x="64" y="69" text-anchor="middle" fill="var(--muted)">(n, d_model)</text>
+  <rect x="8" y="110" width="112" height="56" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="64" y="130" text-anchor="middle" fill="var(--ink)">query token</text>
+  <text x="64" y="145" text-anchor="middle" fill="var(--muted)">E_key[k*] + "?"</text>
+  <text x="64" y="159" text-anchor="middle" fill="var(--muted)">(1, d_model)</text>
+  <line x1="120" y1="48" x2="168" y2="48" stroke="var(--muted)" marker-end="url(#atA)"/>
+  <line x1="120" y1="138" x2="168" y2="138" stroke="var(--muted)" marker-end="url(#atA)"/>
+  <rect x="170" y="14" width="92" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="216" y="33" text-anchor="middle" fill="var(--ink)">W_K &rarr; K</text>
+  <rect x="170" y="54" width="92" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="216" y="73" text-anchor="middle" fill="var(--ink)">W_V &rarr; V</text>
+  <rect x="170" y="123" width="92" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="216" y="142" text-anchor="middle" fill="var(--ink)">W_Q &rarr; Q</text>
+  <text x="216" y="104" text-anchor="middle" fill="var(--muted)">(heads, T, d_k)</text>
+  <line x1="262" y1="29" x2="318" y2="76" stroke="var(--muted)" marker-end="url(#atA)"/>
+  <line x1="262" y1="138" x2="318" y2="100" stroke="var(--muted)" marker-end="url(#atA)"/>
+  <rect x="320" y="62" width="120" height="52" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="380" y="82" text-anchor="middle" fill="var(--ink)">Q K&#7511; / &radic;d_k</text>
+  <text x="380" y="98" text-anchor="middle" fill="var(--muted)">(heads, 1, T)</text>
+  <line x1="440" y1="88" x2="468" y2="88" stroke="var(--muted)" marker-end="url(#atA)"/>
+  <rect x="470" y="62" width="92" height="52" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="516" y="85" text-anchor="middle" fill="var(--ink)">softmax</text>
+  <text x="516" y="101" text-anchor="middle" fill="var(--muted)">&alpha; sums to 1</text>
+  <line x1="262" y1="69" x2="600" y2="140" stroke="var(--muted)" stroke-dasharray="2 3" marker-end="url(#atA)"/>
+  <line x1="562" y1="88" x2="598" y2="130" stroke="var(--muted)" marker-end="url(#atA)"/>
+  <rect x="580" y="132" width="110" height="52" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="635" y="153" text-anchor="middle" fill="var(--ink)">&Sigma; &alpha;&#7522; V&#7522;</text>
+  <text x="635" y="169" text-anchor="middle" fill="var(--muted)">concat + W_O</text>
+  <line x1="635" y1="184" x2="635" y2="204" stroke="var(--muted)" marker-end="url(#atA)"/>
+  <rect x="560" y="206" width="150" height="34" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="635" y="227" text-anchor="middle" fill="var(--ink)">readout &rarr; 16 values</text>
+  <line x1="560" y1="223" x2="468" y2="223" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#atL)"/>
+  <rect x="352" y="208" width="116" height="32" rx="16" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <text x="410" y="228" text-anchor="middle" fill="var(--loss)" font-weight="700">L = CE(value)</text>
+</svg>
+<p class="ref">n = <code>n_pairs</code>, T = n + 1 tokens (the query attends to the pairs and to itself), d_model =
+<code>heads</code> &middot; <code>d_k</code>. The dashed line is V travelling to the weighted sum; the loss sits on the
+readout only, so everything before it &mdash; the embeddings, \(W_Q, W_K, W_V, W_O\) &mdash; is shaped by whether the
+right value comes out.</p>
+
+<h3>What to watch</h3>
+<p>While the run trains, the <b>live attention</b> panel under the charts shows one heatmap per head for a fixed probe
+example (the same tokens at every snapshot, about 60 snapshots per run), plus the Q, K, V vectors of that probe when the
+vector grids are on. Hover a heatmap cell to see which token it is. Early on the weights are spread out; the interesting
+moment is when the weight on the token whose key equals the query's concentrates.</p>
+<p>Measured in this app (default settings: 2 heads, d_k = 16, 4 pairs, 1500 steps, lr 3e-3, GPU; seeds 0, 1, 2):</p>
+<ul>
+<li>The loss <b>sits at chance</b> (2.78 at step 5, 2.75 at step 25, train-batch accuracy 9&ndash;10%) and then falls off a
+cliff: <b>31%</b> accuracy at step 50, <b>100%</b> at step 100 (loss 0.05; 0.001 by step 150). The three seeds first
+reached 99% at steps 100, 110 and 100. The plateau is the model not yet having a way to compare the query with the pair
+tokens; it ends when \(W_Q\) and \(W_K\) line up.</li>
+<li>With one head, 99% came at step 185 (seed 0); with four heads at step 70. One head is enough for this task, extra
+heads only make it quicker.</li>
+<li>At the end of the default run the probe's query attends <b>0.68</b> (head 0) and <b>0.72</b> (head 1) to the token
+carrying its key, against 0.08 and 0.05 to itself &mdash; far from one-hot, yet 100% correct, because the readout also
+absorbs the blur. With 8 pairs the same probe gave 0.55 and 0.81.</li>
+<li>The model trained on 4 pairs scores <b>100%</b> (2000 examples each) on 2, 3, 5, 6, 7, 8 and 12 pairs: without position
+embeddings the lookup does not depend on how many items are stored.</li>
+</ul>
+<p>After training, <b>evaluate</b> a checkpoint and drag the stage slider of the <em>inference stepper</em> through
+embed &rarr; Q/K/V &rarr; scores &rarr; softmax &rarr; mixture &rarr; readout for one probe example; the table of bars under
+"scores" and "softmax" lists the token behind each number.</p>
+
+<h3>Knobs</h3>
+<ul>
+<li><b>Heads</b>: parallel lookups with their own \(W_Q, W_K, W_V\); d_model = heads &middot; d_k. Several heads are redundant here and
+mainly speed up the first hit (see above).</li>
+<li><b>d_k</b>: width of each head's key space. Larger values give the keys more room; the scores are divided by
+\(\sqrt{d_k}\) so the softmax stays usable.</li>
+<li><b>Key-value pairs per example</b>: more pairs means more competitors for the softmax. The evaluation's
+<b>pairs in the probe</b> can be set differently from training (2&ndash;12).</li>
+<li><b>Training steps, learning rate, seed</b>: batch 256 is fixed, fresh examples every step (so the accuracy curve is also
+held-out accuracy). Runs take about 2&ndash;3 s on the GPU.</li>
+</ul>
