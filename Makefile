@@ -3,7 +3,7 @@ RUN     := $(COMPOSE) run --rm -T -u $(shell id -u):$(shell id -g) dev
 RUNT    := $(COMPOSE) run --rm -T -u $(shell id -u):$(shell id -g) train
 ARGS    ?=
 
-.PHONY: build build-train shell test lint fmt run m0 m1 m2 m3 m4 m5 m6 all s1 report report-s1
+.PHONY: lab-build lab lab-stop lab-test build build-train shell test lint fmt run m0 m1 m2 m3 m4 m5 m6 all s1 report report-s1
 
 build:
 	$(COMPOSE) build dev
@@ -71,3 +71,19 @@ report:
 # Stage 1 completion report (docs/stage1/index.html): needs the PLAN §11 runs, see README
 report-s1:
 	$(RUN) python docs/stage1/build.py
+
+# Experiment lab web app (lab/README.md). Serves on :8430; restart: unless-stopped keeps it up.
+lab-build:
+	$(COMPOSE) build lab
+
+lab:
+	$(COMPOSE) up -d lab
+	@echo "lab: http://localhost:8430   http://$$(hostname):8430"
+
+lab-stop:
+	$(COMPOSE) stop lab
+
+# Runs in the fvb-lab image (the dev image lacks fastapi), in a one-off container, not the running
+# service. Depends on lab-build so the image exists and is current (cached when unchanged).
+lab-test: lab-build
+	$(COMPOSE) run --rm -T --no-deps lab pytest tests/lab -q
