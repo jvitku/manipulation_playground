@@ -2,7 +2,7 @@
 
 The source is a date written one of three ways ("23 Oct 2026", "Oct 23, 2026", "23/10/2026",
 uniform choice), the target is always ISO ("2026-10-23"). Dates span 1970-01-01 .. 2070-12-31
-(36 889 days). Vocabulary: one id per character plus PAD / BOS / EOS. The split is BY DATE: a hash
+(36 890 days). Vocabulary: one id per character plus PAD / BOS / EOS. The split is BY DATE: a hash
 of the day number puts ~10% of the days in the held-out set, so `exact` (held-out exact-match) is
 measured on days the model has never seen, in any of the three formats.
 
@@ -20,7 +20,8 @@ Metrics rows: `loss` every step block; about 20 rows carry `exact` (held-out exa
 decode of EXACT_N held-out examples); about SNAPSHOTS (60) rows carry
     "attn":  [H][Tq][Tk] cross-attention of the fixed probe pair (teacher-forced), rows = decoder
              positions (BOS, then the target chars), columns = source characters, and
-    "qkv":   {"labels": [Tk source char labels], "heads": []} (labels for the heatmap hover).
+    "qkv":   {"labels": [Tk source char labels], "heads": []} (labels for the heatmap hover;
+             empty heads = labels only; live Q/K/V is deferred, see the eval-side `vec`).
 
 result.json written by `evaluate` (viewer `xattn`):
     {"d_model", "heads", "exact", "n_eval", "seed",
@@ -30,7 +31,10 @@ result.json written by `evaluate` (viewer `xattn`):
                    "out_labels": [L predicted chars: the decoded chars then "<eos>"],
                    "enc_attn":   [H][S][S],     # encoder self-attention
                    "dec_attn":   [H][L][L],     # decoder causal self-attention (row = position)
-                   "cross_attn": [H][L][S]}]}  # row t = what position t read to emit out_labels[t]
+                   "cross_attn": [H][L][S],     # row t = what position t read to emit out_labels[t]
+                   "vec": {"q": [H][L][d_k],    # decoder-side Q per head and output position
+                           "k": [H][S][d_k],    # encoder-side K per head and source position
+                           "v": [H][S][d_k]}}]} # encoder-side V (3 decimals)
 The matrices come from re-running the model on BOS + the greedy output, which under the causal mask
 is the same computation as the incremental decode.
 """
@@ -298,7 +302,15 @@ def _example(model, src_str: str, tgt_str: str, dev) -> dict:
     if EOS in gen:
         gen = gen[: gen.index(EOS) + 1]
     inp = torch.tensor([[BOS] + gen[:-1]], device=dev)
-    _, enc_attn, self_attn, cross_attn = model(src, inp)
+    seen = {}
+    mha = model.dec.cross_attn
+    hook = mha.register_forward_pre_hook(lambda m, a: seen.update(xq=a[0], xkv=a[1]))
+    try:
+        _, enc_attn, self_attn, cross_attn = model(src, inp)
+    finally:
+        hook.remove()
+    xq, xkv = seen["xq"], seen["xkv"]
+    q, k, v = (mha.split(f(x))[0] for f, x in ((mha.q, xq), (mha.k, xkv), (mha.v, xkv)))
     decoded = decode_ids(gen)
     return {
         "source": src_str, "target": tgt_str, "decoded": decoded, "correct": decoded == tgt_str,
@@ -307,6 +319,7 @@ def _example(model, src_str: str, tgt_str: str, dev) -> dict:
         "out_labels": [_label(i) for i in gen],
         "enc_attn": _r(enc_attn[0], 3), "dec_attn": _r(self_attn[0], 3),
         "cross_attn": _r(cross_attn[0], 3),
+        "vec": {"q": _r(q, 3), "k": _r(k, 3), "v": _r(v, 3)},
     }  # fmt: skip
 
 

@@ -72,10 +72,15 @@ class ViT(nn.Module):
         self.norm = nn.LayerNorm(d_model)
         self.head = nn.Linear(d_model, 10)
 
-    def forward(self, imgs):
-        """imgs: normalised float [B, 28, 28] -> (logits [B, 10], attn list of [B, H, T, T])."""
+    def input_tokens(self, imgs):
+        """imgs -> [B, 1 + n, d_model]: CLS + patch embeddings + position (the blocks' input)."""
         x = self.embed(patchify(imgs, self.patch))
         x = torch.cat([self.cls.expand(x.shape[0], -1, -1), x], 1) + self.pos
+        return x
+
+    def forward(self, imgs):
+        """imgs: normalised float [B, 28, 28] -> (logits [B, 10], attn list of [B, H, T, T])."""
+        x = self.input_tokens(imgs)
         attns = []
         for blk in self.blocks:
             x, a = blk(x)
@@ -183,6 +188,7 @@ def evaluate(ctx) -> None:
     with torch.no_grad():
         logits, attns = model(norm(xte[idx.numpy()]).to(dev))
         probs, rows = logits.softmax(-1).cpu(), _cls_rows(attns).cpu()  # rows [B, D, H, T]
+        toks = model.input_tokens(norm(xte[idx.numpy()]).to(dev)).cpu()  # [B, 1 + n, d_model]
     examples = []
     for j, i in enumerate(idx.tolist()):
         pred = int(probs[j].argmax())
@@ -190,6 +196,8 @@ def evaluate(ctx) -> None:
             "pixels": np.array(xte[i]).tolist(), "label": int(yte[i]), "pred": pred,
             "conf": round(float(probs[j, pred]), 4),
             "cls_self": rows[j, :, :, 0].double().round(decimals=4).tolist(),
+            "vec": {"cls": toks[j, :1].double().round(decimals=3).tolist(),
+                    "patches": toks[j, 1:].double().round(decimals=3).tolist()},
             "attn": rows[j, :, :, 1:].reshape(D, H, g, g).double().round(decimals=4).tolist(),
         })  # fmt: skip
     atomic_write_json(ctx.dir / "result.json", {

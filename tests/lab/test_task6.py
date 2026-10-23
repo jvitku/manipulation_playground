@@ -1,4 +1,4 @@
-"""Task 6 (td3): TD3 from scratch on the arm hidden-hole task - tiny train, stop, eval + video."""
+"""Task 11 (td3): TD3 from scratch on the arm hidden-hole task - tiny train, stop, eval + video."""
 
 import json
 

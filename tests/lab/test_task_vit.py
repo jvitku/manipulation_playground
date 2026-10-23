@@ -101,6 +101,9 @@ def test_eval_roundtrip(tmp_path, trained):
         assert len(e["pixels"]) == 28 and len(e["pixels"][0]) == 28
         assert e["label"] in range(10) and e["pred"] in range(10)
         assert 0.0 <= e["conf"] <= 1.0
+        assert len(e["vec"]["cls"]) == 1 and len(e["vec"]["cls"][0]) > 0
+        vec = e["vec"]
+        assert len(vec["patches"]) == 16 and len(vec["patches"][0]) == len(vec["cls"][0])
         a = e["attn"]
         assert len(a) == 1 and len(a[0]) == 2 and len(a[0][0]) == 4 and len(a[0][0][0]) == 4
         assert 0.0 < sum(sum(sum(r) for r in hd) for hd in a[0]) <= 2.0 + 1e-3

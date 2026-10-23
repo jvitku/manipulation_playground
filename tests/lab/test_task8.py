@@ -1,4 +1,4 @@
-"""Task 8 (residual-rl): ckpt param validation, tiny base -> tiny residual run, standalone ckpt,
+"""Task 13 (residual-rl): ckpt param validation, tiny base -> tiny residual run, standalone ckpt,
 residual_off evaluation, base/delta in the episode payload."""
 
 import json

@@ -68,8 +68,7 @@ for i in np.flatnonzero(live):
 if t &gt;= learn_start:
     owed += UTD * int(live.sum())
     while owed &gt;= 1.0:
-        owed -= 1.0
-        for k, v in agent.update(buf, rng).items():</code></pre></details>
+        owed -= 1.0</code></pre></details>
 
 <h3>The reward (this lab&rsquo;s own definition)</h3>
 <p>The repo has no residual-RL experiment to copy: <code>scripts/42_ta_tutorial_t5.py</code> (&ldquo;T5&rdquo;) is a <em>supervised</em> flow policy on MuJoCo insertion, not RL, and its recorded

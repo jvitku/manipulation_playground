@@ -125,6 +125,11 @@ def test_eval_roundtrip(tmp_path, trained):
         assert len(e["cross_attn"][0][0]) == tc.SRC_LEN
         assert len(e["dec_attn"][0]) == L and len(e["dec_attn"][0][0]) == L
         assert len(e["enc_attn"][0]) == tc.SRC_LEN
+        dk = tc.build(ck["meta"]).dec.cross_attn.dh
+        vq, vk, vv = (e["vec"][n] for n in "qkv")
+        assert len(vq) == 4 and len(vq[0]) == L and len(vq[0][0]) == dk
+        assert len(vk) == 4 and len(vk[0]) == tc.SRC_LEN and len(vk[0][0]) == dk
+        assert len(vv[0]) == tc.SRC_LEN
         for row in e["cross_attn"][0]:
             assert abs(sum(row) - 1.0) < 0.02
         for i, row in enumerate(e["dec_attn"][0]):

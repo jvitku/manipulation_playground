@@ -1,4 +1,4 @@
-"""Task 7 (td3-bc): TD3 + demos + decaying BC weight on top of task 6's loop."""
+"""Task 12 (td3-bc): TD3 + demos + decaying BC weight on top of td3's loop."""
 
 import json
 

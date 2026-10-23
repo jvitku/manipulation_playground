@@ -779,13 +779,14 @@
     const [lyL, lyS] = sel(Array.from({ length: result.depth }, (_, i) => `block ${i}`), "block");
     const [hdL, hdS] = sel(Array.from({ length: result.heads }, (_, i) => `head ${i}`), "head");
     const big = overlayCanvas(280), plain = overlayCanvas(280), info = h("p", { class: "note", text: "" });
+    const vg = h("div", { class: "vecgrids" });
     const row = h("div", { style: "display:flex;gap:16px;flex-wrap:wrap;margin:8px 0" },
       h("div", {}, h("div", { class: "vg-title", text: "digit" }), plain),
       h("div", {}, h("div", { class: "vg-title", text: "CLS attention over the patch grid" }), big));
     container.replaceChildren(
       h("div", { style: "margin-bottom:6px" }, chip("test accuracy", pct(result.acc)), chip("patch", `${result.patch}px`),
         chip("grid", `${grid[0]}x${grid[1]}`), chip("blocks", String(result.depth)), chip("heads", String(result.heads))),
-      h("div", { style: "margin:6px 0" }, exL, lyL, hdL), row, info);
+      h("div", { style: "margin:6px 0" }, exL, lyL, hdL), row, info, vg);
     function draw() {
       const e = ex[Number(exS.value)], l = Number(lyS.value), hh = Number(hdS.value);
       const m = e.attn[l][hh].flat();
@@ -794,6 +795,11 @@
       info.textContent = `predicted ${e.pred} with confidence ${pct(e.conf)} (label ${e.label}). ` +
         `This head puts ${pct(e.cls_self[l][hh])} of its weight on the CLS token itself and ${pct(m.reduce((a, b) => a + b, 0))} on the patches; ` +
         `the strongest patch gets ${pct(Math.max(...m))}.`;
+      vg.replaceChildren();
+      if (ctx && ctx.vecgrids && window.LabVecGrid && e.vec) {
+        window.LabVecGrid.render(vg, e.vec.cls, { title: `CLS token (1 x ${e.vec.cls[0].length})`, cell: 10 });
+        window.LabVecGrid.render(vg, e.vec.patches, { title: `patch embeddings (${e.vec.patches.length} x ${e.vec.patches[0].length}), row = patch in reading order`, cell: 10 });
+      }
     }
     [exS, lyS, hdS].forEach((x) => x.addEventListener("change", draw));
     draw();
@@ -929,7 +935,7 @@
         });
       } else if (sg.name === "scores") {
         const vm = Math.max(1e-6, ...sg.pre.flat().map(Math.abs));
-        sg.pre.forEach((r, hh) => { grid(`head ${hh} scores`, [r], { cell: 22, labels: toks, vmax: vm }); bars(`head ${hh} score`, r.map((x) => Math.max(0, x)), vm); });
+        sg.pre.forEach((r, hh) => { grid(`head ${hh} scores`, [r], { cell: 22, labels: toks, vmax: vm }); bars(`head ${hh} score`, r, vm); });
       } else if (sg.name === "softmax") {
         sg.attn.forEach((r, hh) => { grid(`head ${hh} attention`, [r], { cell: 22, labels: toks, vmax: 1 }); bars(`head ${hh} weight`, r, 1); });
       } else if (sg.name === "mixture") {
@@ -967,6 +973,7 @@
     const slider = h("input", { type: "range", min: "0", max: "0", value: "0", step: "1", style: "width:220px" });
     const stepLbl = h("b", { text: "" }), info = h("p", { class: "note", text: "" });
     const board = h("div", { style: "display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;margin:8px 0" });
+    const vg = h("div", { class: "vecgrids" });
     // matrix(title, m, rowLabels, colLabels, hi): table of cells shaded with the vecgrid palette (weight 0..1);
     //   hi = index of the row to outline. Hover a cell for its weight.
     function matrix(title, m, rl, cl, hi) {
@@ -989,7 +996,7 @@
         chip("heads", String(result.heads)), chip("d_model", String(result.d_model))),
       h("div", { style: "margin:6px 0" }, exL, hdL),
       h("div", { style: "display:flex;gap:12px;align-items:center;margin:6px 0" }, h("span", { text: "decode step" }), slider, stepLbl),
-      board, info);
+      board, info, vg);
     function draw() {
       const e = ex[Number(exS.value)], hh = Number(hdS.value), L = e.out_labels.length;
       slider.max = String(L - 1);
@@ -1005,6 +1012,13 @@
       info.textContent = `source "${e.source}", target "${e.target}", decoded "${e.decoded}" (${e.correct ? "correct" : "wrong"}). ` +
         `Generated so far: "${so_far}". To emit ${e.out_labels[t]} this head puts ${pct(row[j])} of its weight on source char ${e.src_labels[j]} (column ${j}) ` +
         `and ${pct(row.reduce((a, b) => a + b, 0) - row[j])} on the rest.`;
+      vg.replaceChildren();
+      if (ctx && ctx.vecgrids && window.LabVecGrid && e.vec && e.vec.q && e.vec.q[hh]) {
+        const dk = e.vec.q[hh][0].length;
+        window.LabVecGrid.render(vg, e.vec.q[hh], { title: `head ${hh} Q: one row per output char (${L} x ${dk}), rows ${e.out_labels.join(" ")}`, cell: 12 });
+        window.LabVecGrid.render(vg, e.vec.k[hh], { title: `head ${hh} K: one row per source char (${e.vec.k[hh].length} x ${dk}), rows ${e.src_labels.join(" ")}`, cell: 12 });
+        window.LabVecGrid.render(vg, e.vec.v[hh], { title: `head ${hh} V: one row per source char (${e.vec.v[hh].length} x ${dk}), rows ${e.src_labels.join(" ")}`, cell: 12 });
+      }
     }
     [exS, hdS].forEach((x) => x.addEventListener("change", () => { slider.value = "0"; draw(); }));
     slider.addEventListener("input", draw);
