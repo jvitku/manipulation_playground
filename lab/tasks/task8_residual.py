@@ -1,4 +1,4 @@
-"""Task 8 - "Residual RL on a flow policy" (id `residual-rl`): TD3 learns a correction on top of a
+"""Task 13 - "Residual RL on a flow policy" (id `residual-rl`): TD3 learns a correction on top of a
 FROZEN task-3 flow policy (the contact2d T3 peg search).
 
 The base is a `flow-bc` checkpoint picked by the `base_ckpt` param (kind "ckpt", source task
@@ -13,7 +13,7 @@ training begins AT the base policy. The residual actor and the critics see the b
 22-D observation plus the base action (24-D); the transition action is `delta` (not the sum).
 
 Reward (own definition on `fvb.ta_tutorial.contact2d`, structured like the arm task's
-`fvb.policy.rl_env.ArmRLEnv.step` that task 6 trains on: depth progress + potential shaping toward
+`fvb.policy.rl_env.ArmRLEnv.step` that task 11 trains on: depth progress + potential shaping toward
 the true hole, time cost, force penalty, terminal bonus/penalty). Per live step:
     r = dd/(WC+INSERT_DEPTH) + [shaping*(-|x-hole|/0.08)' - shaping*(-|x-hole|/0.08)]
         - time_cost - force_penalty * max(0, |F| - F_ABORT/2)/F_ABORT*10  (+10 success, -5 abort)
@@ -27,7 +27,7 @@ eval_force_abort, eval_return, base_success (flat reference), eval_s}. `base_suc
 base's success on the same fixed eval scenes (EVAL_SEED0, `eval_episodes`, est_sigma 0.03, sensor
 noise 0.05), measured once at the start.
 
-Checkpoint (`ckpt/`, best-by-eval + newest, as task 6): `TD3.state(meta)` = {"actor", "critic",
+Checkpoint (`ckpt/`, best-by-eval + newest, as task 11): `TD3.state(meta)` = {"actor", "critic",
 "cfg", "obs_dim", "act_dim", "priv_dim", "meta"} plus
     "base":  {"ema", "norm", "arch", "params"}  the task-3 part EMBEDDED (so the residual ckpt is
              standalone: deleting the task-3 run does not break it; ~5 MB at hidden 512 x depth 4),

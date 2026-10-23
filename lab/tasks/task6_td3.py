@@ -1,4 +1,4 @@
-"""Task 6 - "RL from scratch: TD3" (id `td3`): the repo's Stage-1 RL experiment in the lab.
+"""Task 11 - "RL from scratch: TD3" (id `td3`): the repo's Stage-1 RL experiment in the lab.
 
 Wraps, by import, `scripts/18_train_td3.py`'s default (`--task arm`, no demos) run: `ArmRLEnv` on a
 Panda `ArmWorld` with its privileged reward (depth progress + potential shaping toward the true
@@ -132,7 +132,7 @@ def train(ctx) -> None:
 
 
 def _run(ctx, hooks) -> None:
-    """Build env + agent and run the loop. `hooks` (task 7) adds demos and a BC term: an object
+    """Build env + agent and run the loop. `hooks` (task 12) adds demos and a BC term: an object
     with `prepare(ctx, env, buf, rng) -> bool` (False = stopped), `update(agent, buf, rng, t) ->
     dict` (replaces `agent.update(buf, rng)`) and `meta() -> dict` (merged into the ckpt meta)."""
     import torch
