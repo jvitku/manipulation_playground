@@ -23,6 +23,52 @@ and feeds the looked-up word vectors into the transformer prefix; here the poole
 force in N (0 for an insert), is-insert flag]. It is the only code that carries <em>meaning</em> rather than identity.</li>
 </ul>
 
+<details class="code"><summary>The four encodings of a command</summary><pre><code class="language-python" data-src="lab/tasks/task_embed.py">def enc_raw(kind: str, task: np.ndarray, est: np.ndarray) -&gt; np.ndarray:
+    # ...
+    if kind == "onehot":
+        return np.eye(4, dtype=np.float32)[task]
+    if kind == "binary":
+        return np.stack([task &amp; 1, (task &gt;&gt; 1) &amp; 1], 1).astype(np.float32)
+    if kind == "text":
+        return np.array([c2d.tokens(int(t)) for t in task], np.int64)
+    ins = task &lt;= 1
+    x = np.where(ins, est[np.arange(len(task)), np.minimum(task, 1)], 0.0)
+    f = np.array([c2d.PRESS_N.get(int(t), 0.0) for t in task])
+    return np.stack([x, f, ins.astype(float)], 1).astype(np.float32)</code></pre></details>
+<details class="code"><summary>The conditioned denoiser: encode the command, concatenate, denoise</summary><pre><code class="language-python" data-src="lab/tasks/task_embed.py">class CondDenoiser(nn.Module):
+    # ...
+    def __init__(self, arch: dict):
+        # ...
+        self.kind, self.key = arch["enc"], ENC_KEY[arch["enc"]]
+        self.d = enc_dim(self.kind, arch["d_embed"])
+        self.emb = None
+        if self.kind == "text":
+            self.emb = nn.Embedding(len(c2d.VOCAB), arch["d_embed"], padding_idx=0)
+    # ...
+    def encode(self, e: torch.Tensor) -&gt; torch.Tensor:
+        if self.emb is None:
+            return e.float()
+        m = (e != 0).float().unsqueeze(-1)  # mean over the real tokens, not the padding
+        return (self.emb(e) * m).sum(1) / m.sum(1).clamp_min(1.0)
+    # ...
+    def forward(self, x_t, t, cond):
+        obs = torch.cat([cond["state"], cond["torque"], self.encode(cond[self.key])], 1)
+        return self.net(x_t, t, {"obs": obs})</code></pre></details>
+<details class="code"><summary>Closed-loop evaluation: rebuild the command conditioning each step</summary><pre><code class="language-python" data-src="lab/tasks/task_embed.py">def make_cond(o):
+    raw = enc_raw(kind, env.task, est) if kind != "text" else o["lang"]
+    return {
+        "state": torch.as_tensor(_state(o["state"], est, hole_obs), device=dev),
+        "torque": torch.as_tensor(o["torque"], device=dev),
+        key: torch.as_tensor(raw, device=dev),
+    }
+
+pol = ChunkPolicy(model, make_gen(), ds_like, make_cond, n_exec, K, seed=seed)
+# ...
+while not env.done.all():
+    # ...
+    a = pol.act(c2d.t4_obs(env))
+    env.step(a)</code></pre></details>
+
 <h3>The architecture</h3>
 <svg viewBox="0 0 760 330" role="img" aria-label="Four alternative command-encoding blocks concatenated with state and force history into the MLPDenoiser, then the flow loss node" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
   <defs>

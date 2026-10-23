@@ -66,6 +66,37 @@ environment step.</p>
 <p class="ref">Red = where a loss is computed; blue = how a network is updated. The three tricks that make it TD3 are all in the target: the minimum
 over <em>two</em> critics, noise on the target action, and the actor and target networks moving slowly.</p>
 
+<details class="code"><summary>Critic update: twin critics, smoothed target action, clipped double-Q</summary><pre><code class="language-python" data-src="src/fvb/policy/td3.py">o, a, r, o2, d, p, p2 = buf.sample(c.batch, rng, self.device)
+co, co2 = torch.cat([o, p], -1), torch.cat([o2, p2], -1)  # critic inputs
+with torch.no_grad():
+    noise = (torch.randn_like(a) * c.target_noise).clamp(-c.noise_clip, c.noise_clip)
+    a2 = (self.actor_t(o2) + noise).clamp(-1.0, 1.0)
+    q1t, q2t = self.critic_t(co2, a2)
+    y = r + c.gamma * (1.0 - d) * torch.min(q1t, q2t)
+q1, q2 = self.critic(co, a)
+c_loss = ((q1 - y) ** 2).mean() + ((q2 - y) ** 2).mean()
+self.c_opt.zero_grad(set_to_none=True)
+c_loss.backward()
+self.c_opt.step()</code></pre></details>
+<details class="code"><summary>Delayed actor update and slow target networks</summary><pre><code class="language-python" data-src="src/fvb/policy/td3.py">if self.updates % c.policy_delay == 0:
+    q = self.critic(co, self.actor(o))[0]
+    a_loss = -q.mean()
+# ...
+self.a_opt.zero_grad(set_to_none=True)
+a_loss.backward()
+self.a_opt.step()
+# ...
+pt.mul_(1 - c.tau).add_(c.tau * p)</code></pre></details>
+<details class="code"><summary>Exploration and replay: random warm-up, then actor + Gaussian noise</summary><pre><code class="language-python" data-src="lab/tasks/task6_td3.py">if t &lt;= start_steps:
+    a = rng.uniform(-1, 1, env.act_dim).astype(np.float32)
+else:
+    a = np.clip(agent.act(o) + rng.normal(0, expl, env.act_dim), -1, 1).astype(np.float32)
+o2, r, term, trunc, info = env.step(a)
+buf.add(o, a, r, o2, term)  # truncation (timeout) still bootstraps
+# ...
+if t &gt; start_steps:
+    upd = agent.update(buf, rng) if hooks is None else hooks.update(agent, buf, rng, t)</code></pre></details>
+
 <h3>Where each loss is computed</h3>
 <p>For a batch of transitions \((o, a, r, o', d)\) (\(d=1\) only for a real terminal, not a timeout), the target action carries clipped noise and the
 target is the <em>smaller</em> of the two target critics:</p>

@@ -106,6 +106,37 @@ network's velocity with the line's velocity \(e - x_0\) &mdash; the interpolatio
 expert data enters. Compared to the previous task, the zeros fed to the net are replaced by the noisy chunk and the
 real time embedding.</p>
 
+<details class="code"><summary>Flow-matching loss: regress the velocity of a straight line</summary><pre><code class="language-python" data-src="src/fvb/ta_tutorial/generative.py">def loss(self, model, x0: torch.Tensor, cond, mask: torch.Tensor | None = None):
+    # ...
+    e = torch.randn_like(x0)
+    t = self.sample_t(x0.shape[0], x0.device)
+    tt = t[:, None, None]
+    x_t = tt * e + (1 - tt) * x0
+    v, extra = model(x_t, t, cond)
+    err = (v - (e - x0)).pow(2).mean(-1)  # (B, H)
+    # ...
+    return err.mean(1), extra</code></pre></details>
+<details class="code"><summary>Sampling: Euler steps from noise to an action chunk</summary><pre><code class="language-python" data-src="src/fvb/ta_tutorial/generative.py">def sample(self, model, shape, cond, steps: int = 10, generator=None, trace: bool = False):
+    x = torch.randn(shape, generator=generator, device=_dev(cond, model))
+    xs = [x]
+    dt = 1.0 / steps
+    for i in range(steps):
+        t = torch.full((shape[0],), 1.0 - i * dt, device=x.device)
+        v, _ = model(x, t, cond)
+        x = x - dt * v
+        if trace:
+            xs.append(x)
+    return (x, torch.stack(xs)) if trace else x</code></pre></details>
+<details class="code"><summary>Training step (shared loop)</summary><pre><code class="language-python" data-src="lab/core/loop.py">idx = torch.randint(0, ds.n, (batch,), generator=g).to(dev)
+cond, x0, mask, aux_t = ds.batch(idx)
+per, extra = gen.loss(model, x0, cond, mask)
+loss = per.mean()
+# ...
+opt.zero_grad(set_to_none=True)
+loss.backward()
+torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+opt.step()</code></pre></details>
+
 <h3>What to watch</h3>
 <p>Run it with the defaults (flow, K = 8) and read the <b>T1 collision</b> curve and the viewer. In this repo's tutorial
 (docs/ta_tutorial.md, 20k steps, lr 1e-3, 3 seeds) the flow head put <b>3.0%</b> of T1 samples inside the obstacle

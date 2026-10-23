@@ -12,6 +12,10 @@ FastAPI backend (`lab/server`), static front end (`lab/web`), tasks in `lab/task
 | 3 | `embeddings` | one policy, four commands: one-hot / bits / learned word embeddings / continuous goal vector | ~2 min |
 | 4 | `flow-bc` | flow policy reading the force history to find a hole by feel | ~40 s |
 | 5 | `force-token` | the repo's Stage-1 gantry pipeline (ACT/MLP, force token on/off, DART noise) | ~2 min |
+| 6 | `attention` | fetch the value stored under a key with one attention layer - watch Q, K and V form | ~2 s |
+| 7 | `vit-mnist` | read digits with patches, a CLS token and attention - see where CLS looks | ~8 s |
+| 8 | `cross-attn` | turn "23 Oct 2026" into "2026-10-23" - see which source character each output reads | ~12 s |
+| 9 | `find-digit` | a command token reads an image: is the queried digit left, right or absent? | ~1 min |
 | 10 | `ta-vla` | two-stream transformer with a torque token: image + words + state in, actions out | ~4 min |
 | 11 | `td3` | hidden-hole insertion learned from reward alone | ~25 min |
 | 12 | `td3-bc` | TD3 with demonstrations in the buffer and an imitation term | ~30 min |
@@ -75,7 +79,8 @@ entry (e.g. `steps_per_s = steps / (wall_s - overhead_s - collection)`), then ch
    module in `lab/tasks/__init__.py`. Param names must not repeat between `params` and
    `eval_params`. Optional: `check` (cross-param validation of the typed train params, raise
    `ValueError` -> HTTP 422), `vecgrids=True` (the viewer draws vector grids; shows the toggle),
-   `reference_ckpts` (allowlisted checkpoints outside `lab/data`).
+   `reference_ckpts` (allowlisted checkpoints outside `lab/data`). `live` names a `LabViewers` renderer that is fed the newest metrics row carrying the key
+   `attn` (the live attention panel under the charts).
 2. `Param.kind`: `int|float|choice|bool|ckpt`. `ckpt` takes a checkpoint of another task
    (`ckpt_task`); the server validates the id and swaps in the absolute path. `long=True` flags
    hours-long settings.
@@ -94,7 +99,11 @@ entry (e.g. `steps_per_s = steps / (wall_s - overhead_s - collection)`), then ch
    number on the page is either measured by this app (say which run) or cited; anything else is
    written as an explanation, not a result. Refer to other tasks by ladder order ("task 4
    (flow-bc)").
-7. `calib.json` entry for the task, and a test `tests/lab/test_taskN.py` (spec shape, a tiny train
+7. Code snippets: a lesson shows real code in collapsed `<details class="code">` blocks:
+   `<pre><code class="language-python" data-src="repo/relative/path.py">` with HTML-escaped text and
+   elisions written exactly `# ...`. Every other line must exist in the `data-src` file (compared
+   whitespace-stripped); `tests/lab/test_snippets.py` fails on drift.
+8. `calib.json` entry for the task, and a test `tests/lab/test_taskN.py` (spec shape, a tiny train
    -> checkpoint -> evaluate round trip through the real code).
 
 ## Operations

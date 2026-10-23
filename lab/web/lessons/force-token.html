@@ -87,6 +87,26 @@ to 0 before normalisation). Compare the two at equal settings: the difference is
 <p class="ref">B = batch. The highlighted block is the 9 force channels (the force token); the dashed <code>use_force</code> switch is the zeroed
 twin. The loss node compares the chunk with the expert chunk, ignoring slots past the episode end.</p>
 
+<details class="code"><summary>ACT-lite: observation tokens in, learned queries cross-attend, actions out</summary><pre><code class="language-python" data-src="src/fvb/policy/models.py">def forward(self, x: torch.Tensor) -&gt; torch.Tensor:  # x (B,H,obs) -&gt; (B,K,act)
+    h = self.norm_in(self.embed(x) + self.pos)
+    mem = self.encoder(h)
+    q = self.queries.expand(x.shape[0], -1, -1)
+    out = self.decoder(q, mem)
+    return self.head(out)</code></pre></details>
+<details class="code"><summary>Stage-1 training step: masked L1 on action windows</summary><pre><code class="language-python" data-src="lab/tasks/task4_force_token.py">def masked_l1(pred, y, m):
+    return ((pred - y).abs().mean(-1) * m).sum() / m.sum()
+# ...
+for i in range(spe):
+    idx = perm[i * BATCH : (i + 1) * BATCH]
+    loss = masked_l1(model(Xtr_t[idx]), Ytr_t[idx], Mtr_t[idx])
+    opt.zero_grad(set_to_none=True)
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    opt.step()</code></pre></details>
+<details class="code"><summary>The zeroed-twin knob: the same checkpoint with the force channels blanked</summary><pre><code class="language-python" data-src="lab/tasks/task4_force_token.py">trained_with_force = bool(policy.use_force)
+zeroed = bool(P.get("force_zeroed", False)) or not trained_with_force
+policy.use_force = not zeroed  # TorchPolicy.act zeroes the force channels when False</code></pre></details>
+
 <h3>What to watch: validation L1 is health, closed-loop success is the score</h3>
 <p>The charts show collection progress, then per epoch the train and validation <b>masked L1</b> and the validation action error in mm. They
 do not show success: that is only measured by <em>Evaluate</em>, which flies unseen holes closed loop. The repo's own numbers

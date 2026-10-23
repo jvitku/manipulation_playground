@@ -107,6 +107,35 @@ weights. In every layer each stream computes its own queries, keys and values, b
 (right): prefix queries see only the prefix; suffix queries see the whole prefix <em>and</em> the whole suffix. Orange is the torque
 token; dashed is the auxiliary branch, present only when the weight <i>w</i> is above zero.</p>
 
+<details class="code"><summary>Prefix and suffix blocks: the action tokens attend to the prefix and to themselves</summary><pre><code class="language-python" data-src="src/fvb/ta_tutorial/nets.py">def prefix(self, xp):
+    q, k, v = self.vlm.qkv_heads(xp)
+    return self.vlm.finish(xp, F.scaled_dot_product_attention(q, k, v)), (k, v)
+
+def suffix(self, xs, kv_prefix):
+    q, k, v = self.expert.qkv_heads(xs)
+    kp, vp = kv_prefix
+    # the suffix attends to the prefix AND to itself (bidirectionally within the chunk)
+    attn = F.scaled_dot_product_attention(q, torch.cat([kp, k], 2), torch.cat([vp, v], 2))
+    return self.expert.finish(xs, attn)</code></pre></details>
+<details class="code"><summary>The torque token joins the suffix next to the noisy action tokens</summary><pre><code class="language-python" data-src="src/fvb/ta_tutorial/nets.py">def torque_token(self, cond):
+    tq = cond["torque"]
+    if self.zero_torque:
+        tq = torch.zeros_like(tq)
+    return self.torque_mlp(tq)[:, None, :]
+# ...
+def forward(self, x_t, t, cond):
+    kvs = self._kv if self._kv is not None else self.encode_prefix(cond)
+    a = self.action_in(x_t)
+    te = time_embedding(t, self.d)[:, None, :].expand(-1, self.horizon, -1)
+    s = self.action_time(torch.cat([a, te], dim=-1)) + self.act_pos
+    if self.torque_pos == "suffix":
+        s = torch.cat([self.torque_token(cond).expand(s.shape[0], -1, -1), s], dim=1)
+    for blk, kv in zip(self.blocks, kvs, strict=True):
+        s = blk.suffix(s, kv)
+    h = self.ln_out(s[:, -self.horizon :])  # the action tokens
+    extra = {"aux": self.aux_head(h.mean(1))} if self.aux_head is not None else {}
+    return self.action_out(h), extra</code></pre></details>
+
 <h3>Why the block mask matters: the KV cache</h3>
 <p>Because the prefix never looks at the noisy actions, its keys and values do not depend on the denoising step. At run time the
 policy encodes the prefix <b>once per observation</b> (<code>with model.cache(cond): ...</code>), stores the keys and values of
@@ -124,6 +153,19 @@ forces the chunk will cause:
 $$L = L_\text{action} + w\;L_\text{torque},\qquad L_\text{torque} = \lVert \hat F_{i+1:i+8} - F_{i+1:i+8} \rVert^2 / 16.$$
 The weight is the <b>Aux weight</b> knob (0 removes the head; 0.1 in the repository's experiments). The aux-MSE chart shows
 \(L_\text{torque}\) itself, not the weighted term.</p>
+
+<details class="code"><summary>Training step with the auxiliary future-force loss</summary><pre><code class="language-python" data-src="lab/core/loop.py">cond, x0, mask, aux_t = ds.batch(idx)
+per, extra = gen.loss(model, x0, cond, mask)
+loss = per.mean()
+if aux_weight &gt; 0 and "aux" in extra and aux_t is not None:
+    la = (extra["aux"] - aux_t).pow(2).mean()
+    loss = loss + aux_weight * la
+    acc_aux += float(la)
+# ...
+opt.zero_grad(set_to_none=True)
+loss.backward()
+torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+opt.step()</code></pre></details>
 
 <h3>Where does the torque token go?</h3>
 <ul>

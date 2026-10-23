@@ -47,6 +47,30 @@ behaviour</b> and can only walk away from it if the critic says so.</p>
 <p>The flow weights never appear in either loss. <b>Residual scale</b> \(\alpha\) is the safety dial: it bounds how far the correction can push (a delta of 1 moves the action by \(\alpha\)).
 A small \(\alpha\) is safe but can only polish the base; a large one can repair a bad base but also break a good one.</p>
 
+<details class="code"><summary>Composition: frozen base action plus a scaled residual, clipped</summary><pre><code class="language-python" data-src="lab/tasks/task8_residual.py">ab = pol.act(raw)
+d = scale * _delta(actor, base.feats(raw, ab)) if actor is not None else np.zeros_like(ab)
+a = np.clip(ab + d, -1, 1)</code></pre></details>
+<details class="code"><summary>The residual actor starts at zero, so training starts at the base policy</summary><pre><code class="language-python" data-src="lab/tasks/task8_residual.py">def _make_actor_agent(obs_dim: int, device: str = "cpu"):
+    from fvb.policy.td3 import TD3, TD3Config
+
+    cfg = TD3Config()
+    agent = TD3(obs_dim, 2, cfg, device)
+    with torch.no_grad():  # start AT the base policy: delta ~ 0
+        agent.actor.net[-1].weight.mul_(0.01)
+        agent.actor.net[-1].bias.zero_()
+    agent.actor_t.load_state_dict(agent.actor.state_dict())</code></pre></details>
+<details class="code"><summary>Residual TD3 step: explore on delta, store delta, update</summary><pre><code class="language-python" data-src="lab/tasks/task8_residual.py">d = np.clip(_delta(agent.actor, o) + rng.normal(0, expl, (N_ENVS, 2)), -1, 1)
+env.step(np.clip(ab + scale * d, -1, 1))
+# ...
+for i in np.flatnonzero(live):
+    buf.add(o[i], d[i].astype(np.float32), float(r[i]), o2[i], bool(term[i]))
+# ...
+if t &gt;= learn_start:
+    owed += UTD * int(live.sum())
+    while owed &gt;= 1.0:
+        owed -= 1.0
+        for k, v in agent.update(buf, rng).items():</code></pre></details>
+
 <h3>The reward (this lab&rsquo;s own definition)</h3>
 <p>The repo has no residual-RL experiment to copy: <code>scripts/42_ta_tutorial_t5.py</code> (&ldquo;T5&rdquo;) is a <em>supervised</em> flow policy on MuJoCo insertion, not RL, and its recorded
 result is that the force token gave no measurable benefit (zeroed 34.7&nbsp;% / suffix 35.3&nbsp;% / suffix + aux 40.0&nbsp;%, aux vs zeroed p&nbsp;=&nbsp;0.40), with failures mostly timeouts.
