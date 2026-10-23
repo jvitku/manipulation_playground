@@ -228,7 +228,7 @@ def evaluate(ctx) -> None:
     st = forward_stages(model, keys, vals, qpos)
     labels = _labels(keys, vals, qpos)
     toks = [{"label": lab, "key": int(k), "value": int(v)}
-            for lab, k, v in zip(labels, keys[0], vals[0], strict=True)]  # fmt: skip
+            for lab, k, v in zip(labels[:-1], keys[0], vals[0], strict=True)]  # fmt: skip
     q = int(keys[0, qpos[0]])
     toks.append({"label": labels[-1], "key": q, "value": None})
     names = ["embed", "qkv", "scores", "softmax", "mixture", "readout"]
