@@ -51,6 +51,22 @@
     return h("span", { class: "chip", style: "background:var(--chip);border-radius:999px;padding:2px 10px;font:12px var(--mono);margin-right:8px;display:inline-block" },
       document.createTextNode(label + " "), h("b", { text: value }));
   }
+  // stepButtons(slider, fire): [prev, next] buttons for a manual stepper slider. Each click
+  //   nudges slider.value by one step (clamped to [min, max]) and calls fire(), the same
+  //   handler the slider's own "input" event runs.
+  function stepButtons(slider, fire) {
+    const mk = (text, d) => {
+      const b = h("button", { type: "button", text });
+      b.addEventListener("click", () => {
+        const v = Number(slider.value) + d;
+        if (v < Number(slider.min) || v > Number(slider.max)) return;
+        slider.value = String(v);
+        fire();
+      });
+      return b;
+    };
+    return [mk("prev", -1), mk("next", 1)];
+  }
 
   // ---- t1scatter: observation c vs sampled a_x ------------------------------------------
   function t1scatter(result, container) {
@@ -896,6 +912,7 @@
     const NAME = { embed: "1 embed", qkv: "2 Q / K / V", scores: "3 scores", softmax: "4 softmax", mixture: "5 mixture", readout: "6 readout" };
     const useVg = !!(ctx && ctx.vecgrids && window.LabVecGrid);
     const slider = h("input", { type: "range", min: "0", max: String(stages.length - 1), value: "0", step: "1", style: "width:260px" });
+    const [prevB, nextB] = stepButtons(slider, () => show(Number(slider.value)));
     const name = h("b", { text: "" });
     const body = h("div", { class: "vecgrids" });
     const tstrip = h("div", { style: "margin:6px 0" });
@@ -905,7 +922,7 @@
       h("div", { style: "margin-bottom:6px" }, chip("accuracy", pct(result.acc)), chip("pairs", String(result.n_pairs)),
         chip("heads", String(result.heads)), chip("d_k", String(result.d_k))),
       tstrip,
-      h("div", { style: "display:flex;gap:12px;align-items:center;margin:6px 0" }, slider, name),
+      h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0" }, prevB, slider, nextB, name),
       h("p", { class: "note", text: "" }), body);
     const note = container.querySelector("p.note");
     const grid = (title, vals, opts) => { if (useVg) window.LabVecGrid.render(body, vals, Object.assign({ title }, opts || {})); };
@@ -971,6 +988,7 @@
     const [exL, exS] = sel(ex.map((e, i) => `#${i}: ${e.source.trim()} -> ${e.decoded}${e.correct ? "" : " (wrong)"}`), "date");
     const [hdL, hdS] = sel(Array.from({ length: ex[0].cross_attn.length }, (_, i) => `head ${i}`), "head");
     const slider = h("input", { type: "range", min: "0", max: "0", value: "0", step: "1", style: "width:220px" });
+    const [prevB, nextB] = stepButtons(slider, () => draw());
     const stepLbl = h("b", { text: "" }), info = h("p", { class: "note", text: "" });
     const board = h("div", { style: "display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;margin:8px 0" });
     const vg = h("div", { class: "vecgrids" });
@@ -995,7 +1013,7 @@
       h("div", { style: "margin-bottom:6px" }, chip("held-out exact-match", pct(result.exact)), chip("checked on", `${result.n_eval} dates`),
         chip("heads", String(result.heads)), chip("d_model", String(result.d_model))),
       h("div", { style: "margin:6px 0" }, exL, hdL),
-      h("div", { style: "display:flex;gap:12px;align-items:center;margin:6px 0" }, h("span", { text: "decode step" }), slider, stepLbl),
+      h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0" }, h("span", { text: "decode step" }), prevB, slider, nextB, stepLbl),
       board, info, vg);
     function draw() {
       const e = ex[Number(exS.value)], hh = Number(hdS.value), L = e.out_labels.length;
