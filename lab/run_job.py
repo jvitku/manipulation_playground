@@ -19,7 +19,14 @@ def main(argv: list[str] | None = None) -> int:
     for mod in filter(None, os.environ.get("LAB_EXTRA_TASKS", "").split(",")):
         importlib.import_module(mod)
     ctx = RunContext(Path(job_dir))
-    ctx.set_status(state="running")
+    # set_status merges, so the "loading python and torch" message from start_job must be
+    # overwritten here; the task overwrites again when its own work starts.
+    ctx.set_status(
+        state="running",
+        message="loading the checkpoint and building the model"
+        if kind == "eval"
+        else "setting up the task",
+    )
     try:
         spec = registry.get(ctx.task_id)
         (spec.train if kind == "train" else spec.evaluate)(ctx)

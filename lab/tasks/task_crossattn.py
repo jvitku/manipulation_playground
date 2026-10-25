@@ -331,6 +331,7 @@ def evaluate(ctx) -> None:
     model = build(meta)
     model.load_state_dict(ck["state"])
     model.to(dev).eval()
+    ctx.set_status(message=f"evaluating: decoding {EVAL_N} held-out dates")
     seed, k = int(P.get("eval_seed", 0)), int(P.get("n_examples", 6))
     exact = exact_match(model, date_pairs("heldout", EVAL_N, 1000 + seed))
     shown = date_pairs("heldout", k, 5000 + seed)

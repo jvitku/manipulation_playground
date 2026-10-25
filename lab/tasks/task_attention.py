@@ -220,6 +220,7 @@ def evaluate(ctx) -> None:
     model = build(meta)
     model.load_state_dict(ck["state"])
     model.to(dev).eval()
+    ctx.set_status(message=f"evaluating: accuracy sweep over 2-8 pairs, {EVAL_N} examples each")
     n, seed = int(P.get("eval_n_pairs", meta["n_pairs"])), int(P.get("eval_seed", 0))
     acc_by_n = {str(k): accuracy(model, meta, k, EVAL_N, seed + k, dev) for k in range(2, 9)}
     acc = acc_by_n.get(str(n)) or accuracy(model, meta, n, EVAL_N, seed + n, dev)

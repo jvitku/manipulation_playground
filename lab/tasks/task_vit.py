@@ -179,6 +179,7 @@ def evaluate(ctx) -> None:
     model = build(meta)
     model.load_state_dict(ck["state"])
     model.to(dev).eval()
+    ctx.set_status(message="evaluating: scoring the MNIST test set")
     xte, yte = load_mnist("test")
     acc = accuracy(model, norm(xte), torch.as_tensor(yte.astype(np.int64)), dev)
     gen = torch.Generator().manual_seed(int(P.get("eval_seed", 0)))

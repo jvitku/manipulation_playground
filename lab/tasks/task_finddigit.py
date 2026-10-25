@@ -256,6 +256,7 @@ def evaluate(ctx) -> None:
     model = build(meta)
     model.load_state_dict(ck["state"])
     model.to(dev).eval()
+    ctx.set_status(message="evaluating: querying test canvases")
     noise = float(P.get("noise", 0))
     qsel = str(P.get("query", "random"))
     fixed = None if qsel == "random" else int(qsel)

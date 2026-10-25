@@ -493,10 +493,12 @@
           }
           if (!alive || token !== evalToken) return;
           const st = r.status || {};
-          evalStatus.replaceChildren(
-            el("span", {}, el("span", { class: `dot ${st.state}` }), el("b", { text: st.state || "?" })),
-            st.wall_s != null ? el("span", {}, "wall ", el("b", { text: fmtWall(st.wall_s) })) : null,
-            (st.msg || st.message) ? el("span", { text: st.msg || st.message }) : null);
+          // build the list conditionally: native replaceChildren stringifies a null argument
+          // into the literal text "null" (unlike el(), which skips null kids)
+          const kids = [el("span", {}, el("span", { class: `dot ${st.state}` }), el("b", { text: st.state || "?" }))];
+          if (st.wall_s != null) kids.push(el("span", {}, "wall ", el("b", { text: fmtWall(st.wall_s) })));
+          if (st.msg || st.message) kids.push(el("span", { text: st.msg || st.message }));
+          evalStatus.replaceChildren(...kids);
           if (!isTerminal(st.state)) { later(poll, 1000); return; }
           evalBtn.disabled = false;
           if (st.state === "done" && r.result) showResult(r.result, evalId);
