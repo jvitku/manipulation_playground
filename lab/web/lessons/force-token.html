@@ -63,15 +63,15 @@ re-deciding &mdash; and re-averaging &mdash; every step.</p>
   </defs>
   <!-- observation window -->
   <text x="75" y="18" text-anchor="middle" fill="var(--muted)">window: H = 10 steps</text>
-  <rect x="10" y="26" width="130" height="30" rx="6" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="26" width="130" height="30" rx="6" fill="var(--chip)" stroke="var(--line)" data-i="posvel"/>
   <text x="75" y="45" text-anchor="middle" fill="var(--ink)">pos 3 &middot; vel 3</text>
-  <rect x="10" y="62" width="130" height="50" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <rect x="10" y="62" width="130" height="50" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" data-i="force"/>
   <text x="75" y="80" text-anchor="middle" fill="var(--ink)" font-weight="700">force token (9)</text>
   <text x="75" y="95" text-anchor="middle" fill="var(--muted)">F, T comp. 6 + hf 3</text>
-  <rect x="10" y="118" width="130" height="30" rx="6" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="118" width="130" height="30" rx="6" fill="var(--chip)" stroke="var(--line)" data-i="prev"/>
   <text x="75" y="137" text-anchor="middle" fill="var(--ink)">prev action 3</text>
   <!-- zeroed switch -->
-  <rect x="160" y="68" width="66" height="38" rx="6" fill="none" stroke="var(--accent)" stroke-dasharray="4 3"/>
+  <rect x="160" y="68" width="66" height="38" rx="6" fill="none" stroke="var(--accent)" stroke-dasharray="4 3" data-i="useforce"/>
   <text x="193" y="84" text-anchor="middle" fill="var(--accent)">use_force</text>
   <text x="193" y="98" text-anchor="middle" fill="var(--muted)">off &#8594; 0</text>
   <line x1="140" y1="87" x2="158" y2="87" stroke="var(--accent)" marker-end="url(#ftG)"/>
@@ -79,35 +79,35 @@ re-deciding &mdash; and re-averaging &mdash; every step.</p>
   <line x1="140" y1="41" x2="258" y2="84" stroke="var(--muted)" marker-end="url(#ftA)"/>
   <line x1="226" y1="87" x2="258" y2="90" stroke="var(--accent)" stroke-width="2" marker-end="url(#ftG)"/>
   <line x1="140" y1="133" x2="258" y2="98" stroke="var(--muted)" marker-end="url(#ftA)"/>
-  <rect x="260" y="64" width="84" height="46" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="260" y="64" width="84" height="46" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="embed"/>
   <text x="302" y="83" text-anchor="middle" fill="var(--ink)">embed + pos</text>
   <text x="302" y="98" text-anchor="middle" fill="var(--muted)">(B, H, 128)</text>
   <line x1="344" y1="87" x2="374" y2="87" stroke="var(--muted)" marker-end="url(#ftA)"/>
-  <rect x="376" y="58" width="108" height="58" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="376" y="58" width="108" height="58" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="enc"/>
   <text x="430" y="80" text-anchor="middle" fill="var(--ink)">encoder</text>
   <text x="430" y="95" text-anchor="middle" fill="var(--muted)">3 &times; self-attn</text>
   <text x="430" y="108" text-anchor="middle" fill="var(--muted)">history tokens</text>
   <!-- queries + decoder -->
-  <rect x="376" y="150" width="108" height="36" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="376" y="150" width="108" height="36" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="queries"/>
   <text x="430" y="166" text-anchor="middle" fill="var(--ink)">K = 5 learned</text>
   <text x="430" y="180" text-anchor="middle" fill="var(--muted)">queries</text>
   <line x1="484" y1="87" x2="520" y2="106" stroke="var(--muted)" marker-end="url(#ftA)"/>
   <line x1="484" y1="168" x2="520" y2="128" stroke="var(--muted)" marker-end="url(#ftA)"/>
-  <rect x="522" y="88" width="104" height="58" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="522" y="88" width="104" height="58" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="dec"/>
   <text x="574" y="110" text-anchor="middle" fill="var(--ink)">decoder</text>
   <text x="574" y="125" text-anchor="middle" fill="var(--muted)">2 &times; cross-attn</text>
   <text x="574" y="138" text-anchor="middle" fill="var(--muted)">+ Linear(3)</text>
   <line x1="626" y1="117" x2="654" y2="117" stroke="var(--muted)" marker-end="url(#ftA)"/>
-  <rect x="656" y="98" width="112" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="656" y="98" width="112" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="chunk"/>
   <text x="712" y="114" text-anchor="middle" fill="var(--ink)">a&#770; chunk</text>
   <text x="712" y="128" text-anchor="middle" fill="var(--muted)">(B, K, 3) mm</text>
   <!-- expert target + loss -->
-  <rect x="656" y="206" width="112" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="656" y="206" width="112" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="target"/>
   <text x="712" y="222" text-anchor="middle" fill="var(--ink)">a* expert chunk</text>
   <text x="712" y="236" text-anchor="middle" fill="var(--muted)">+ mask m (end)</text>
   <line x1="712" y1="136" x2="680" y2="164" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#ftL)"/>
   <line x1="712" y1="206" x2="720" y2="190" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#ftL)"/>
-  <rect x="652" y="164" width="118" height="28" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="652" y="164" width="118" height="28" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="loss"/>
   <text x="711" y="183" text-anchor="middle" fill="var(--loss)" font-weight="700">masked L1</text>
   <text x="380" y="286" text-anchor="middle" fill="var(--muted)">closed loop: read the last H observations &#8594; predict K actions &#8594; execute the first &#8594; step the simulator</text>
 </svg>
@@ -165,3 +165,5 @@ video; the grid is the force part of the window the net reads at that moment. A 
 <li><b>Demo action noise</b> (default 0 = Stage-1 replica; 0.5 = robustness experiment): see &ldquo;The data&rdquo;. Evaluation: <em>Hole offset sigma</em> (trained at 1.5; the repo reports that the force policy still reaches 50/50 at 3 mm),
 <em>Clearance</em>, <em>Zero the force input</em>, <em>Episodes to render</em> (the video concatenates them, each behind a short title card) and the eval seed.</li>
 </ul>
+
+<script type="application/json" class="blkinfo">{"posvel": {"t": "pos 3 · vel 3 — proprioception", "html": "<p><b>Purpose:</b> the peg's position relative to the episode start and its velocity — what the gantry knows without touch. The hole position is never in here.</p><p><b>Shape(s):</b> <code>6 of the 18 obs channels</code>, present in each of the H = 10 window steps; the full window the net reads is <code>(B, 10, 18)</code>.</p><p><b>Updated:</b> measured every 20 Hz control tick; the training windows are sliced once from the demos collected at run start.</p>"}, "force": {"t": "force token — the 9 force channels", "html": "<p><b>Purpose:</b> the only channels that leak the hidden variable: when the peg jams on the rim, the torque's sign says on which side the hole lies. They ride in <i>every</i> one of the H observation tokens, so self-attention can find the jam wherever it falls in the window.</p><p><b>Shape(s):</b> <code>9 of the 18 channels</code>: compensated force + torque (6) and a 3-number summary of the high-rate force between two control ticks (a spike can fall entirely between them).</p><p><b>Updated:</b> sensed every tick; z-scored with statistics computed from the training demos.</p>"}, "prev": {"t": "prev action — the last command", "html": "<p><b>Purpose:</b> the previously commanded step (dx, dy, dz). With demo action noise the executed motion differs from the clean label, and this channel is where the net sees that motion.</p><p><b>Shape(s):</b> <code>3 of the 18 channels</code> per window step.</p><p><b>Updated:</b> every control tick.</p>"}, "useforce": {"t": "use_force — the zeroed twin", "html": "<p><b>Purpose:</b> the ablation switch. Off = the 9 force channels are zeroed in training <i>and</i> evaluation: same architecture, same data, no touch. The separate eval knob <i>Zero the force input</i> instead blinds a force-trained checkpoint after the fact (raw channels set to 0 before normalisation).</p><p><b>Shape(s):</b> no parameters — a boolean recorded in the checkpoint's <code>meta</code>; evaluation rebuilds the model from that meta only, never from form values.</p><p><b>Updated:</b> fixed for the whole run.</p>"}, "embed": {"t": "embed + pos — tokens for the encoder", "html": "<p><b>Purpose:</b> one linear map turns each 18-number observation into a d-dim token; a learned position vector per window slot tells the encoder <i>when</i>; LayerNorm on top.</p><p><b>Shape(s):</b> <code>Linear(18 → 128)</code> + learned <code>pos (1, 10, 128)</code>; out <code>(B, 10, 128)</code>.</p><p><b>Updated:</b> every optimizer step (AdamW, lr 3e-4 with cosine decay, batch 256).</p>"}, "enc": {"t": "encoder — self-attention over the history", "html": "<p><b>Purpose:</b> lets every window step look at every other: the frames around a jam are weighted by their content, wherever they sit — the thing the MLP baseline's fixed per-slot weights cannot do.</p><p><b>Shape(s):</b> 3 × <code>TransformerEncoderLayer(d=128, 4 heads, ff 256, pre-norm, dropout 0.1)</code>; memory out <code>(B, 10, 128)</code>.</p><p><b>Updated:</b> every optimizer step; nothing in this model is frozen.</p>"}, "queries": {"t": "K = 5 learned queries", "html": "<p><b>Purpose:</b> one trainable vector per chunk slot — a standing question, \"what should action k be?\". They replace autoregression: all K actions are decoded in one parallel pass (the ACT recipe, minus the CVAE — the expert here is deterministic).</p><p><b>Shape(s):</b> <code>nn.Parameter (1, 5, 128)</code>, init N(0, 0.02), expanded to <code>(B, 5, 128)</code>.</p><p><b>Updated:</b> trained with the rest; at inference the same 5 vectors are reused for every window.</p>"}, "dec": {"t": "decoder — queries read the memory", "html": "<p><b>Purpose:</b> each query cross-attends to the encoded history (and self-attends to the other queries); a linear head turns each query's output into one action.</p><p><b>Shape(s):</b> 2 × <code>TransformerDecoderLayer(d=128, 4 heads, ff 256, pre-norm)</code> + <code>Linear(128 → 3)</code>; out <code>(B, 5, 3)</code>.</p><p><b>Updated:</b> every optimizer step.</p>"}, "chunk": {"t": "â — the predicted action chunk", "html": "<p><b>Purpose:</b> K = 5 future steps, predicted at once. Closed loop only the <i>first</i> is executed; then the window shifts one step and the net runs again.</p><p><b>Shape(s):</b> <code>(B, 5, 3)</code>, z-scored (dx, dy, dz); de-normalised to mm for execution.</p><p><b>Updated:</b> recomputed every 20 Hz control tick at inference.</p>"}, "target": {"t": "a* — the expert chunk + mask", "html": "<p><b>Purpose:</b> the K = 5 expert actions that followed the window in the demo — always the <i>clean</i> expert action, even when demo noise perturbed what was executed. The mask m marks slots past the episode end.</p><p><b>Shape(s):</b> <code>(B, 5, 3)</code> z-scored + mask <code>(B, 5)</code>.</p><p><b>Updated:</b> sliced once at run start when the windows are built.</p>"}, "loss": {"t": "masked L1", "html": "<p><b>Purpose:</b> mean absolute error over the valid chunk slots, <code>Σ m·|â − a*| / Σ m</code>. L1 fits the conditional <i>median</i> — which is exactly why the blind twin learns the retract but averages the ±0.5 mm shifts into dithering.</p><p><b>Shape(s):</b> scalar, averaged over B, K and the 3 action dims.</p><p><b>Updated:</b> backpropagated every optimizer step; gradient clipped at norm 1.0.</p>"}}</script>

@@ -104,25 +104,25 @@ holes, at run time.</p>
     <marker id="emL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--loss)"/></marker>
     <marker id="emG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
   </defs>
-  <rect x="10" y="10" width="170" height="40" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="10" width="170" height="40" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="xt"/>
   <text x="95" y="27" text-anchor="middle" fill="var(--ink)">noisy chunk x_t, time t</text>
   <text x="95" y="41" text-anchor="middle" fill="var(--muted)">(B, H, 2) and (B, 64)</text>
-  <rect x="10" y="60" width="170" height="40" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="60" width="170" height="40" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="state"/>
   <text x="95" y="77" text-anchor="middle" fill="var(--ink)">state (+ hole xs)</text>
   <text x="95" y="91" text-anchor="middle" fill="var(--muted)">z-scored</text>
-  <rect x="10" y="110" width="170" height="40" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="110" width="170" height="40" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="force"/>
   <text x="95" y="127" text-anchor="middle" fill="var(--ink)">force history 10 &times; 2</text>
   <text x="95" y="141" text-anchor="middle" fill="var(--muted)">z-scored</text>
   <!-- encoding blocks -->
   <text x="95" y="178" text-anchor="middle" fill="var(--accent)" font-weight="700">command: one of four blocks</text>
-  <rect x="10" y="186" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="10" y="186" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" data-i="onehot"/>
   <text x="95" y="205" text-anchor="middle" fill="var(--ink)">one-hot (4), as is</text>
-  <rect x="10" y="222" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="10" y="222" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" data-i="binary"/>
   <text x="95" y="241" text-anchor="middle" fill="var(--ink)">binary (2), as is</text>
-  <rect x="10" y="258" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <rect x="10" y="258" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" data-i="text"/>
   <text x="95" y="270" text-anchor="middle" fill="var(--ink)">tokens &#8594; nn.Embedding (d)</text>
   <text x="95" y="283" text-anchor="middle" fill="var(--muted)">mean over tokens</text>
-  <rect x="10" y="294" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="10" y="294" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" data-i="cont"/>
   <text x="95" y="306" text-anchor="middle" fill="var(--ink)">[x, force N, insert]</text>
   <text x="95" y="319" text-anchor="middle" fill="var(--muted)">z-scored</text>
   <line x1="180" y1="30" x2="296" y2="130" stroke="var(--muted)" marker-end="url(#emA)"/>
@@ -132,24 +132,24 @@ holes, at run time.</p>
   <line x1="180" y1="237" x2="296" y2="162" stroke="var(--accent)" marker-end="url(#emG)"/>
   <line x1="180" y1="273" x2="296" y2="168" stroke="var(--accent)" stroke-width="2" marker-end="url(#emG)"/>
   <line x1="180" y1="309" x2="296" y2="174" stroke="var(--accent)" marker-end="url(#emG)"/>
-  <rect x="298" y="120" width="62" height="64" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="298" y="120" width="62" height="64" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="concat"/>
   <text x="329" y="148" text-anchor="middle" fill="var(--ink)">concat</text>
   <text x="329" y="163" text-anchor="middle" fill="var(--muted)">+ enc</text>
   <line x1="360" y1="152" x2="396" y2="152" stroke="var(--muted)" marker-end="url(#emA)"/>
-  <rect x="398" y="118" width="140" height="68" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="398" y="118" width="140" height="68" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="net"/>
   <text x="468" y="142" text-anchor="middle" fill="var(--ink)">MLPDenoiser</text>
   <text x="468" y="158" text-anchor="middle" fill="var(--muted)">4 &times; Linear(512) + GELU</text>
   <text x="468" y="172" text-anchor="middle" fill="var(--muted)">same in all four arms</text>
   <line x1="538" y1="152" x2="574" y2="152" stroke="var(--muted)" marker-end="url(#emA)"/>
-  <rect x="576" y="133" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="576" y="133" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="v"/>
   <text x="621" y="149" text-anchor="middle" fill="var(--ink)">v (predicted</text>
   <text x="621" y="163" text-anchor="middle" fill="var(--ink)">velocity)</text>
-  <rect x="576" y="228" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="576" y="228" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="u"/>
   <text x="621" y="244" text-anchor="middle" fill="var(--ink)">u = e &minus; x&#8320;</text>
   <text x="621" y="258" text-anchor="middle" fill="var(--muted)">(target)</text>
   <line x1="666" y1="152" x2="696" y2="168" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#emL)"/>
   <line x1="621" y1="228" x2="705" y2="200" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#emL)"/>
-  <rect x="680" y="170" width="72" height="30" rx="15" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="680" y="170" width="72" height="30" rx="15" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="loss"/>
   <text x="716" y="189" text-anchor="middle" fill="var(--loss)" font-weight="700">L (loss)</text>
   <text x="716" y="162" text-anchor="middle" fill="var(--loss)">&#8214;v &minus; u&#8214;&sup2;</text>
   <text x="460" y="296" text-anchor="middle" fill="var(--muted)">the embedding table (thick block) receives the</text>
@@ -202,3 +202,5 @@ earlier tasks.</p>
 every encoding hands the network for every command (the text row is the pooled learned embedding after training). The rollouts
 then play back in the side view with red and blue hole markers (a box marks the commanded hole), the perceived hole positions as
 dashed ticks, and the episode's own command vector as a colour grid next to the force and action windows.</p>
+
+<script type="application/json" class="blkinfo">{"xt": {"t": "x_t, t — the noisy chunk and its time", "html": "<p><b>Purpose:</b> the flow-matching pair: the expert action chunk on the straight line toward noise (<code>x_t = t·e + (1−t)·x₀</code>) and where on it this sample sits.</p><p><b>Shapes:</b> <code>(B, H, 2)</code> and the t embedded to <code>(B, 64)</code> inside the shared MLPDenoiser.</p><p><b>Updated:</b> fresh draws of e and <code>t ~ Beta(1.5, 1)</code> every training step; the running Euler state and time at sampling.</p>"}, "state": {"t": "state — peg and perceived holes", "html": "<p><b>Purpose:</b> peg (x, z) plus, with <i>Tell every arm where the holes are</i> on, the <i>perceived</i> xs of the red and blue holes — the true x + N(0, 0.01 m) drawn once per episode, the stand-in for a perception module, so each arm can find its hole and only the command encoding differs.</p><p><b>Shape:</b> <code>(B, 4)</code> (hole_obs on, the default) or <code>(B, 2)</code>; z-scored.</p><p><b>Updated:</b> per sample at training; per re-plan in closed loop (the perceived holes stay fixed within an episode).</p>"}, "force": {"t": "force history — the contact channel", "html": "<p><b>Purpose:</b> the last 10 force readings (Fx, Fz) — the same touch channel as the previous lesson; a press at the wrong force or a missed touchdown shows up only here.</p><p><b>Shape:</b> <code>(B, 20)</code>, z-scored; sensor noise 0.05 N by default.</p><p><b>Updated:</b> one new reading per env step; the policy sees the fresh window at each re-plan (every <code>n_exec</code> steps).</p>"}, "onehot": {"t": "one-hot — one axis per command", "html": "<p><b>Purpose:</b> a 1 in the command's slot, 0 elsewhere: every command gets its own orthogonal direction, nothing shared, width grows with the command count.</p><p><b>Shape:</b> <code>(B, 4)</code>, passed UNNORMALISED (dataset key <code>scene</code>, which ChunkDataset never z-scores — a z-score would make a bit's value depend on how often the command occurs).</p><p><b>Updated:</b> no parameters, nothing trained; constant within an episode.</p>"}, "binary": {"t": "binary — the id's two bits", "html": "<p><b>Purpose:</b> the command id 0–3 as two bits (bit 0 = id mod 2, bit 1 = id div 2): the same information as one-hot in half the width, but a geometry that is an accident of the numbering — commands sharing a bit share a direction.</p><p><b>Shape:</b> <code>(B, 2)</code>, unnormalised (key <code>scene</code>).</p><p><b>Updated:</b> no parameters, nothing trained.</p>"}, "text": {"t": "tokens → nn.Embedding — the only trained encoding", "html": "<p><b>Purpose:</b> the command's words as token ids, looked up in a trainable table and averaged over the real tokens — the miniature of a VLA's language path (TAVLAMini's <code>nn.Embedding</code>).</p><p><b>Shapes:</b> token ids <code>(B, 5)</code> int64 (LANG_LEN = 5, pad id 0) → <code>nn.Embedding(10, d_embed)</code> (vocab = 9 words + pad; <i>Text embedding size</i> 8/16/32, default 16) → masked mean <code>(B, d_embed)</code>.</p><p><b>Updated:</b> the table's rows receive the flow-loss gradient every optimizer step, jointly with the policy — shared words (&ldquo;insert&rdquo;, &ldquo;press&rdquo;) are shared parameters across commands.</p>"}, "cont": {"t": "continuous — the command pre-resolved", "html": "<p><b>Purpose:</b> the command written in robot terms: [perceived target hole x (0 for a press), target force in N (2 or 6; 0 for an insert), is-insert flag]. The only code carrying meaning rather than identity — at the price of needing the resolver and hole perception at run time.</p><p><b>Shape:</b> <code>(B, 3)</code>, z-scored (dataset key <code>obs</code>) because it mixes metres (|x| &lt; 0.13) and newtons (0–6).</p><p><b>Updated:</b> no parameters, nothing trained.</p>"}, "concat": {"t": "concat — state | torque | encoding", "html": "<p><b>Purpose:</b> assemble the conditioning vector inside <code>CondDenoiser.forward</code>: state, force history and exactly ONE encoding block per arm.</p><p><b>Shape:</b> <code>(B, state_dim + 20 + enc)</code> with state_dim 4 or 2 and enc 4 / 2 / d_embed / 3 — so the MLP's input width differs slightly per arm.</p><p><b>Updated:</b> recomputed every forward pass; no parameters.</p>"}, "net": {"t": "MLPDenoiser — identical in all four arms", "html": "<p><b>Purpose:</b> predict the velocity v for the noisy chunk given the conditioning; the arms change only the geometry of the command input it sees.</p><p><b>Shapes:</b> in x_t flattened (H·2) + obs + t embed (64); 4 × Linear(512) + GELU; out Linear(H·2) → <code>(B, H, 2)</code>.</p><p><b>Updated:</b> a FRESH copy is trained per arm, <i>Training steps per encoding</i> optimizer steps each (AdamW, warmup + cosine, grad-clip 1.0; EMA 0.999 is what gets evaluated and checkpointed), sequentially on the same demos, split and eval scenes.</p>"}, "v": {"t": "v — predicted velocity", "html": "<p><b>Purpose:</b> the model's answer at (x_t, t, conditioning): where the chunk should move along the noise→data path.</p><p><b>Shape:</b> <code>(B, H, 2)</code>.</p><p><b>Detail:</b> the same function is integrated with K Euler steps at every re-plan of the closed-loop evaluations (200 fixed scenes every <i>eval every</i> steps).</p>"}, "u": {"t": "u = e − x₀ — target velocity", "html": "<p><b>Purpose:</b> the constant velocity of the straight line between data and noise: the regression target.</p><p><b>Shape:</b> <code>(B, H, 2)</code>; one subtraction, no parameters.</p><p><b>Updated:</b> recomputed every step from the fresh x₀ and e.</p>"}, "loss": {"t": "L — one loss for all four arms", "html": "<p><b>Purpose:</b> mean squared error <code>‖v − u‖²</code>, padding masked — the same objective in every arm, so the success curves compare encodings, not objectives.</p><p><b>Shape:</b> scalar, averaged over B, H and the 2 action dims.</p><p><b>Updated:</b> backpropagated every optimizer step; in the text arm this same gradient is what trains the embedding table.</p>"}}</script>

@@ -64,42 +64,43 @@ sharpens them towards a hard lookup. The model still tunes its own effective tem
       <path d="M0 0L10 5L0 10z" fill="var(--loss)"/>
     </marker>
   </defs>
-  <rect x="8" y="20" width="126" height="56" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="8" y="20" width="126" height="56" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="pairs"/>
   <text x="71" y="40" text-anchor="middle" fill="var(--ink)">pair tokens</text>
   <text x="71" y="55" text-anchor="middle" fill="var(--muted)">E_key[k] + E_val[v]</text>
   <text x="71" y="69" text-anchor="middle" fill="var(--muted)">(n, d_model)</text>
-  <rect x="8" y="110" width="126" height="56" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="8" y="110" width="126" height="56" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="query"/>
   <text x="71" y="130" text-anchor="middle" fill="var(--ink)">query token</text>
   <text x="71" y="145" text-anchor="middle" fill="var(--muted)">E_key[k*] + "?"</text>
   <text x="71" y="159" text-anchor="middle" fill="var(--muted)">(1, d_model)</text>
   <line x1="134" y1="48" x2="168" y2="48" stroke="var(--muted)" marker-end="url(#atA)"/>
   <line x1="134" y1="138" x2="168" y2="138" stroke="var(--muted)" marker-end="url(#atA)"/>
-  <rect x="170" y="14" width="92" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="170" y="14" width="92" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" data-i="wk"/>
   <text x="216" y="33" text-anchor="middle" fill="var(--ink)">W_K &rarr; K</text>
-  <rect x="170" y="54" width="92" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="170" y="54" width="92" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" data-i="wv"/>
   <text x="216" y="73" text-anchor="middle" fill="var(--ink)">W_V &rarr; V</text>
-  <rect x="170" y="123" width="92" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="170" y="123" width="92" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" data-i="wq"/>
   <text x="216" y="142" text-anchor="middle" fill="var(--ink)">W_Q &rarr; Q</text>
-  <text x="216" y="104" text-anchor="middle" fill="var(--muted)">(heads, T, d_k)</text>
+  <text x="216" y="104" text-anchor="middle" fill="var(--muted)">K, V: (heads, T, d_k)</text>
+  <text x="216" y="117" text-anchor="middle" fill="var(--muted)">Q: (heads, 1, d_k)</text>
   <line x1="262" y1="29" x2="318" y2="76" stroke="var(--muted)" marker-end="url(#atA)"/>
   <line x1="262" y1="138" x2="318" y2="100" stroke="var(--muted)" marker-end="url(#atA)"/>
-  <rect x="320" y="62" width="120" height="52" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="320" y="62" width="120" height="52" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="scores"/>
   <text x="380" y="82" text-anchor="middle" fill="var(--ink)">Q K&#7511; / &radic;d_k</text>
   <text x="380" y="98" text-anchor="middle" fill="var(--muted)">(heads, 1, T)</text>
   <line x1="440" y1="88" x2="468" y2="88" stroke="var(--muted)" marker-end="url(#atA)"/>
-  <rect x="470" y="62" width="92" height="52" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="470" y="62" width="92" height="52" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="softmax"/>
   <text x="516" y="85" text-anchor="middle" fill="var(--ink)">softmax</text>
   <text x="516" y="101" text-anchor="middle" fill="var(--muted)">&alpha; sums to 1</text>
   <line x1="262" y1="69" x2="600" y2="140" stroke="var(--muted)" stroke-dasharray="2 3" marker-end="url(#atA)"/>
   <line x1="562" y1="88" x2="598" y2="130" stroke="var(--muted)" marker-end="url(#atA)"/>
-  <rect x="580" y="132" width="110" height="52" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="580" y="132" width="110" height="52" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="mix"/>
   <text x="635" y="153" text-anchor="middle" fill="var(--ink)">&Sigma; &alpha;&#7522; V&#7522;</text>
   <text x="635" y="169" text-anchor="middle" fill="var(--muted)">concat + W_O</text>
   <line x1="635" y1="184" x2="635" y2="204" stroke="var(--muted)" marker-end="url(#atA)"/>
-  <rect x="560" y="206" width="150" height="34" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="560" y="206" width="150" height="34" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="readout"/>
   <text x="635" y="227" text-anchor="middle" fill="var(--ink)">readout &rarr; 16 values</text>
   <line x1="560" y1="223" x2="468" y2="223" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#atL)"/>
-  <rect x="352" y="208" width="116" height="32" rx="16" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="352" y="208" width="116" height="32" rx="16" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="loss"/>
   <text x="410" y="228" text-anchor="middle" fill="var(--loss)" font-weight="700">L = CE(value)</text>
 </svg>
 <p class="ref">n = <code>n_pairs</code>, T = n + 1 tokens (the query attends to the pairs and to itself), d_model =
@@ -166,3 +167,4 @@ mainly speed up the first hit (see above).</li>
 <li><b>Training steps, learning rate, seed</b>: batch 256 is fixed, fresh examples every step (so the accuracy curve is also
 held-out accuracy). Runs take about 2&ndash;3 s on the GPU.</li>
 </ul>
+<script type="application/json" class="blkinfo">{"pairs": {"t": "pair tokens — the stored items", "html": "<p><b>Purpose:</b> the dictionary contents: each token is the SUM of a key embedding and a value embedding (<code>E_key[k] + E_val[v]</code>), so one vector carries both the label and the payload.</p><p><b>Shape:</b> <code>(n, d_model)</code> — n = <code>n_pairs</code> (default 4), d_model = heads &middot; d_k (default 2 &middot; 16 = 32). Keys are distinct per example (from 16 key ids), values random (16 value ids); no position embeddings.</p><p><b>Updated:</b> the two embedding tables train every optimizer step; the tokens themselves are rebuilt from fresh random pairs each step (batch 256).</p>"}, "query": {"t": "query token — the question", "html": "<p><b>Purpose:</b> the lookup request: the asked key&rsquo;s embedding plus a learned &ldquo;?&rdquo; vector standing where the value would be. The model must return the value stored under that key.</p><p><b>Shape:</b> <code>(1, d_model)</code>; the &ldquo;?&rdquo; is a single learned d_model vector.</p><p><b>Updated:</b> <code>E_key</code> is shared with the pair tokens; the &ldquo;?&rdquo; parameter trains every step.</p>"}, "wk": {"t": "W_K — key projection", "html": "<p><b>Purpose:</b> &ldquo;what do I contain?&rdquo; — projects every token into the key space the scores are computed in. For a pair token it must project <i>out</i> the key part of the fused sum, or the value would pollute the match.</p><p><b>Shapes:</b> W_K is <code>(d_model, d_model)</code>, split per head: K is <code>(heads, T, d_k)</code> with T = n_pairs + 1 (default 5).</p><p><b>Updated:</b> every optimizer step (AdamW, the form&rsquo;s learning rate).</p>"}, "wv": {"t": "W_V — value projection", "html": "<p><b>Purpose:</b> &ldquo;what do I hand over if picked?&rdquo; — extracts the value half of each fused token; this is what the weighted sum actually blends.</p><p><b>Shapes:</b> W_V is <code>(d_model, d_model)</code>; V is <code>(heads, T, d_k)</code>, one row per token.</p><p><b>Updated:</b> every optimizer step.</p>"}, "wq": {"t": "W_Q — query projection", "html": "<p><b>Purpose:</b> &ldquo;what am I looking for?&rdquo; — phrases the query token&rsquo;s question in the same learned d_k-dimensional subspace as the keys. Only the query token asks.</p><p><b>Shapes:</b> W_Q is <code>(d_model, d_model)</code>; Q is <code>(heads, 1, d_k)</code> — a single query row per head, unlike K and V.</p><p><b>Updated:</b> every optimizer step; the loss plateau ends when W_Q and W_K line up.</p>"}, "scores": {"t": "scores — scaled dot products", "html": "<p><b>Purpose:</b> how well each token&rsquo;s key matches the question: <code>q &middot; k_i / &radic;d_k</code>. The divisor keeps the softmax out of saturation as d_k grows.</p><p><b>Shape:</b> <code>(heads, 1, T)</code> — one row of T scores per head (the query also scores against itself).</p><p><b>Updated:</b> recomputed on every forward pass; no parameters of its own.</p>"}, "softmax": {"t": "softmax — scores to weights", "html": "<p><b>Purpose:</b> turns the scores into attention weights &alpha; that are positive and sum to 1 per head — the differentiable replacement for a hard argmax lookup.</p><p><b>Shape:</b> <code>(heads, 1, T)</code>, same as the scores.</p><p><b>Updated:</b> recomputed per forward; no parameters. In the default run the trained probe puts 0.68&ndash;0.72 on the matching token — far from one-hot, yet 100% correct.</p>"}, "mix": {"t": "weighted sum + W_O", "html": "<p><b>Purpose:</b> the answer vector: each head blends its values, <code>&Sigma; &alpha;&#7522; v&#7522;</code>; the heads&rsquo; outputs are concatenated and mixed by the output projection W_O.</p><p><b>Shapes:</b> per head <code>(1, d_k)</code>; concatenated <code>(1, d_model)</code>; W_O is <code>(d_model, d_model)</code>.</p><p><b>Updated:</b> W_O trains every step; the mixture itself is recomputed per forward.</p>"}, "readout": {"t": "readout — 16 value logits", "html": "<p><b>Purpose:</b> a linear map from the mixed vector to a score per value id; it also absorbs the blur the softmax leaves.</p><p><b>Shape:</b> <code>(d_model, 16)</code> &rarr; logits <code>(16,)</code>.</p><p><b>Updated:</b> every optimizer step.</p><p><b>Detail:</b> at inference the prediction is the argmax of these logits, computed once per example.</p>"}, "loss": {"t": "L — cross-entropy on the value", "html": "<p><b>Purpose:</b> compares the readout&rsquo;s distribution with the value stored under the asked key. Guessing gives loss ln 16 &asymp; 2.77.</p><p><b>Shape:</b> scalar, averaged over the batch of 256.</p><p><b>Updated:</b> backpropagated every step; the only gradient source — embeddings, W_Q, W_K, W_V, W_O and the readout are all shaped by it.</p>"}}</script>

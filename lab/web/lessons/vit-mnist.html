@@ -66,46 +66,46 @@ information also flows past attention through the residuals &mdash; which is why
     </marker>
   </defs>
   <!-- image cut into a 4x4 patch grid -->
-  <rect x="10" y="40" width="80" height="80" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="40" width="80" height="80" fill="var(--chip)" stroke="var(--line)" data-i="img"/>
   <path d="M30 40V120M50 40V120M70 40V120M10 60H90M10 80H90M10 100H90" stroke="var(--accent)" stroke-width="1"/>
   <text x="50" y="30" text-anchor="middle" fill="var(--ink)">image</text>
   <text x="50" y="136" text-anchor="middle" fill="var(--muted)">28 x 28</text>
   <text x="50" y="149" text-anchor="middle" fill="var(--muted)">16 patches 7 x 7</text>
   <line x1="92" y1="80" x2="124" y2="80" stroke="var(--muted)" marker-end="url(#vtA)"/>
-  <rect x="126" y="52" width="86" height="56" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="126" y="52" width="86" height="56" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="embed"/>
   <text x="169" y="73" text-anchor="middle" fill="var(--ink)">flatten + W_E</text>
   <text x="169" y="89" text-anchor="middle" fill="var(--muted)">(16, 49) &rarr;</text>
   <text x="169" y="102" text-anchor="middle" fill="var(--muted)">(16, d_model)</text>
   <line x1="212" y1="80" x2="244" y2="80" stroke="var(--muted)" marker-end="url(#vtA)"/>
   <!-- token row -->
-  <rect x="246" y="52" width="46" height="56" rx="6" fill="var(--bad-soft)" stroke="var(--loss)"/>
+  <rect x="246" y="52" width="46" height="56" rx="6" fill="var(--bad-soft)" stroke="var(--loss)" data-i="cls"/>
   <text x="269" y="76" text-anchor="middle" fill="var(--ink)">CLS</text>
   <text x="269" y="92" text-anchor="middle" fill="var(--muted)">+ pos 0</text>
-  <rect x="296" y="52" width="104" height="56" rx="6" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="296" y="52" width="104" height="56" rx="6" fill="var(--chip)" stroke="var(--line)" data-i="tokens"/>
   <text x="348" y="76" text-anchor="middle" fill="var(--ink)">16 patch tokens</text>
   <text x="348" y="92" text-anchor="middle" fill="var(--muted)">+ pos 1..16</text>
   <text x="323" y="125" text-anchor="middle" fill="var(--muted)">(17, d_model)</text>
   <line x1="402" y1="80" x2="432" y2="80" stroke="var(--muted)" marker-end="url(#vtA)"/>
   <!-- block internals -->
-  <rect x="434" y="16" width="190" height="168" rx="10" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/>
+  <rect x="434" y="16" width="190" height="168" rx="10" fill="none" stroke="var(--muted)" stroke-dasharray="4 3" data-i="block"/>
   <text x="529" y="32" text-anchor="middle" fill="var(--muted)">Block x depth</text>
-  <rect x="444" y="44" width="170" height="44" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="444" y="44" width="170" height="44" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" data-i="attn"/>
   <text x="529" y="63" text-anchor="middle" fill="var(--ink)">LN &rarr; multi-head attn</text>
   <text x="529" y="78" text-anchor="middle" fill="var(--muted)">(heads, 17, 17) + residual</text>
-  <rect x="444" y="108" width="170" height="44" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="444" y="108" width="170" height="44" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="mlp"/>
   <text x="529" y="127" text-anchor="middle" fill="var(--ink)">LN &rarr; MLP (4 x d_model)</text>
   <text x="529" y="142" text-anchor="middle" fill="var(--muted)">+ residual</text>
   <line x1="529" y1="88" x2="529" y2="106" stroke="var(--muted)" marker-end="url(#vtA)"/>
   <text x="529" y="171" text-anchor="middle" fill="var(--muted)">(17, d_model) in and out</text>
   <!-- readout -->
   <line x1="624" y1="100" x2="650" y2="100" stroke="var(--muted)" marker-end="url(#vtA)"/>
-  <rect x="652" y="56" width="98" height="88" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="652" y="56" width="98" height="88" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="readout"/>
   <text x="701" y="80" text-anchor="middle" fill="var(--ink)">take CLS</text>
   <text x="701" y="96" text-anchor="middle" fill="var(--ink)">LN &rarr; linear</text>
   <text x="701" y="116" text-anchor="middle" fill="var(--muted)">10 class</text>
   <text x="701" y="130" text-anchor="middle" fill="var(--muted)">scores</text>
   <line x1="701" y1="144" x2="701" y2="214" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#vtL)"/>
-  <rect x="610" y="216" width="180" height="32" rx="16" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="610" y="216" width="180" height="32" rx="16" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="loss"/>
   <text x="700" y="236" text-anchor="middle" fill="var(--loss)" font-weight="700">L = CE(label)</text>
   <text x="380" y="262" text-anchor="middle" fill="var(--muted)">the loss sits on the CLS readout only; every weight before it is shaped by it</text>
 </svg>
@@ -136,7 +136,8 @@ sched.step()</code></pre></details>
     model.eval()
     hit = 0
     for i in range(0, len(x), 1000):
-        hit += int((model(x[i : i + 1000].to(dev))[0].argmax(-1).cpu() == y[i : i + 1000]).sum())</code></pre></details>
+        hit += int((model(x[i : i + 1000].to(dev))[0].argmax(-1).cpu() == y[i : i + 1000]).sum())
+    # ...</code></pre></details>
 
 <h3>What to watch</h3>
 <p>While the run trains, the <b>live attention</b> panel under the charts shows, for one fixed probe digit (the first test
@@ -175,3 +176,4 @@ the validation curve; this model has no augmentation, so data is what generalisa
 </ul>
 <p class="ref">Previous: task 6 (attention) built this attention layer from scratch on a lookup problem. Next: task 8 (cross-attn)
 lets a decoder read a source sequence, then task 10 (ta-vla) feeds a transformer camera and force tokens.</p>
+<script type="application/json" class="blkinfo">{"img": {"t": "image — the raw input", "html": "<p><b>Purpose:</b> one normalised 28&times;28 MNIST digit, cut into a grid of non-overlapping square patches (row-major); patchify is pure reshaping, no parameters.</p><p><b>Shape:</b> <code>(28, 28)</code> &rarr; <code>(16, 49)</code> with patch 7 (patch 14: <code>(4, 196)</code>).</p><p><b>Updated:</b> a fresh batch of 128 images is drawn from the <code>train_n</code> training digits every step.</p>"}, "embed": {"t": "W_E — the patch embedding", "html": "<p><b>Purpose:</b> one linear layer turning each flattened patch into a token — exactly a stride-7, kernel-7 convolution, the only convolution the model keeps.</p><p><b>Shape:</b> W_E is <code>(49, d_model)</code>; out <code>(16, d_model)</code>, d_model default 64.</p><p><b>Updated:</b> every optimizer step (AdamW, weight decay 0.05).</p>"}, "cls": {"t": "CLS — the summary token", "html": "<p><b>Purpose:</b> a learned constant token that belongs to no patch; its final vector is the only one read out, so everything the classifier uses must be <i>collected</i> into it through attention.</p><p><b>Shape:</b> <code>(1, d_model)</code>, prepended to the patch tokens; it gets position slot 0.</p><p><b>Updated:</b> trained every step like any weight; identical for every image at the input — it only differs between images through what it gathers.</p>"}, "tokens": {"t": "patch tokens + positions", "html": "<p><b>Purpose:</b> the embedded patches with a learned position vector each. Self-attention is order-blind, so without <code>E_pos</code> a digit and any patch-shuffle of it would be indistinguishable.</p><p><b>Shapes:</b> tokens <code>(16, d_model)</code>; <code>E_pos</code> is <code>(17, d_model)</code> counting the CLS slot. Patch 14: 4 tokens, <code>E_pos (5, d_model)</code>.</p><p><b>Updated:</b> <code>E_pos</code> trains every step; the token values are recomputed per forward.</p>"}, "block": {"t": "Block &times; depth — the transformer stack", "html": "<p><b>Purpose:</b> <code>depth</code> rounds of refinement (default 2): each <code>minitf.Block</code> does pre-LayerNorm self-attention, then a pre-LayerNorm MLP, each with a residual connection that lets the layer add without erasing.</p><p><b>Shape:</b> <code>(17, d_model)</code> in and out of every block.</p><p><b>Updated:</b> all block weights train every step. The whole default model (patch 7, 2 blocks, 2 heads, d_model 64) is 105&thinsp;098 parameters.</p>"}, "attn": {"t": "multi-head self-attention", "html": "<p><b>Purpose:</b> every token queries all 17: Q, K, V come from the same LayerNormed token row; the CLS row of the result is what the app draws.</p><p><b>Shapes:</b> attention weights <code>(heads, 17, 17)</code> per block (patch 14: <code>(heads, 5, 5)</code>); projections W_Q, W_K, W_V, W_O each <code>(d_model, d_model)</code>.</p><p><b>Updated:</b> the projections train every step; the weight maps themselves are recomputed on every forward pass.</p>"}, "mlp": {"t": "MLP — per-token feed-forward", "html": "<p><b>Purpose:</b> a two-layer network applied to each token separately (Linear &rarr; GELU &rarr; Linear); where per-token computation happens between the mixing rounds.</p><p><b>Shapes:</b> <code>(d_model, 4&middot;d_model)</code> then back; tokens <code>(17, d_model)</code> in and out.</p><p><b>Updated:</b> every optimizer step.</p>"}, "readout": {"t": "readout — CLS to class scores", "html": "<p><b>Purpose:</b> take only the final CLS vector, LayerNorm it and map it linearly to the 10 class scores; the patch tokens&rsquo; final states are discarded.</p><p><b>Shape:</b> head <code>(d_model, 10)</code> &rarr; logits <code>(10,)</code>.</p><p><b>Updated:</b> every optimizer step.</p><p><b>Detail:</b> inference is the argmax over these logits, once per image (<code>accuracy</code> in the task code).</p>"}, "loss": {"t": "L — cross-entropy on the label", "html": "<p><b>Purpose:</b> compares the class distribution with the true digit. Chance is loss ln 10 &asymp; 2.30.</p><p><b>Shape:</b> scalar, averaged over the batch of 128.</p><p><b>Updated:</b> backpropagated every step; it touches the model only through the CLS readout, so every weight before it — W_E, positions, CLS, all blocks — is shaped by whether the right class comes out.</p>"}}</script>

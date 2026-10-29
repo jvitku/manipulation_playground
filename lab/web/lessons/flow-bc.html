@@ -72,20 +72,20 @@ the policy never sees recoveries from the failures that were filtered out.</p>
     </marker>
   </defs>
   <!-- inputs -->
-  <rect x="10" y="20" width="150" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="20" width="150" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="xt"/>
   <text x="85" y="36" text-anchor="middle" fill="var(--ink)">noisy chunk x_t</text>
   <text x="85" y="50" text-anchor="middle" fill="var(--muted)">(B, H, 2)</text>
-  <rect x="10" y="72" width="150" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="72" width="150" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="state"/>
   <text x="85" y="88" text-anchor="middle" fill="var(--ink)">state (x &minus; est, z)</text>
   <text x="85" y="102" text-anchor="middle" fill="var(--muted)">(B, 2)</text>
-  <rect x="10" y="124" width="150" height="44" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <rect x="10" y="124" width="150" height="44" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" data-i="force"/>
   <text x="85" y="141" text-anchor="middle" fill="var(--ink)" font-weight="700">force history</text>
   <text x="85" y="156" text-anchor="middle" fill="var(--muted)">10 &times; (Fx, Fz) = (B, 20)</text>
-  <rect x="10" y="182" width="150" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="182" width="150" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="temb"/>
   <text x="85" y="198" text-anchor="middle" fill="var(--ink)">time embed t</text>
   <text x="85" y="212" text-anchor="middle" fill="var(--muted)">(B, 64)</text>
   <!-- zeroed switch -->
-  <rect x="190" y="126" width="64" height="40" rx="6" fill="none" stroke="var(--accent)" stroke-dasharray="4 3"/>
+  <rect x="190" y="126" width="64" height="40" rx="6" fill="none" stroke="var(--accent)" stroke-dasharray="4 3" data-i="useforce"/>
   <text x="222" y="143" text-anchor="middle" fill="var(--accent)">use_force</text>
   <text x="222" y="157" text-anchor="middle" fill="var(--muted)">off &#8594; 0</text>
   <line x1="160" y1="146" x2="188" y2="146" stroke="var(--accent)" marker-end="url(#fbG)"/>
@@ -94,27 +94,27 @@ the policy never sees recoveries from the failures that were filtered out.</p>
   <line x1="160" y1="91" x2="296" y2="120" stroke="var(--muted)" marker-end="url(#fbA)"/>
   <line x1="254" y1="146" x2="296" y2="138" stroke="var(--accent)" stroke-width="2" marker-end="url(#fbG)"/>
   <line x1="160" y1="201" x2="296" y2="150" stroke="var(--muted)" marker-end="url(#fbA)"/>
-  <rect x="298" y="104" width="62" height="52" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="298" y="104" width="62" height="52" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="concat"/>
   <text x="329" y="127" text-anchor="middle" fill="var(--ink)">concat</text>
   <text x="329" y="142" text-anchor="middle" fill="var(--muted)">obs = 22</text>
   <!-- net -->
   <line x1="360" y1="130" x2="396" y2="130" stroke="var(--muted)" marker-end="url(#fbA)"/>
-  <rect x="398" y="96" width="140" height="68" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="398" y="96" width="140" height="68" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="net"/>
   <text x="468" y="120" text-anchor="middle" fill="var(--ink)">MLPDenoiser</text>
   <text x="468" y="136" text-anchor="middle" fill="var(--muted)">4 &times; Linear(512) + GELU</text>
   <text x="468" y="150" text-anchor="middle" fill="var(--muted)">out: Linear(H&middot;2)</text>
   <line x1="538" y1="130" x2="574" y2="130" stroke="var(--muted)" marker-end="url(#fbA)"/>
-  <rect x="576" y="111" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="576" y="111" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="v"/>
   <text x="621" y="127" text-anchor="middle" fill="var(--ink)">v (predicted</text>
   <text x="621" y="141" text-anchor="middle" fill="var(--ink)">velocity)</text>
   <!-- target -->
-  <rect x="576" y="206" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="576" y="206" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="u"/>
   <text x="621" y="222" text-anchor="middle" fill="var(--ink)">u = e &minus; x&#8320;</text>
   <text x="621" y="236" text-anchor="middle" fill="var(--muted)">(target)</text>
   <!-- loss -->
   <line x1="666" y1="130" x2="696" y2="146" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#fbL)"/>
   <line x1="621" y1="206" x2="705" y2="178" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#fbL)"/>
-  <rect x="680" y="148" width="72" height="30" rx="15" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="680" y="148" width="72" height="30" rx="15" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="loss"/>
   <text x="716" y="167" text-anchor="middle" fill="var(--loss)" font-weight="700">L (loss)</text>
   <text x="716" y="140" text-anchor="middle" fill="var(--loss)">&#8214;v &minus; u&#8214;&sup2;</text>
   <text x="380" y="276" text-anchor="middle" fill="var(--muted)">closed loop: sample K Euler steps &#8594; play n_exec actions &#8594; read the new force history &#8594; repeat</text>
@@ -181,3 +181,5 @@ the force history is read again (clamped to the chunk). Playing fewer keeps the 
 <li><b>Sampling steps K</b>: Euler steps per chunk; cost grows linearly. At evaluation: <em>Hole-estimate error</em> (how wrong the
 told hole position is), <em>Force sensor noise</em>, and <em>Zero the force input</em>.</li>
 </ul>
+
+<script type="application/json" class="blkinfo">{"xt": {"t": "x_t — the noisy chunk", "html": "<p><b>Purpose:</b> the flow-matching input: the expert action chunk pushed along the straight line toward noise, <code>x_t = t·e + (1−t)·x₀</code>.</p><p><b>Shape:</b> <code>(B, H, 2)</code> — H = <i>Action chunk</i> (8 or 16, default 16), actions in [−1, 1]².</p><p><b>Updated:</b> rebuilt every training step from fresh draws of e and t; at inference it is the running Euler state, starting at pure noise.</p>"}, "state": {"t": "state — where the peg is", "html": "<p><b>Purpose:</b> the position half of the observation: peg x <i>relative to the noisy hole estimate</i> (σ = 3 cm by default — often wrong by more than the chamfer) and the peg's z.</p><p><b>Shape:</b> <code>(B, 2)</code>, z-scored with the training set's statistics.</p><p><b>Updated:</b> drawn per sample at training; read from the environment at every re-plan in closed loop.</p>"}, "force": {"t": "force history — the contact channel", "html": "<p><b>Purpose:</b> the only input that carries contact: touchdown is a step in Fz, stiffness is the force slope, the chamfer is an Fx bias pointing at the hole.</p><p><b>Shape:</b> <code>(B, 20)</code> = the last 10 readings × (Fx, Fz), z-scored; sensor noise 0.05 N by default.</p><p><b>Updated:</b> the environment appends one reading per step; the policy only sees the fresh window at a re-plan, i.e. every <code>n_exec</code> steps.</p>"}, "temb": {"t": "time embed — the noise level t", "html": "<p><b>Purpose:</b> tell the net where on the noise→data path the chunk sits.</p><p><b>Shape:</b> <code>(B, 64)</code> sinusoidal embedding of t.</p><p><b>Updated:</b> a fresh <code>t ~ Beta(1.5, 1)</code> per chunk every training step; the current Euler time (1 → 0 in K steps) at sampling.</p>"}, "useforce": {"t": "use_force — the zeroed-twin gate", "html": "<p><b>Purpose:</b> the controlled experiment: with <i>Feed the force history</i> off, the 20 force channels are replaced by zeros in the training demos AND at evaluation — identical architecture, parameters and data otherwise, so the gap between the two runs is the value of touch.</p><p><b>Shape:</b> no parameters; <code>np.zeros_like(torque)</code> in place of the readings.</p><p><b>Updated:</b> a per-run flag, stored in the checkpoint's arch; <i>Zero the force input</i> instead blinds a force-trained net at evaluation only.</p><p><b>Detail:</b> tutorial reference: 86.7% success with force vs 61.3% zeroed (400 demos, 3 seeds).</p>"}, "concat": {"t": "concat — the 22-D observation", "html": "<p><b>Purpose:</b> stack state (2) and force history (20) into the <code>obs</code> vector the denoiser conditions on.</p><p><b>Shape:</b> <code>(B, 22)</code>; no parameters.</p><p><b>Updated:</b> recomputed every forward pass.</p>"}, "net": {"t": "MLPDenoiser — the only trained block", "html": "<p><b>Purpose:</b> predict the velocity v that carries the noisy chunk toward an expert-like chunk, given the observation and the noise level.</p><p><b>Shapes:</b> in <code>x_t</code> flattened (H·2) + <code>obs (B, 22)</code> + <code>t embed (B, 64)</code>; 4 × Linear(512) + GELU; out Linear(H·2) → <code>(B, H, 2)</code>.</p><p><b>Updated:</b> every optimizer step (AdamW, linear warmup + cosine decay, grad-clip 1.0); the closed-loop evaluations and the checkpoint use an EMA copy (0.999).</p>"}, "v": {"t": "v — predicted velocity", "html": "<p><b>Purpose:</b> the model's answer at (x_t, t, obs): the direction and speed the chunk should move along the path.</p><p><b>Shape:</b> <code>(B, H, 2)</code>.</p><p><b>Detail:</b> the same function drives inference — each re-plan integrates it with K Euler steps (<code>x ← x − (1/K)·v</code>) from fresh noise.</p>"}, "u": {"t": "u = e − x₀ — target velocity", "html": "<p><b>Purpose:</b> the true, constant velocity of the straight line between data and noise — what makes flow matching a plain regression.</p><p><b>Shape:</b> <code>(B, H, 2)</code>; one subtraction, no parameters.</p><p><b>Updated:</b> recomputed every step from the fresh x₀ and e.</p>"}, "loss": {"t": "L — the flow-matching loss", "html": "<p><b>Purpose:</b> mean squared error <code>‖v − u‖²</code>, padding positions masked out; the only gradient source.</p><p><b>Shape:</b> scalar, averaged over B, H and the 2 action dims.</p><p><b>Updated:</b> backpropagated every optimizer step.</p><p><b>Detail:</b> a poor progress signal by design — averaged over all noise levels it flattens early, which is why the run also rolls the EMA model out on 200 fresh scenes every <i>eval every</i> steps.</p>"}}</script>

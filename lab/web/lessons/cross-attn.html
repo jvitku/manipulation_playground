@@ -78,37 +78,37 @@ generation the errors compound.</p>
   <text x="115" y="14" text-anchor="middle" fill="var(--ink)" font-weight="700">ENCODER (reads the source)</text>
   <text x="520" y="14" text-anchor="middle" fill="var(--ink)" font-weight="700">DECODER (writes the target)</text>
   <!-- encoder column -->
-  <rect x="15" y="298" width="200" height="40" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="15" y="298" width="200" height="40" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="src"/>
   <text x="115" y="315" text-anchor="middle" fill="var(--ink)">source chars</text>
   <text x="115" y="329" text-anchor="middle" fill="var(--muted)">"23 Oct 2026" (12 ids)</text>
   <line x1="115" y1="298" x2="115" y2="276" stroke="var(--muted)" marker-end="url(#caA)"/>
-  <rect x="15" y="240" width="200" height="34" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="15" y="240" width="200" height="34" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="embS"/>
   <text x="115" y="261" text-anchor="middle" fill="var(--ink)">char emb + position emb</text>
   <line x1="115" y1="240" x2="115" y2="218" stroke="var(--muted)" marker-end="url(#caA)"/>
-  <rect x="15" y="150" width="200" height="66" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="15" y="150" width="200" height="66" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="enc"/>
   <text x="115" y="172" text-anchor="middle" fill="var(--ink)">encoder Block</text>
   <text x="115" y="188" text-anchor="middle" fill="var(--muted)">self-attention (Q, K, V all</text>
   <text x="115" y="202" text-anchor="middle" fill="var(--muted)">from the source) + MLP</text>
   <line x1="115" y1="150" x2="115" y2="128" stroke="var(--muted)" marker-end="url(#caA)"/>
-  <rect x="15" y="88" width="200" height="38" rx="8" fill="var(--chip)" stroke="var(--ink)" stroke-width="1.6"/>
+  <rect x="15" y="88" width="200" height="38" rx="8" fill="var(--chip)" stroke="var(--ink)" stroke-width="1.6" data-i="mem"/>
   <text x="115" y="104" text-anchor="middle" fill="var(--ink)" font-weight="700">memory M</text>
   <text x="115" y="118" text-anchor="middle" fill="var(--muted)">(12, d_model)</text>
   <!-- decoder column -->
-  <rect x="320" y="298" width="400" height="40" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="320" y="298" width="400" height="40" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="decin"/>
   <text x="520" y="315" text-anchor="middle" fill="var(--ink)">&lt;bos&gt; 2 0 2 6 - 1 0 - 2 3 (11 ids)</text>
   <text x="520" y="329" text-anchor="middle" fill="var(--muted)">training: target shifted right; inference: its own output</text>
   <line x1="520" y1="298" x2="520" y2="276" stroke="var(--muted)" marker-end="url(#caA)"/>
-  <rect x="320" y="240" width="400" height="34" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="320" y="240" width="400" height="34" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="embT"/>
   <text x="520" y="261" text-anchor="middle" fill="var(--ink)">char emb + position emb</text>
-  <rect x="300" y="52" width="440" height="184" rx="10" fill="none" stroke="var(--line)" stroke-dasharray="4 3"/>
+  <rect x="300" y="52" width="440" height="184" rx="10" fill="none" stroke="var(--line)" stroke-dasharray="4 3" data-i="crossblock"/>
   <text x="318" y="68" fill="var(--muted)">CrossBlock</text>
   <line x1="520" y1="240" x2="520" y2="214" stroke="var(--muted)" marker-end="url(#caA)"/>
-  <rect x="340" y="176" width="360" height="36" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="340" y="176" width="360" height="36" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="selfattn"/>
   <text x="520" y="192" text-anchor="middle" fill="var(--ink)">masked self-attention</text>
   <text x="520" y="206" text-anchor="middle" fill="var(--muted)">looks only at earlier output chars</text>
   <line x1="520" y1="176" x2="520" y2="154" stroke="var(--accent)" stroke-width="2" marker-end="url(#caK)"/>
   <text x="530" y="168" fill="var(--accent)" font-weight="700">Q</text>
-  <rect x="340" y="110" width="360" height="42" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <rect x="340" y="110" width="360" height="42" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" data-i="crossattn"/>
   <text x="520" y="127" text-anchor="middle" fill="var(--ink)" font-weight="700">cross-attention</text>
   <text x="520" y="142" text-anchor="middle" fill="var(--muted)">A = softmax(Q K&#7511; / &radic;d_k) : (11 out, 12 src)</text>
   <!-- K,V from memory -->
@@ -116,13 +116,13 @@ generation the errors compound.</p>
   <text x="222" y="100" fill="var(--accent)" font-weight="700">K, V</text>
   <text x="242" y="146" fill="var(--muted)">from M, not from the decoder</text>
   <line x1="520" y1="110" x2="520" y2="92" stroke="var(--muted)" marker-end="url(#caA)"/>
-  <rect x="340" y="72" width="360" height="20" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="340" y="72" width="360" height="20" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="mlp"/>
   <text x="520" y="86" text-anchor="middle" fill="var(--ink)">MLP</text>
   <line x1="520" y1="52" x2="520" y2="36" stroke="var(--muted)" marker-end="url(#caA)"/>
-  <rect x="340" y="20" width="250" height="16" rx="6" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="340" y="20" width="250" height="16" rx="6" fill="var(--chip)" stroke="var(--line)" data-i="readout"/>
   <text x="465" y="32" text-anchor="middle" fill="var(--ink)">LayerNorm + linear -&gt; 39 chars</text>
   <line x1="590" y1="28" x2="624" y2="28" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#caL)"/>
-  <rect x="626" y="14" width="150" height="28" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="626" y="14" width="150" height="28" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="loss"/>
   <text x="701" y="32" text-anchor="middle" fill="var(--loss)" font-weight="700">L = CE(next char)</text>
 </svg>
 <p class="ref">The wiring is the whole idea: the arrow into the cross-attention box labelled <b>Q</b> comes from the decoder's own
@@ -244,3 +244,4 @@ always measured on 2000 held-out day/format pairs.</li>
 </ul>
 <p class="ref">Previous: task 7 (vit-mnist) used self-attention over image patches. Next: task 9 (find-digit) lets a language query read
 an image, which is cross-attention again; task 10 (ta-vla) applies it to a robot policy.</p>
+<script type="application/json" class="blkinfo">{"src": {"t": "source characters", "html": "<p><b>Purpose:</b> the input date in one of three formats, one vocabulary id per character, right-padded to a fixed length.</p><p><b>Shape:</b> <code>(12,)</code> ids per example — SRC_LEN 12; vocabulary 39 (36 characters + pad / bos / eos).</p><p><b>Updated:</b> a fresh batch of 128 (day, format) pairs is drawn from the 33&thinsp;200 training days every step; no parameters.</p>"}, "embS": {"t": "encoder embeddings", "html": "<p><b>Purpose:</b> turn each source id into a vector and add a learned position vector — the encoder&rsquo;s self-attention is order-blind without it.</p><p><b>Shapes:</b> char table <code>(39, d_model)</code> + position table <code>(12, d_model)</code> &rarr; <code>(12, d_model)</code>; d_model default 64.</p><p><b>Updated:</b> both tables train every optimizer step (AdamW). The decoder has its own separate pair of tables.</p>"}, "enc": {"t": "encoder Block", "html": "<p><b>Purpose:</b> one <code>minitf.Block</code> of self-attention (Q, K and V all from the source) plus an MLP: each character&rsquo;s row gets to see the whole date before the decoder reads it.</p><p><b>Shapes:</b> <code>(12, d_model)</code> in and out; its self-attention weights are <code>(heads, 12, 12)</code>.</p><p><b>Updated:</b> every step — but only through the K and V the memory supplies to cross-attention; no loss sits on the encoder itself.</p>"}, "mem": {"t": "memory M — the encoder output", "html": "<p><b>Purpose:</b> the notes the decoder reads: one row per source character. It is computed once per example and re-read at every decode step — the memory side never looks back at the writer.</p><p><b>Shape:</b> <code>(12, d_model)</code>.</p><p><b>Updated:</b> recomputed on every forward pass; it has no parameters of its own.</p>"}, "decin": {"t": "decoder input", "html": "<p><b>Purpose:</b> what the decoder conditions on. Training (teacher forcing): &lt;bos&gt; + the <i>true</i> target shifted right, all 11 positions in one parallel pass. Inference: &lt;bos&gt; + its <i>own</i> argmax outputs so far.</p><p><b>Shape:</b> <code>(11,)</code> ids — &lt;bos&gt; plus the 10 target characters.</p><p><b>Updated:</b> rebuilt per step (training) or per decode step (inference); no parameters.</p>"}, "embT": {"t": "decoder embeddings", "html": "<p><b>Purpose:</b> the decoder&rsquo;s own character and position tables (not shared with the encoder), giving each output position a distinct vector to ask questions from.</p><p><b>Shapes:</b> char table <code>(39, d_model)</code> + position table <code>(11, d_model)</code> &rarr; <code>(11, d_model)</code>.</p><p><b>Updated:</b> every optimizer step.</p>"}, "crossblock": {"t": "CrossBlock — the whole decoder", "html": "<p><b>Purpose:</b> one <code>minitf.CrossBlock</code>: masked self-attention over the output prefix, cross-attention into the memory, then an MLP — each sublayer pre-LayerNorm with a residual connection.</p><p><b>Shape:</b> <code>(11, d_model)</code> in and out.</p><p><b>Updated:</b> all its weights train every step. The whole default model (d_model 64, 4 heads) is 125&thinsp;863 parameters.</p>"}, "selfattn": {"t": "masked self-attention", "html": "<p><b>Purpose:</b> lets each output position read the characters already written. The causal mask sets scores at forbidden pairs to &minus;&infin;, so position t sees only positions &le; t — without it, every position could copy its target from the slot one to its right and the loss would collapse while decoding stayed at chance.</p><p><b>Shape:</b> weights <code>(heads, 11, 11)</code>, lower-triangular support.</p><p><b>Updated:</b> its projections train every step; the weights are recomputed per forward.</p>"}, "crossattn": {"t": "cross-attention — the read of the source", "html": "<p><b>Purpose:</b> the lesson&rsquo;s mechanism: Q comes from the decoder&rsquo;s own stream, K and V from the memory M. Row t of A says how much of each source character output t reads — the alignment the app draws, learned with no alignment labels.</p><p><b>Shapes:</b> A is <code>(heads, 11, 12)</code> — 11 output positions over 12 source positions; per head d_k = d_model / heads (defaults: 64 / 4 = 16).</p><p><b>Updated:</b> W_Q, W_K, W_V, W_O train every step; A itself is recomputed on every forward pass.</p>"}, "mlp": {"t": "MLP — per-position feed-forward", "html": "<p><b>Purpose:</b> a two-layer network (Linear &rarr; GELU &rarr; Linear, hidden 4&middot;d_model) applied to each output position separately, after the two attention reads.</p><p><b>Shape:</b> <code>(11, d_model)</code> in and out.</p><p><b>Updated:</b> every optimizer step.</p>"}, "readout": {"t": "readout — next-character logits", "html": "<p><b>Purpose:</b> a final LayerNorm and a linear map giving a distribution over the 39-symbol vocabulary at every output position.</p><p><b>Shape:</b> head <code>(d_model, 39)</code> &rarr; logits <code>(11, 39)</code>.</p><p><b>Updated:</b> every optimizer step.</p><p><b>Detail:</b> at inference <code>greedy_decode</code> takes the argmax of the <i>last</i> position&rsquo;s logits, one character per decode step, until &lt;eos&gt;.</p>"}, "loss": {"t": "L — cross-entropy on the next character", "html": "<p><b>Purpose:</b> compares every position&rsquo;s prediction with the true next character (the target, then &lt;eos&gt;), padding ignored — all 11 positions scored in one teacher-forced pass.</p><p><b>Shape:</b> scalar, averaged over positions and the batch of 128. A uniform guess gives ln 39 &asymp; 3.66.</p><p><b>Updated:</b> backpropagated every step; the only gradient source — the encoder is trained purely through this path.</p>"}}</script>

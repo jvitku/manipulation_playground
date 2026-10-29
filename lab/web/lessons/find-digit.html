@@ -70,23 +70,23 @@ away and the model could still say "present", but left against right would be un
     </marker>
   </defs>
   <!-- canvas cut into a 4x8 grid -->
-  <rect x="10" y="40" width="128" height="64" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="40" width="128" height="64" fill="var(--chip)" stroke="var(--line)" data-i="canvas"/>
   <path d="M26 40V104M42 40V104M58 40V104M74 40V104M90 40V104M106 40V104M122 40V104M10 56H138M10 72H138M10 88H138" stroke="var(--accent)" stroke-width="1"/>
   <text x="74" y="30" text-anchor="middle" fill="var(--ink)">canvas: two digits</text>
   <text x="74" y="120" text-anchor="middle" fill="var(--muted)">28 x 56, 4 x 8 patches</text>
   <line x1="140" y1="72" x2="170" y2="72" stroke="var(--muted)" marker-end="url(#fdA)"/>
-  <rect x="172" y="44" width="110" height="56" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="172" y="44" width="110" height="56" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="embed"/>
   <text x="227" y="64" text-anchor="middle" fill="var(--ink)">W_E + position</text>
   <text x="227" y="80" text-anchor="middle" fill="var(--muted)">(32, 49) &rarr;</text>
   <text x="227" y="93" text-anchor="middle" fill="var(--muted)">(32, d_model)</text>
   <line x1="282" y1="72" x2="310" y2="72" stroke="var(--muted)" marker-end="url(#fdA)"/>
-  <rect x="312" y="44" width="116" height="56" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="312" y="44" width="116" height="56" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="blocks"/>
   <text x="370" y="64" text-anchor="middle" fill="var(--ink)">Block x depth</text>
   <text x="370" y="80" text-anchor="middle" fill="var(--muted)">self-attn + MLP</text>
   <text x="370" y="93" text-anchor="middle" fill="var(--muted)">patch tokens X</text>
   <!-- query token -->
   <text x="60" y="176" text-anchor="middle" fill="var(--ink)">query: "find the 4"</text>
-  <rect x="10" y="190" width="100" height="40" rx="8" fill="var(--bad-soft)" stroke="var(--loss)"/>
+  <rect x="10" y="190" width="100" height="40" rx="8" fill="var(--bad-soft)" stroke="var(--loss)" data-i="query"/>
   <text x="60" y="207" text-anchor="middle" fill="var(--ink)">embedding of</text>
   <text x="60" y="221" text-anchor="middle" fill="var(--ink)">class 0..9 = e_q</text>
   <line x1="112" y1="210" x2="470" y2="210" stroke="var(--muted)" marker-end="url(#fdA)"/>
@@ -95,18 +95,18 @@ away and the model could still say "present", but left against right would be un
   <line x1="428" y1="72" x2="500" y2="72" stroke="var(--muted)"/>
   <line x1="500" y1="72" x2="500" y2="186" stroke="var(--muted)" marker-end="url(#fdA)"/>
   <text x="512" y="130" fill="var(--muted)">K, V from X</text>
-  <rect x="472" y="188" width="150" height="46" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <rect x="472" y="188" width="150" height="46" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" data-i="crossattn"/>
   <text x="547" y="207" text-anchor="middle" fill="var(--ink)">cross-attention (MHA)</text>
   <text x="547" y="222" text-anchor="middle" fill="var(--muted)">attn (heads, 1, 32)</text>
   <!-- readout -->
   <line x1="624" y1="211" x2="650" y2="211" stroke="var(--muted)" marker-end="url(#fdA)"/>
-  <rect x="652" y="170" width="98" height="82" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="652" y="170" width="98" height="82" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="readout"/>
   <text x="701" y="192" text-anchor="middle" fill="var(--ink)">LN(e_q + out)</text>
   <text x="701" y="208" text-anchor="middle" fill="var(--ink)">&rarr; linear</text>
   <text x="701" y="228" text-anchor="middle" fill="var(--muted)">left / right /</text>
   <text x="701" y="242" text-anchor="middle" fill="var(--muted)">absent</text>
   <line x1="701" y1="252" x2="701" y2="270" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#fdL)"/>
-  <rect x="610" y="270" width="180" height="26" rx="13" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="610" y="270" width="180" height="26" rx="13" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="loss"/>
   <text x="700" y="287" text-anchor="middle" fill="var(--loss)" font-weight="700">L = CE(answer)</text>
   <text x="330" y="280" text-anchor="middle" fill="var(--muted)">the loss sits on the query's readout only; it shapes the patch tokens and the query together</text>
 </svg>
@@ -173,3 +173,4 @@ the query's attention into parallel lookups (and each is a separate picture in t
 builds the same idea at robot scale: camera patches, words and state are the prefix, and the action expert reads them with
 attention. Here the question is a digit class and the answer three words; there it is a language command and the answer an
 action.</p>
+<script type="application/json" class="blkinfo">{"canvas": {"t": "canvas — the scene", "html": "<p><b>Purpose:</b> the input: two MNIST digits of distinct classes side by side; in a third of the samples the queried class is on neither half (answer <i>absent</i>).</p><p><b>Shape:</b> <code>(28, 56)</code> pixels &rarr; patchify gives <code>(32, 49)</code>: a 4&times;8 grid of 7&times;7 patches.</p><p><b>Updated:</b> built fresh every training step (batch 128) from the <code>train_n</code> training digits — the pairs never repeat, the digits do; no parameters.</p>"}, "embed": {"t": "W_E + positions", "html": "<p><b>Purpose:</b> one linear layer embedding each flattened patch, plus a learned position vector per grid cell. The positions must survive into the tokens: attention can <i>find</i> the digit, but only the position riding in the values can report left vs right.</p><p><b>Shapes:</b> W_E <code>(49, d_model)</code> and pos <code>(32, d_model)</code> &rarr; tokens <code>(32, d_model)</code>; d_model default 64.</p><p><b>Updated:</b> every optimizer step (AdamW, weight decay 0.05).</p>"}, "blocks": {"t": "Block &times; depth — the patch encoder", "html": "<p><b>Purpose:</b> <code>depth</code> self-attention + MLP rounds (as in task 7) that let the patches talk — a patch must already &ldquo;know&rdquo; it belongs to a 4 before anybody can ask for 4s. A final LayerNorm yields the tokens X the query reads.</p><p><b>Shapes:</b> <code>(32, d_model)</code> in and out; self-attention weights <code>(heads, 32, 32)</code> per block.</p><p><b>Updated:</b> every step. The whole default model (2 blocks, 2 heads, d_model 64) is 122&thinsp;947 parameters.</p>"}, "query": {"t": "e_q — the command token", "html": "<p><b>Purpose:</b> the command: a learned embedding table with one row per digit class, and the asked class selects which row is used at run time — content-based routing instead of a wired path. It does not go through the blocks at all.</p><p><b>Shape:</b> table <code>(10, d_model)</code> &rarr; e_q <code>(1, d_model)</code>.</p><p><b>Updated:</b> a class&rsquo;s row gets gradient on the steps where that class is queried; over a run all ten rows train.</p>"}, "crossattn": {"t": "cross-attention — the query reads the patches", "html": "<p><b>Purpose:</b> ONE <code>minitf.MHA</code> call with Q from e_q and K, V from the 32 patch tokens — the same module as task 8. The query is not among the keys, so each head&rsquo;s row has exactly 32 weights summing to 1 (no CLS slot).</p><p><b>Shapes:</b> attention <code>(heads, 1, 32)</code>; output <code>(1, d_model)</code>; W_Q, W_K, W_V, W_O each <code>(d_model, d_model)</code>.</p><p><b>Updated:</b> the projections train every step; the weights are recomputed per forward — the app draws them as a 4&times;8 map per head.</p>"}, "readout": {"t": "readout — three answers", "html": "<p><b>Purpose:</b> <code>LN(e_q + out)</code> then a linear map to the 3-way answer. The residual keeps the asked class in the readout even when the attention returns a near-uniform blend (the absent case).</p><p><b>Shape:</b> head <code>(d_model, 3)</code> &rarr; logits <code>(3,)</code>: left / right / absent.</p><p><b>Updated:</b> every optimizer step.</p><p><b>Detail:</b> inference is softmax + argmax of these logits, once per canvas.</p>"}, "loss": {"t": "L — cross-entropy on the answer", "html": "<p><b>Purpose:</b> compares the 3-way prediction with the truth. Chance is 33%, loss ln 3 &asymp; 1.10. Nothing in it says &ldquo;look at the digit&rdquo; — attending there is just the only way to lower it.</p><p><b>Shape:</b> scalar, averaged over the batch of 128.</p><p><b>Updated:</b> backpropagated every step; it shapes the patch tokens and the query embeddings jointly — everything trains from scratch through this one number.</p>"}}</script>

@@ -17,32 +17,32 @@ environment step.</p>
     <marker id="tdG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
   </defs>
   <!-- replay buffer -->
-  <rect x="8" y="120" width="104" height="60" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="8" y="120" width="104" height="60" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="replay"/>
   <text x="60" y="142" text-anchor="middle" fill="var(--ink)">replay buffer</text>
   <text x="60" y="158" text-anchor="middle" fill="var(--muted)">(o, a, r, o&#8242;, d)</text>
   <text x="60" y="172" text-anchor="middle" fill="var(--muted)">batch of 256</text>
   <!-- online nets -->
-  <rect x="170" y="24" width="150" height="56" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <rect x="170" y="24" width="150" height="56" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" data-i="actor"/>
   <text x="245" y="46" text-anchor="middle" fill="var(--ink)" font-weight="700">actor &pi;(o)</text>
   <text x="245" y="62" text-anchor="middle" fill="var(--muted)">256&times;256 MLP, tanh</text>
-  <rect x="170" y="130" width="150" height="70" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <rect x="170" y="130" width="150" height="70" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" data-i="critics"/>
   <text x="245" y="152" text-anchor="middle" fill="var(--ink)" font-weight="700">twin critics</text>
   <text x="245" y="170" text-anchor="middle" fill="var(--muted)">Q1(o, a)   Q2(o, a)</text>
   <text x="245" y="186" text-anchor="middle" fill="var(--muted)">two independent heads</text>
   <!-- target nets -->
-  <rect x="170" y="250" width="150" height="56" rx="9" fill="var(--chip)" stroke="var(--line)" stroke-dasharray="4 3"/>
+  <rect x="170" y="250" width="150" height="56" rx="9" fill="var(--chip)" stroke="var(--line)" stroke-dasharray="4 3" data-i="targets"/>
   <text x="245" y="272" text-anchor="middle" fill="var(--ink)">targets: &pi;&#8242;, Q1&#8242;, Q2&#8242;</text>
   <text x="245" y="290" text-anchor="middle" fill="var(--muted)">slow copies (&tau;=0.005)</text>
   <!-- y node -->
-  <rect x="400" y="250" width="170" height="56" rx="14" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="400" y="250" width="170" height="56" rx="14" fill="var(--chip)" stroke="var(--line)" data-i="y"/>
   <text x="485" y="272" text-anchor="middle" fill="var(--ink)">TD target y</text>
   <text x="485" y="290" text-anchor="middle" fill="var(--muted)">r + &gamma;(1&minus;d) min(Q1&#8242;, Q2&#8242;)</text>
   <!-- critic loss -->
-  <rect x="470" y="140" width="150" height="50" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="470" y="140" width="150" height="50" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="closs"/>
   <text x="545" y="161" text-anchor="middle" fill="var(--loss)" font-weight="700">critic loss</text>
   <text x="545" y="177" text-anchor="middle" fill="var(--muted)">(Q1&minus;y)&sup2; + (Q2&minus;y)&sup2;</text>
   <!-- actor loss -->
-  <rect x="470" y="30" width="150" height="50" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="470" y="30" width="150" height="50" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="aloss"/>
   <text x="545" y="51" text-anchor="middle" fill="var(--loss)" font-weight="700">actor loss</text>
   <text x="545" y="67" text-anchor="middle" fill="var(--muted)">&minus; mean Q1(o, &pi;(o))</text>
   <!-- arrows -->
@@ -172,3 +172,5 @@ long. Pause keeps the replay buffer (it lives in memory); Stop saves a checkpoin
 eval success and the latest are kept.</li>
 <li>Evaluation: unseen holes, hole-offset &sigma;, <em>Zero the force input</em> (blinds a force-trained actor after the fact), episodes to render, eval seed.</li>
 </ul>
+
+<script type="application/json" class="blkinfo">{"replay": {"t": "replay buffer — the transition store", "html": "<p><b>Purpose:</b> stores every environment transition (o, a, r, o′, d) and hands the learner decorrelated random batches; the critic never trains on the trajectory in order.</p><p><b>Shape(s):</b> <code>o, o′ (80,)</code> — 4 stacked 20-number frames; <code>a (3,)</code> in [−1, 1]; capacity <code>min(1M, env_steps)</code>.</p><p><b>Updated:</b> one transition appended per environment step — the first <code>min(5000, steps/5)</code> steps uniformly random, then actor + N(0, <i>Exploration noise</i>²); sampled as batches of 256 on every update.</p><p><b>Detail:</b> d = 1 only for success or abort. A timeout stores d = 0, so the critic still bootstraps through it (the observation does not know the clock).</p>"}, "actor": {"t": "actor π(o) — the deterministic policy", "html": "<p><b>Purpose:</b> maps the stacked observation to one action in [−1, 1]³ (scaled to ±1 mm xy, ±3 mm z at the peg tip). It has no label anywhere: its only teacher is the critic's gradient with respect to the action.</p><p><b>Shape(s):</b> <code>MLP 80 → 256 → 256 → 3</code>, ReLU, tanh output; Adam, lr 3e-4.</p><p><b>Updated:</b> every 2nd critic update (<code>policy_delay = 2</code>), by ascending Q1(o, π(o)).</p>"}, "critics": {"t": "twin critics Q1, Q2", "html": "<p><b>Purpose:</b> two independent estimates of the return of (o, a). Their independence is the point: min(Q1′, Q2′) in the target trades the upward bias of a single critic for mild pessimism.</p><p><b>Shape(s):</b> two separate <code>MLP (80+3) → 256 → 256 → 1</code> heads, no shared layers; Adam, lr 3e-4.</p><p><b>Updated:</b> every gradient step — one per environment step after the random warm-up — both heads regressing to the same y on a batch of 256.</p>"}, "targets": {"t": "target networks π′, Q1′, Q2′", "html": "<p><b>Purpose:</b> slow copies that define the TD target, so the critic chases a near-stationary y instead of its own latest mistake.</p><p><b>Shape(s):</b> exact copies of the online networks; no optimizer of their own.</p><p><b>Updated:</b> never by gradient — the Polyak blend θ′ ← (1−τ)·θ′ + τ·θ with τ = 0.005, applied together with each delayed actor step (every 2nd update): a time constant of hundreds of updates.</p>"}, "y": {"t": "TD target y", "html": "<p><b>Purpose:</b> the bootstrapped regression target for both critics: <code>y = r + γ(1−d)·min(Q1′(o′,a′), Q2′(o′,a′))</code>, γ = 0.99.</p><p><b>Shape(s):</b> <code>(256, 1)</code>, one per sampled transition, computed under no_grad.</p><p><b>Updated:</b> recomputed from the target networks on every critic update.</p><p><b>Detail:</b> the target action is smoothed — a′ = clip(π′(o′) + clip(ε, ±0.5), ±1), ε ~ N(0, 0.2²) — so a narrow spike in the critic surface cannot serve as a target.</p>"}, "closs": {"t": "critic loss", "html": "<p><b>Purpose:</b> <code>(Q1−y)² + (Q2−y)²</code> — both heads regress to the same clipped double-Q target.</p><p><b>Shape(s):</b> scalar, batch mean over 256 transitions.</p><p><b>Updated:</b> backpropagated on every update (one per environment step). This is the <code>critic_loss</code> chart; <code>q1_mean</code> and <code>target_mean</code> are the batch means of Q1 and y.</p>"}, "aloss": {"t": "actor loss", "html": "<p><b>Purpose:</b> <code>−mean Q1(o, π(o))</code> — gradient ascent on the first critic's value of the actor's own action.</p><p><b>Shape(s):</b> scalar over the batch of 256; uses Q1 only, never the min.</p><p><b>Updated:</b> every 2nd critic update (<code>policy_delay = 2</code>), followed by the Polyak blend of both target networks; only the actor's parameters move in this step.</p><p><b>Detail:</b> it falls as Q rises, so it tracks the critic's scale, not how good the policy is.</p>"}}</script>

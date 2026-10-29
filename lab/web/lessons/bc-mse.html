@@ -60,43 +60,43 @@ reactivity, returns as a knob in the final lesson.</p>
     </marker>
   </defs>
   <!-- inputs -->
-  <rect x="10" y="22" width="130" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="22" width="130" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="obs"/>
   <text x="75" y="38" text-anchor="middle" fill="var(--ink)">obs</text>
   <text x="75" y="52" text-anchor="middle" fill="var(--muted)">(B, obs_dim)</text>
-  <rect x="10" y="84" width="130" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="84" width="130" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="zeros"/>
   <text x="75" y="100" text-anchor="middle" fill="var(--ink)">chunk &#8594; zeros</text>
   <text x="75" y="114" text-anchor="middle" fill="var(--muted)">(B, H&middot;2)</text>
-  <rect x="10" y="146" width="130" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="146" width="130" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="temb"/>
   <text x="75" y="162" text-anchor="middle" fill="var(--ink)">time embed (t = 0)</text>
   <text x="75" y="176" text-anchor="middle" fill="var(--muted)">(B, 64)</text>
   <!-- concat -->
   <line x1="140" y1="41" x2="188" y2="95" stroke="var(--muted)" marker-end="url(#bcA)"/>
   <line x1="140" y1="103" x2="188" y2="103" stroke="var(--muted)" marker-end="url(#bcA)"/>
   <line x1="140" y1="165" x2="188" y2="111" stroke="var(--muted)" marker-end="url(#bcA)"/>
-  <rect x="190" y="82" width="64" height="42" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="190" y="82" width="64" height="42" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="concat"/>
   <text x="222" y="107" text-anchor="middle" fill="var(--ink)">concat</text>
   <text x="222" y="72" text-anchor="middle" fill="var(--muted)">(B, H&middot;2+obs+64)</text>
   <!-- mlp -->
   <line x1="254" y1="103" x2="298" y2="103" stroke="var(--muted)" marker-end="url(#bcA)"/>
-  <rect x="300" y="70" width="170" height="68" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="300" y="70" width="170" height="68" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="net"/>
   <text x="385" y="95" text-anchor="middle" fill="var(--ink)">MLP: 4 &times; Linear(512) + GELU</text>
   <text x="385" y="112" text-anchor="middle" fill="var(--muted)">hidden, depth</text>
   <text x="385" y="126" text-anchor="middle" fill="var(--muted)">last layer: Linear(H&middot;2)</text>
   <!-- output -->
   <line x1="470" y1="103" x2="518" y2="103" stroke="var(--muted)" marker-end="url(#bcA)"/>
   <text x="494" y="95" text-anchor="middle" fill="var(--muted)">(B, H, 2)</text>
-  <rect x="520" y="82" width="90" height="42" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="520" y="82" width="90" height="42" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="pred"/>
   <text x="565" y="100" text-anchor="middle" fill="var(--ink)">predicted</text>
   <text x="565" y="114" text-anchor="middle" fill="var(--ink)">chunk &acirc;</text>
   <!-- dataset chunk -->
-  <rect x="520" y="200" width="90" height="42" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="520" y="200" width="90" height="42" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="expert"/>
   <text x="565" y="218" text-anchor="middle" fill="var(--ink)">expert chunk</text>
   <text x="565" y="232" text-anchor="middle" fill="var(--ink)">a* (dataset)</text>
   <text x="565" y="260" text-anchor="middle" fill="var(--muted)">(B, H, 2)</text>
   <!-- loss node -->
   <line x1="565" y1="124" x2="640" y2="150" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#bcL)"/>
   <line x1="565" y1="200" x2="640" y2="182" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#bcL)"/>
-  <rect x="620" y="150" width="96" height="32" rx="16" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="620" y="150" width="96" height="32" rx="16" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="loss"/>
   <text x="668" y="171" text-anchor="middle" fill="var(--loss)" font-weight="700">L (loss)</text>
   <text x="660" y="136" text-anchor="middle" fill="var(--loss)">mean &#8214;&acirc;&minus;a*&#8214;&sup2;&middot;mask</text>
 </svg>
@@ -157,3 +157,5 @@ longer but make the averaged chunk bend further into the obstacle.</li>
 <li><b>Expert noise</b>: jitter on demonstrated actions. Higher noise blurs the data and widens the prediction error
 without changing the fact that the mean lies between the modes.</li>
 </ul>
+
+<script type="application/json" class="blkinfo">{"obs": {"t": "obs — the observation", "html": "<p><b>Purpose:</b> the conditioning: what the policy sees. T1: the obstacle position c alone. T2: the point mass's position, goal − position and obstacle − position.</p><p><b>Shape:</b> <code>(B, obs_dim)</code> — obs_dim 1 in T1, 6 in T2; z-scored with the training set's mean/std (ChunkDataset).</p><p><b>Updated:</b> drawn fresh every training step from the demo dataset; read from the environment at each decision in closed loop.</p>"}, "zeros": {"t": "chunk → zeros — the disabled noise input", "html": "<p><b>Purpose:</b> the slot where the generative heads feed the noisy chunk. The Regression head passes <code>torch.zeros_like(x0)</code>, so the net can do nothing but map the observation to one answer.</p><p><b>Shape:</b> <code>(B, H·2)</code> flattened (H = 1 in T1, <i>Action chunk</i> in T2).</p><p><b>Updated:</b> never — constant zeros, no information. It exists so the exact same MLPDenoiser is reused by the flow/DDPM heads: any difference against the next lesson is the head, not capacity.</p>"}, "temb": {"t": "time embed — pinned to t = 0", "html": "<p><b>Purpose:</b> the shared denoiser's noise-level input, fixed at t = 0 (“data level”) because regression never noises anything.</p><p><b>Shape:</b> <code>(B, 64)</code> sinusoidal embedding — the same constant vector for every sample.</p><p><b>Updated:</b> never; through the first Linear it acts as a learned bias.</p>"}, "concat": {"t": "concat — one input vector", "html": "<p><b>Purpose:</b> stack the zeroed chunk, the observation and the time embedding into the single MLP input.</p><p><b>Shape:</b> <code>(B, H·2 + obs_dim + 64)</code>; pure bookkeeping, no parameters.</p><p><b>Updated:</b> recomputed every forward pass.</p>"}, "net": {"t": "MLP — the only trained block", "html": "<p><b>Purpose:</b> map the observation to one action chunk. Under squared error that chunk converges to the conditional <i>mean</i> of the expert's actions — the collapse this lesson demonstrates.</p><p><b>Shapes:</b> in <code>(B, H·2 + obs_dim + 64)</code>; 4 × Linear(512) + GELU (the <i>hidden</i>/<i>depth</i> of the arch); out Linear(H·2) → <code>(B, H, 2)</code>.</p><p><b>Updated:</b> every optimizer step (AdamW, linear warmup + cosine decay, grad-clip 1.0); evaluation and the checkpoint use an EMA copy (0.999).</p><p><b>Detail:</b> one run trains two of these back to back — a fresh net for T1 (H = 1, obs 1), then for T2 (H = <i>Action chunk</i>, obs 6).</p>"}, "pred": {"t": "â — the predicted chunk", "html": "<p><b>Purpose:</b> the network's single answer per observation. With a bimodal expert its optimum is the mode average — in T1 the line a_x = c, straight into the obstacle.</p><p><b>Shape:</b> <code>(B, H, 2)</code>, reshaped from the last Linear.</p><p><b>Updated:</b> at evaluation this output IS the action (clamped to [−1, 1]): no noise, no sampling — the policy is deterministic.</p>"}, "expert": {"t": "a* — the expert chunk", "html": "<p><b>Purpose:</b> the regression target: the demonstrated action chunk aligned with the observation.</p><p><b>Shape:</b> <code>(B, H, 2)</code>, plus a padding mask <code>(B, H)</code> that is 0 where the chunk runs past the episode's end.</p><p><b>Updated:</b> drawn fresh every training step from the demos collected once at run start (the <i>Demonstrations</i> knob; T2 uses demos/4 episodes).</p>"}, "loss": {"t": "L — masked MSE", "html": "<p><b>Purpose:</b> mean squared error <code>‖â − a*‖²</code>, padding positions masked out. The loss, not the network, is what picks the conditional mean.</p><p><b>Shape:</b> scalar, averaged over B, H and the 2 action dims.</p><p><b>Updated:</b> backpropagated every optimizer step; the only gradient source — and it falls smoothly even while the policy drives into the obstacle.</p>"}}</script>

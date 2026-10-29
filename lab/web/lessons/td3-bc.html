@@ -51,14 +51,14 @@ when the actor should listen to the demonstrations.</p>
   <text x="52" y="194" text-anchor="end" fill="var(--muted)">0</text>
   <line x1="60" y1="119" x2="610" y2="119" stroke="var(--line)" stroke-dasharray="3 3"/>
   <!-- R1: decays to 0 -->
-  <polyline points="60,42 400,190 610,190" fill="none" stroke="var(--loss)" stroke-width="1.8" stroke-dasharray="5 4"/>
+  <polyline points="60,42 400,190 610,190" fill="none" stroke="var(--loss)" stroke-width="1.8" stroke-dasharray="5 4" data-i="r1"/>
   <text x="520" y="180" fill="var(--loss)">R1: to 0, collapse</text>
   <!-- R1b/R4: floor -->
-  <polyline points="60,42 400,119 610,119" fill="none" stroke="var(--accent)" stroke-width="2.4"/>
+  <polyline points="60,42 400,119 610,119" fill="none" stroke="var(--accent)" stroke-width="2.4" data-i="r4"/>
   <text x="440" y="110" fill="var(--accent)">R4: floor 1.0 stays</text>
   <line x1="400" y1="190" x2="400" y2="184" stroke="var(--muted)"/>
   <text x="400" y="204" text-anchor="middle" fill="var(--muted)">bc_decay_steps</text>
-  <text x="70" y="36" fill="var(--ink)">&lambda;(t) = floor + (start &minus; floor)&middot;max(0, 1 &minus; t / decay)</text>
+  <text x="70" y="36" fill="var(--ink)" data-i="lam">&lambda;(t) = floor + (start &minus; floor)&middot;max(0, 1 &minus; t / decay)</text>
 </svg>
 <p>$$\lambda(t)=\lambda_{\text{floor}}+(\lambda_{\text{start}}-\lambda_{\text{floor}})\,\max\!\Big(0,\;1-\frac{t}{T_{\text{decay}}}\Big),\qquad \lambda_{\text{start}}=2.5,\ \lambda_{\text{floor}}=1.0$$</p>
 <p class="ref">The imitation weight starts strong, so the actor first becomes the expert on the states the expert visited, then gives the critic more say as the agent explores.
@@ -127,3 +127,5 @@ out["bc_weight"] = w</code></pre></details>
 the start and the floor to 0 for plain TD3 with demos in the buffer only (the start must be at least the floor, so the weight only ever decays).</li>
 <li>The rest is task 11 (td3): environment steps, seed, exploration noise, reward terms, <em>Feed the force channels</em> (off = the zeroed twin), evaluation, video.</li>
 </ul>
+
+<script type="application/json" class="blkinfo">{"lam": {"t": "λ(t) — the imitation weight", "html": "<p><b>Purpose:</b> the weight of the BC term in the actor loss, <code>a_loss = q_weight·(−Q̄ / max(mean|Q1|, 1)) + λ(t)·mean‖π(o_d) − a_d‖²</code>, with (o_d, a_d) a fresh batch of 256 from the demo buffer (<i>Expert demonstrations</i> = 100 episodes, ~250 transitions each, collected once before training by the scripted expert).</p><p><b>Shape(s):</b> a scalar: <code>λ(t) = floor + (start − floor)·max(0, 1 − t/decay)</code>, with t counted in environment steps.</p><p><b>Updated:</b> recomputed at every actor update (every 2nd critic update); logged as <code>bc_weight</code>, the imitation error as <code>bc_loss</code>.</p><p><b>Detail:</b> the form knobs are <i>BC weight at the start</i> (2.5), <i>BC weight floor</i> (1.0) and <i>BC decay</i> (66k of the default 100k steps — the repo's ratio of 100k/150k). The floor of 1 in the Q denominator is separate: it stops a near-zero early |Q| from blowing the Q term up into noise.</p>"}, "r4": {"t": "R4 — decay to a floor of 1.0 (kept)", "html": "<p><b>Purpose:</b> the schedule this task runs: λ falls linearly from 2.5 to 1.0 at <code>bc_decay_steps</code> and stays there — the imitation anchor never switches off.</p><p><b>Shape(s):</b> <code>λ: 2.5 → 1.0</code>, constant after the decay step.</p><p><b>Updated:</b> per environment step via <code>bc_weight_at(t)</code>; the actor first becomes the expert on the demonstrated states, then gives the critic more say.</p><p><b>Detail:</b> the floor alone is the difference between a 38.8% and a 58.4% mean on the same five seeds (R1 vs R1b).</p>"}, "r1": {"t": "R1 — decay to 0 (collapses)", "html": "<p><b>Purpose:</b> the failed first attempt, shown for contrast: the same linear decay continued to λ = 0.</p><p><b>Shape(s):</b> <code>λ: 2.5 → 0</code> over 100k steps.</p><p><b>Updated:</b> same rule — but once λ = 0 the actor loss is pure −Q and nothing anchors the policy to the demonstrated actions.</p><p><b>Detail:</b> three seeds climbed to 35–40% eval success and collapsed to 0 at 80–100k, exactly when λ reached 0. Reproduce it by setting <i>BC weight floor</i> to 0.</p>"}}</script>
