@@ -2,7 +2,7 @@
 <p>The previous lesson ended on a seed lottery: the same TD3 code solved the hidden-hole insertion in 1 of 5 seeds and failed in the other four,
 stuck in a <em>dive-and-abort</em> optimum (pushing down fast into the 60&nbsp;N abort) or a <em>hover</em> optimum (waiting for the timeout). The repo&rsquo;s
 Stage&nbsp;1.5 (&ldquo;R1&ndash;R4&rdquo;) asked what it takes to make that reliable. The recipe it found is the one this task runs: <b>put expert demonstrations in the
-replay buffer, and keep an imitation term in the actor loss.</b> It is TD3+BC (Fujimoto &amp; Gu, 2021) with one repo-specific detail that turned out to matter.</p>
+replay buffer, and keep an imitation term in the actor loss.</b> It is TD3+BC (<a href="https://arxiv.org/abs/2106.06860" target="_blank" rel="noopener" title="A Minimalist Approach to Offline Reinforcement Learning">Fujimoto &amp; Gu, 2021</a>) with one repo-specific detail that turned out to matter.</p>
 
 <h3>The recipe</h3>
 <ol>

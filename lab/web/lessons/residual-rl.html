@@ -3,10 +3,10 @@
 or a one-step action: an action is the end point of an ODE integrated over \(K\) network calls, and it is only trained to match demonstrations.
 That makes the textbook policy-gradient and actor-critic recipes awkward. Two lines of recent work attack exactly this; both are <b>literature context only</b>, nothing in this lab
 reproduces them and none of their numbers are ours.</p>
-<p><b>DPPO</b> (Ren et al., &ldquo;Diffusion Policy Policy Optimization&rdquo;, arXiv&nbsp;2409.00588) treats the <em>denoising chain</em> as an inner Markov decision process
+<p><b>DPPO</b> (<a href="https://arxiv.org/abs/2409.00588" target="_blank" rel="noopener">Ren et al., &ldquo;Diffusion Policy Policy Optimization&rdquo;, arXiv&nbsp;2409.00588</a>) treats the <em>denoising chain</em> as an inner Markov decision process
 and runs PPO through it: every denoising step becomes a Gaussian action whose log-probability is available, so the policy gradient flows back through the whole chain. It works,
 but the effective horizon is the environment horizon times the number of denoising steps, which makes credit assignment and compute heavy.</p>
-<p><b>FQL</b> (Park et al., &ldquo;Flow Q-Learning&rdquo;, arXiv&nbsp;2502.02538) avoids back-propagating through the ODE: it distils the multi-step flow into a
+<p><b>FQL</b> (<a href="https://arxiv.org/abs/2502.02538" target="_blank" rel="noopener">Park et al., &ldquo;Flow Q-Learning&rdquo;, arXiv&nbsp;2502.02538</a>) avoids back-propagating through the ODE: it distils the multi-step flow into a
 <em>one-step</em> policy and trains that policy against the critic while a distillation term keeps it close to the flow (the behaviour prior). The price is a second network
 and a regularisation weight to tune.</p>
 
@@ -42,7 +42,7 @@ whose &ldquo;environment&rdquo; happens to contain a good controller. The last l
 behaviour</b> and can only walk away from it if the critic says so.</p>
 
 <h3>What gets trained</h3>
-<p>The standard TD3 pair (Fujimoto et al., 2018; the repo&rsquo;s <code>fvb.policy.td3</code>, the same one task&nbsp;11 (td3) uses) with no demonstrations and no imitation term:</p>
+<p>The standard TD3 pair (<a href="https://arxiv.org/abs/1802.09477" target="_blank" rel="noopener" title="Addressing Function Approximation Error in Actor-Critic Methods">Fujimoto et al., 2018</a>; the repo&rsquo;s <code>fvb.policy.td3</code>, the same one task&nbsp;11 (td3) uses) with no demonstrations and no imitation term:</p>
 <p>$$L_Q=\sum_{i=1,2}\big(Q_i(s,\delta)-y\big)^2,\quad y=r+\gamma\,(1-d)\min_i \bar Q_i\big(s',\,\bar\pi(s')+\varepsilon\big),\qquad L_\pi=-\,Q_1\big(s,\pi_\theta(s)\big)$$</p>
 <p>The flow weights never appear in either loss. <b>Residual scale</b> \(\alpha\) is the safety dial: it bounds how far the correction can push (a delta of 1 moves the action by \(\alpha\)).
 A small \(\alpha\) is safe but can only polish the base; a large one can repair a bad base but also break a good one.</p>

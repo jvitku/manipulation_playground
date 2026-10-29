@@ -13,7 +13,7 @@ the obstacle in this repo's tutorial run). A generative head is trained on the s
 average.</p>
 
 <h3>The method</h3>
-<p><b>Flow matching</b> (the default head; the convention of pi0 / SmolVLA). Draw noise \(e \sim \mathcal{N}(0, I)\) and a time
+<p><b>Flow matching</b> (the default head; the convention of <a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener" title="pi0: A Vision-Language-Action Flow Model for General Robot Control">pi0</a> / <a href="https://arxiv.org/abs/2506.01844" target="_blank" rel="noopener" title="SmolVLA: A Vision-Language-Action Model for Affordable and Efficient Robotics">SmolVLA</a>). Draw noise \(e \sim \mathcal{N}(0, I)\) and a time
 \(t \in (0, 1]\), and put the expert chunk \(x_0\) and the noise on a straight line:</p>
 <p>$$x_t = t\,e + (1 - t)\,x_0$$</p>
 <p class="ref">\(t = 1\) is pure noise, \(t = 0\) is data.</p>
@@ -27,7 +27,7 @@ distribution onto the data distribution. <b>Sampling</b>: start at \(x = e\) (pu
 <p>$$x \leftarrow x - \frac{1}{K}\, v(x, t)$$</p>
 <p> Each draw of noise
 ends on one mode or the other: the multimodality lives in the noise, not in the network output.</p>
-<p><b>DDPM / DDIM</b> (the alternative head, Diffusion Policy). A cosine schedule noises the chunk,
+<p><b>DDPM / DDIM</b> (the alternative head, <a href="https://arxiv.org/abs/2303.04137" target="_blank" rel="noopener" title="Diffusion Policy: Visuomotor Policy Learning via Action Diffusion">Diffusion Policy</a>). A cosine schedule noises the chunk,
 </p>
 <p>$$x_k = \sqrt{\bar\alpha_k}\, x_0 + \sqrt{1 - \bar\alpha_k}\, e$$</p>
 <p>The

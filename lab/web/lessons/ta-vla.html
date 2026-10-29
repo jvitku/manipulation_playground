@@ -1,8 +1,8 @@
 <h3>The question</h3>
 <p>Can a transformer policy that already sees an image, a sentence and the robot state do better when it also <em>feels</em>?
-<b>TA-VLA</b> (Zhang et&nbsp;al., arXiv&nbsp;2509.07962) answers by turning the recent force/torque history into <b>one extra token</b>
+<b>TA-VLA</b> (<a href="https://arxiv.org/abs/2509.07962" target="_blank" rel="noopener">Zhang et&nbsp;al., arXiv&nbsp;2509.07962</a>) answers by turning the recent force/torque history into <b>one extra token</b>
 and trains the policy to predict the forces its own action chunk will cause. This task is the miniature of that recipe:
-<code>TAVLAMini</code> (<code>src/fvb/ta_tutorial/nets.py</code>), a four-layer, two-stream transformer in the layout of pi0 and SmolVLA,
+<code>TAVLAMini</code> (<code>src/fvb/ta_tutorial/nets.py</code>), a four-layer, two-stream transformer in the layout of <a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener" title="pi0: A Vision-Language-Action Flow Model for General Robot Control">pi0</a> and <a href="https://arxiv.org/abs/2506.01844" target="_blank" rel="noopener" title="SmolVLA: A Vision-Language-Action Model for Affordable and Efficient Robotics">SmolVLA</a>,
 trained from scratch on the contact scene of the earlier tasks &mdash; two holes, four commands (<em>insert into the red hole</em>,
 <em>insert into the blue hole</em>, <em>press gently</em> 2&nbsp;N, <em>press firmly</em> 6&nbsp;N). Everything is in the picture:
 the policy has to <b>read the hole positions from a 32&times;32 image</b>, read the command from words, and feel the surface through

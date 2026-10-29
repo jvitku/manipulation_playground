@@ -25,6 +25,8 @@
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font:14px/1.55 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;padding-block:0 40px;padding-inline:16px}
 a{color:inherit}
+.lesson-body a{color:var(--accent);text-decoration-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+.lesson-body a:hover{text-decoration-color:var(--accent)}
 header.app{max-width:1180px;margin:18px auto 14px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
 header.app h1{font-size:20px;font-weight:700;margin:0;letter-spacing:-.01em}
 header.app h1 a{text-decoration:none}
@@ -113,3 +115,12 @@ svg .arr{stroke:var(--muted);fill:none;marker-end:url(#ah)}
 .lesson details.code[open]>summary{border-bottom:1px solid var(--line)}
 .lesson details.code pre{margin:0;overflow-x:auto}
 .lesson details.code pre code{font:12px/1.5 var(--mono);padding:8px 10px;background:transparent;white-space:pre;display:block}
+/* lesson theory boxes (collapsed <details> with prose, equations and reading links) */
+.lesson details.theory{margin:10px 0;border:1px solid var(--accent);border-radius:8px;background:var(--accent-soft);min-width:0}
+.lesson details.theory>summary{cursor:pointer;padding:6px 10px;font-size:13px;font-weight:600;color:var(--accent)}
+.lesson details.theory[open]>summary{border-bottom:1px solid var(--line)}
+.lesson details.theory>:not(summary){margin-left:12px;margin-right:12px}
+.lesson details.theory>p:last-child,.lesson details.theory>ul:last-child{margin-bottom:10px}
+.lesson details.theory h4{margin:10px 12px 4px;font-size:12.5px}
+.lesson details.theory a{color:var(--accent)}
+.lesson details.theory ul{padding-left:30px}
