@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import lab.tasks  # noqa: F401  (registers the tasks)
@@ -303,6 +303,20 @@ def create_app() -> FastAPI:
         if not f.is_file():
             raise HTTPException(404, "not found")
         return FileResponse(f)
+
+    @app.get("/api/source/{path:path}", response_class=PlainTextResponse)
+    def source(path: str):
+        """Read-only source for the lessons' "whole code" blocks: python files inside the
+        repo's lab/ and src/ trees only (the paths the snippets' data-src attributes use)."""
+        p = (REPO / path).resolve()
+        ok = (
+            p.suffix == ".py"
+            and p.is_file()
+            and any(p.is_relative_to((REPO / d).resolve()) for d in ("lab", "src"))
+        )
+        if not ok:
+            raise HTTPException(404, "not found")
+        return p.read_text()
 
     @app.get("/favicon.ico", include_in_schema=False)
     @app.get("/favicon.svg", include_in_schema=False)

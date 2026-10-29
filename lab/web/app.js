@@ -60,7 +60,7 @@
       const m = c.metrics || {};
       const key = Object.keys(m).find((k) => typeof m[k] === "number");
       const head = key ? ` · ${key} ${Number(m[key]).toPrecision(3)}` : "";
-      select.append(el("option", { value: c.id, text: `step ${fmtInt(c.step)}${c.label ? " · " + c.label : ""}${head} · run ${c.run_id}` }));
+      select.append(el("option", { value: c.id, text: `step ${fmtInt(c.step)}${c.label ? " · " + c.label : ""}${head} · run ${c.run_id}${c.created ? " · " + c.created : ""}` }));
     }
     if (!select.options.length) select.append(el("option", { value: "", text: `no ${taskId} checkpoints yet — train one first` }));
   }
@@ -457,7 +457,7 @@
           const m = c.metrics || {};
           const key = Object.keys(m).find((k) => typeof m[k] === "number");
           const head = key ? ` · ${key} ${Number(m[key]).toPrecision(3)}` : "";
-          ckptSel.append(el("option", { value: c.id, text: `step ${fmtInt(c.step)}${c.label ? " · " + c.label : ""}${head} · run ${c.run_id}` }));
+          ckptSel.append(el("option", { value: c.id, text: `step ${fmtInt(c.step)}${c.label ? " · " + c.label : ""}${head} · run ${c.run_id}${c.created ? " · " + c.created : ""}` }));
         }
         if (!ckptSel.options.length) ckptSel.append(el("option", { value: "", text: "no checkpoints yet — train first" }));
         if (prev) ckptSel.value = prev;
@@ -591,6 +591,78 @@
     });
   }
 
+  // "The whole code": one collapsible after the last snippet holding every source file the
+  // lesson's snippets reference (code[data-src]), fetched lazily from /api/source.
+  function appendWholeCode(container) {
+    const srcs = [...new Set([...container.querySelectorAll("code[data-src]")].map((c) => c.dataset.src))];
+    if (!srcs.length) return;
+    const body = el("div");
+    const d = el("details", { class: "code allcode" },
+      el("summary", { text: `The whole code \u2014 ${srcs.length} file${srcs.length > 1 ? "s" : ""}` }), body);
+    d.addEventListener("toggle", async () => {
+      if (!d.open || d.dataset.loaded) return;
+      d.dataset.loaded = "1";
+      for (const path of srcs) {
+        const code = el("code", { class: "language-python" });
+        body.append(el("h4", { class: "file", text: path }), el("pre", {}, code));
+        try {
+          const r = await fetch("/api/source/" + path);
+          if (!r.ok) throw new Error(String(r.status));
+          code.textContent = await r.text();
+          if (window.hljs) window.hljs.highlightElement(code);
+        } catch (e) {
+          code.textContent = `could not load ${path} (${e.message})`;
+        }
+      }
+    });
+    const snips = container.querySelectorAll("details.code");
+    const last = snips[snips.length - 1];
+    if (last) last.after(d); else container.append(d);
+  }
+
+  // Schematic block details: an svg element with data-i="key" gets a small "i" badge in its
+  // top-right corner; the key looks up {t, html} in the lesson's <script class="blkinfo"> JSON.
+  function wireBlockInfo(container) {
+    const info = {};
+    container.querySelectorAll("script.blkinfo").forEach((sc) => {
+      try { Object.assign(info, JSON.parse(sc.textContent)); } catch (e) { /* bad JSON: no badges */ }
+    });
+    container.querySelectorAll("svg [data-i]").forEach((node) => {
+      const d = info[node.dataset.i];
+      const svg = node.ownerSVGElement;
+      if (!d || !svg) return;
+      let b;
+      try { b = node.getBBox(); } catch (e) { return; }
+      if (!b || !b.width) return;
+      const NS = "http://www.w3.org/2000/svg";
+      const g = document.createElementNS(NS, "g");
+      g.setAttribute("class", "blk-i");
+      g.setAttribute("transform", `translate(${b.x + b.width - 3},${b.y + 3})`);
+      const c = document.createElementNS(NS, "circle");
+      c.setAttribute("r", "7");
+      const t = document.createElementNS(NS, "text");
+      t.setAttribute("text-anchor", "middle");
+      t.setAttribute("y", "3.2");
+      t.textContent = "i";
+      g.append(c, t);
+      g.addEventListener("click", (ev) => { ev.stopPropagation(); showBlockInfo(d); });
+      svg.append(g);
+    });
+  }
+
+  function showBlockInfo(d) {
+    const body = el("div", { class: "body" });
+    body.innerHTML = d.html || ""; // trusted: ships inside our own lesson files
+    const pop = el("div", { class: "blk-pop" },
+      el("button", { class: "x", type: "button", text: "\u00d7", onclick: () => ov.remove() }),
+      el("h4", { text: d.t || "details" }), body);
+    const ov = el("div", { class: "blk-pop-ov", onclick: (e) => { if (e.target === ov) ov.remove(); } }, pop);
+    const esc = (e) => { if (e.key === "Escape") { ov.remove(); document.removeEventListener("keydown", esc); } };
+    document.addEventListener("keydown", esc);
+    document.body.append(ov);
+    typesetMath(body);
+  }
+
   async function loadLesson(url, container) {
     try {
       const r = await fetch(url);
@@ -600,6 +672,8 @@
       else container.replaceChildren(...text.split(/\n{2,}/).map((p) => el("p", { text: p })));
       typesetMath(container);
       highlightSnippets(container);
+      appendWholeCode(container);
+      wireBlockInfo(container);
     } catch (e) {
       container.replaceChildren(el("p", { class: "note", text: "lesson coming soon" }));
     }
