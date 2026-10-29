@@ -17,6 +17,30 @@ sees what a successful insertion is worth from step&nbsp;1 instead of waiting fo
 <p class="ref">The Q term is normalised by the batch mean of \(|Q|\), so \(\lambda\) has a meaning that does not depend on the reward scale. The <b>floor of 1</b> in the
 denominator is a repo fix (journal &ldquo;R1-fix&rdquo;): early on \(|Q|\) is near zero and dividing by it blows the Q term up into noise. \(q_w\)&nbsp;=&nbsp;1 in training.</p>
 
+<details class="theory"><summary>Theory &mdash; the imitation anchor, and the scale of &lambda;</summary>
+<p>Plain TD3 fails here because nothing in it can <em>find</em> the behaviour it must evaluate. The +50 bonus sits behind a 0.5&nbsp;mm
+needle that Gaussian exploration does not thread by luck, while random behaviour reliably finds the two cheap optima &mdash; diving (depth progress,
+then the abort) and hovering (shaping without risk). A critic can only rank what the buffer contains, so the first basin a run falls into is the one
+it defends. Demonstrations change that: from step&nbsp;1 the critic sees what a successful insertion is worth and which states lead there.</p>
+<p>They do not fix the actor. Away from the demonstrated actions the critic extrapolates, and an actor maximising \(Q\) gravitates to exactly the
+actions where that extrapolation errs upward &mdash; the previous lesson&rsquo;s overestimation loop, which demos alone do not close. The BC term is the
+counterweight: on the expert&rsquo;s states it pulls \(\pi\) toward the expert&rsquo;s actions, a trust region around the only region where success is
+proven. That single term is the whole of TD3+BC, and it matches far more elaborate offline-RL machinery. (This task is actually online &mdash; demos share the buffer with fresh exploration &mdash; the setting RLPD later systematised.)</p>
+<p>The normalisation keeps the two losses on one scale. The imitation error is bounded (actions live in \([-1,1]^3\)), but \(|Q|\) grows with the
+return scale as the critic learns, so a fixed trade-off would drift toward the Q term. TD3+BC measures the Q term in units of its own batch mean:</p>
+<p>$$L_{\text{actor}}=-\lambda\,\overline{Q_1(o,\pi(o))}+\overline{\big\|\pi(o_d)-a_d\big\|^2},\qquad \lambda=\frac{\alpha}{\overline{\big|Q_1(o,\pi(o))\big|}}$$</p>
+<p>The repo folds the \(1/\overline{|Q_1|}\) into the Q term, puts the schedule \(\lambda(t)\) on the BC weight instead (the same balance, one
+moving part), and floors the denominator at 1: a fresh critic has \(\overline{|Q_1|}\approx 0\), and dividing by it would amplify noise exactly
+when the actor should listen to the demonstrations.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2106.06860" target="_blank" rel="noopener">Fujimoto &amp; Gu, &ldquo;A Minimalist Approach to Offline Reinforcement Learning&rdquo; (2021)</a> &mdash; TD3+BC: the one-term recipe and the &lambda; normalisation used here.</li>
+<li><a href="https://arxiv.org/abs/2005.01643" target="_blank" rel="noopener">Levine et al., &ldquo;Offline Reinforcement Learning: Tutorial, Review, and Perspectives on Open Problems&rdquo; (2020)</a> &mdash; why critics extrapolate off the data, and the catalogue of remedies the BC anchor competes with.</li>
+<li><a href="https://arxiv.org/abs/2302.02948" target="_blank" rel="noopener">Ball et al., &ldquo;Efficient Online Reinforcement Learning with Offline Data&rdquo; (2023)</a> &mdash; RLPD: the online-RL-with-demos-in-the-buffer setting this task actually runs, studied systematically.</li>
+<li><a href="https://bair.berkeley.edu/blog/2020/12/07/offline/" target="_blank" rel="noopener">Kumar &amp; Singh, &ldquo;Offline Reinforcement Learning: How Conservative Algorithms Can Enable New Applications&rdquo; (BAIR blog, 2020)</a> &mdash; a readable tour of the distribution-shift problem behind the anchor.</li>
+</ul>
+</details>
+
 <h3>The decay &lambda;(t), and why it must not reach zero</h3>
 <svg viewBox="0 0 640 230" role="img" aria-label="Imitation weight lambda of t falls linearly from 2.5 to a floor of 1.0 at the decay step and stays there; the R1 variant continues to 0" style="width:100%;max-width:640px;font-family:var(--mono);font-size:11px">
   <line x1="60" y1="190" x2="610" y2="190" stroke="var(--muted)"/>
@@ -51,7 +75,7 @@ of 1.0 (R1b) fixed that, and is the whole difference between a mean of 38.8&nbsp
 <tr><td>R1: demos + BC 2.5 &rarr; 0</td><td>20, 6, 19, 37, 15 &nbsp; (38.8&nbsp;%)</td><td>collapse when &lambda; hits 0</td></tr>
 <tr><td><b>R1b: demos + BC 2.5 &rarr; floor 1.0</b></td><td>45, 7, 44, 6, 44 &nbsp; (58.4&nbsp;%)</td><td><b>kept</b></td></tr>
 <tr><td>R2: asymmetric critic that sees the hole</td><td>12, 17, 7, 6, 13 &nbsp; (22&nbsp;%)</td><td>no gain, reverted</td></tr>
-<tr><td>R3a/c: stronger BC 5.0 &rarr; 2.5</td><td>same 5/10 seeds &ge; 80&nbsp;%, same 62.2&nbsp;% over 10 seeds</td><td>imitation strength is not the lever</td></tr>
+<tr><td>R3a/c: stronger BC 5.0 &rarr; 2.5</td><td>also 5/10 seeds &ge; 80&nbsp;% (not the same five), same 62.2&nbsp;% mean over 10 seeds</td><td>imitation strength is not the lever</td></tr>
 <tr><td>R3d: rim speed limit</td><td>3/10 seeds &ge; 80&nbsp;%, mean 47.4&nbsp;%</td><td>failures turn into hover-timeouts: the dive was a symptom</td></tr>
 <tr><td>R3e: lateral actions as positions</td><td>&le; 19/50</td><td>too imprecise for 0.5&nbsp;mm clearance</td></tr>
 <tr><td>R3: offline pretraining on the demos (probe)</td><td>pretrained actors abort in 10/10 episodes</td><td>the expert&rsquo;s own rim contact (35&ndash;42&nbsp;N) sits on a knife edge against the 60&nbsp;N abort</td></tr>
@@ -91,7 +115,7 @@ out["bc_weight"] = w</code></pre></details>
 
 <h3>What to watch</h3>
 <ul>
-<li><b>Demonstrations collected</b> first (about a minute at the default). Then the <em>Imitation</em> chart: <code>bc_loss</code> should be small and
+<li><b>Demonstrations collected</b> first (a minute or two at the default). Then the <em>Imitation</em> chart: <code>bc_loss</code> should be small and
 \(\lambda\) falls from 2.5 to 1.0 and stays there.</li>
 <li><b>Success rate</b>: with the demos it should leave zero early; a collapse later (the R1 pattern) is the sign that the imitation anchor is too weak.</li>
 <li><b>Actor loss</b> now includes the imitation term, so it no longer simply falls as Q rises.</li>

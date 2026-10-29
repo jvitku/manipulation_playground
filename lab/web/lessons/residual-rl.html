@@ -12,7 +12,7 @@ and a regularisation weight to tune.</p>
 
 <h3>Why a residual is the pragmatic first rung</h3>
 <p>The simplest way to leave the generative model alone is to <b>not touch it</b>. Freeze the flow policy and learn a small, cheap, ordinary actor that adds a correction:</p>
-<p>$$a_t=\operatorname{clip}\big(a^{\text{base}}_t+\alpha\,\delta_t\big),\qquad \delta_t=\pi_\theta\big(o_t,\;a^{\text{base}}_t\big)\in[-1,1]^2$$</p>
+<p>$$a_t=\operatorname{clip}\big(a^{\text{base}}_t+\alpha\,\delta_t,\,-1,\,1\big),\qquad \delta_t=\pi_\theta\big(o_t,\;a^{\text{base}}_t\big)\in[-1,1]^2$$</p>
 <svg viewBox="0 0 660 250" role="img" aria-label="Schematic: the observation goes into a frozen flow policy and into a residual actor which also sees the base action; their outputs are summed with the scale alpha and clipped; TD3 critics train only the residual actor" style="width:100%;max-width:660px;font-family:var(--mono);font-size:11px">
   <defs><marker id="rrA" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--muted)"/></marker></defs>
   <rect x="10" y="95" width="70" height="40" rx="6" fill="var(--chip)" stroke="var(--line)"/>
@@ -40,6 +40,30 @@ and a regularisation weight to tune.</p>
 <p class="ref">The critics see the same input \([o,a^{\text{base}}]\) and the stored action is \(\delta\) (not the sum), so the learning problem is an ordinary continuous-control TD3 problem
 whose &ldquo;environment&rdquo; happens to contain a good controller. The last layer of the actor starts near zero, so training <b>begins at the base policy&rsquo;s own
 behaviour</b> and can only walk away from it if the critic says so.</p>
+
+<details class="theory"><summary>Theory &mdash; why a residual learns fast and fails safe</summary>
+<p>RL from scratch pays twice: exploration has to <em>find</em> rewarding behaviour before the critic has anything to rank (task&nbsp;11&rsquo;s seed
+lottery), and the critic then has to be right everywhere the actor can wander. A competent frozen base shrinks both bills. Exploration starts where the base puts the system &mdash; at the hole, in contact &mdash; so reward flows from the first episodes; and the
+function to learn is not &ldquo;how to insert&rdquo; but &ldquo;how the base&rsquo;s action should be nudged&rdquo;, a small correction evaluated only over the
+narrow tube of states the base actually visits.</p>
+<p>$$a=\operatorname{clip}\big(a^{\text{base}}+\alpha\,\delta,\,-1,\,1\big),\qquad \delta=\pi_\theta\big([\,o,\;a^{\text{base}}\,]\big)\in[-1,1]^2$$</p>
+<p>The bound is the safety argument: clipping is 1-Lipschitz, so the executed action is never more than \(\alpha\) per axis from what the base alone
+would have done, whatever the critic believes &mdash; and the near-zero-initialised last layer makes \(\delta\approx 0\) at the start, so the worst
+early policy is essentially the base itself, not a random network. Conditioning the actor and the critics on \(a^{\text{base}}\) matters too: the
+chunked flow draws its action from a sampled plan, so the observation alone does not determine what the base is about to do; feeding the actual
+\(a^{\text{base}}\) in makes the correction a well-posed decision problem.</p>
+<p>The same \(\alpha\) is the method&rsquo;s ceiling. A base error larger than \(\alpha\) cannot be corrected, and a residual strong enough to repair a
+bad base can also drag a good one off its own training distribution &mdash; the frozen base keeps acting as if its plan were being followed, and the
+further the residual pushes the state, the less the base&rsquo;s actions fit it. Residual RL is the right first rung when the base is decent and the
+defect is local; it is not a route from a broken policy to a good one.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/1812.03201" target="_blank" rel="noopener">Johannink et al., &ldquo;Residual Reinforcement Learning for Robot Control&rdquo; (2018)</a> &mdash; residual RL on a real-robot block-insertion task, with a hand-designed controller as the base.</li>
+<li><a href="https://arxiv.org/abs/1812.06298" target="_blank" rel="noopener">Silver et al., &ldquo;Residual Policy Learning&rdquo; (2018)</a> &mdash; the same idea stated generally, with the analysis of when improving a policy&rsquo;s residual beats learning from scratch.</li>
+<li><a href="https://arxiv.org/abs/1906.05841" target="_blank" rel="noopener">Schoettler et al., &ldquo;Deep Reinforcement Learning for Industrial Insertion Tasks&rdquo; (2019)</a> &mdash; residual RL with vision and force on sub-millimetre industrial insertions, the setting closest to this task.</li>
+<li><a href="https://arxiv.org/abs/2303.04137" target="_blank" rel="noopener">Chi et al., &ldquo;Diffusion Policy&rdquo; (2023)</a> &mdash; the kind of generative imitation policy used as the frozen base here, and why fine-tuning one directly is awkward.</li>
+</ul>
+</details>
 
 <h3>What gets trained</h3>
 <p>The standard TD3 pair (<a href="https://arxiv.org/abs/1802.09477" target="_blank" rel="noopener" title="Addressing Function Approximation Error in Actor-Critic Methods">Fujimoto et al., 2018</a>; the repo&rsquo;s <code>fvb.policy.td3</code>, the same one task&nbsp;11 (td3) uses) with no demonstrations and no imitation term:</p>

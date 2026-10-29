@@ -4,7 +4,8 @@ many ways to make that vector. This task trains the <b>same</b> flow-matching po
 demonstrations and the same closed-loop test scenes, changing only how the command is encoded, so the four success curves are
 directly comparable. The commands are the four of the contact scene: <em>insert into the red hole</em>, <em>insert into the
 blue hole</em>, <em>press gently</em> (2&nbsp;N) and <em>press firmly</em> (6&nbsp;N). There is no camera: the network sees the
-peg position, the last 10 force readings, and the command.</p>
+peg position, the perceived positions of the two holes (on by default &mdash; see the knobs below), the last 10 force readings,
+and the command.</p>
 
 <h3>The four encodings</h3>
 <ul>
@@ -69,6 +70,33 @@ while not env.done.all():
     a = pol.act(c2d.t4_obs(env))
     env.step(a)</code></pre></details>
 
+<details class="theory"><summary>Theory &mdash; what a conditioning code decides</summary>
+<p>The command vector \(c\) enters the network once, concatenated with the state and force history, so the only thing the four
+arms change is the <em>geometry</em> the first layer sees &mdash; and that geometry decides what is easy to learn. A one-hot gives
+each command its own orthogonal axis: the first layer holds one independent weight column per command, nothing is shared, and the
+width grows with every command added. The 2-bit code carries the same information in half the width, but its geometry is an
+accident of the numbering: commands that share a bit share a direction whether or not they share anything else, and the network
+must carve XOR-like regions to undo it. Information content is not the issue &mdash; representation is.</p>
+<p>The learned embedding decouples width from command count. Each word is a trainable vector and the command is the masked mean of
+its words,
+$$c = \frac{\sum_i m_i\, E_{w_i}}{\sum_i m_i},$$
+with \(E\) the table and \(m\) zero on the padding. The rows of \(E\) receive gradient from the same flow loss as the policy, so
+commands that demand similar behaviour are free to end up nearby &mdash; and shared words (&ldquo;insert&rdquo;,
+&ldquo;press&rdquo;) are literally shared parameters, so data for one command shapes the code of another. That is the property
+that scales: with many commands, swap the trained-from-scratch table for a pretrained language encoder and a new phrasing arrives
+already placed in a meaningful space (BC-Z conditions on frozen sentence embeddings for exactly this; the VLA lessons' language
+path is the same idea). The continuous code is the opposite limit: a human has already resolved the command into physical
+quantities, so the network only has to follow numbers &mdash; at the price of needing that resolver, and its perception of the
+holes, at run time.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/1301.3781" target="_blank" rel="noopener">Mikolov et&nbsp;al., &ldquo;Efficient Estimation of Word Representations in Vector Space&rdquo; (2013)</a> &mdash; word2vec: the original case that learned word vectors pick up usable geometry.</li>
+<li><a href="https://jalammar.github.io/illustrated-word2vec/" target="_blank" rel="noopener">Jay Alammar, &ldquo;The Illustrated Word2vec&rdquo;</a> &mdash; the same idea drawn out, the gentlest way in.</li>
+<li><a href="https://arxiv.org/abs/1709.07871" target="_blank" rel="noopener">Perez et&nbsp;al., &ldquo;FiLM: Visual Reasoning with a General Conditioning Layer&rdquo; (2017)</a> &mdash; the main alternative to concatenation: conditioning as a learned per-feature scale and shift.</li>
+<li><a href="https://arxiv.org/abs/2202.02005" target="_blank" rel="noopener">Jang et&nbsp;al., &ldquo;BC-Z: Zero-Shot Task Generalization with Robotic Imitation Learning&rdquo; (2022)</a> &mdash; conditioning a robot policy on frozen language embeddings, and what that buys for unseen commands.</li>
+</ul>
+</details>
+
 <h3>The architecture</h3>
 <svg viewBox="0 0 760 330" role="img" aria-label="Four alternative command-encoding blocks concatenated with state and force history into the MLPDenoiser, then the flow loss node" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
   <defs>
@@ -92,9 +120,11 @@ while not env.done.all():
   <rect x="10" y="222" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
   <text x="95" y="241" text-anchor="middle" fill="var(--ink)">binary (2), as is</text>
   <rect x="10" y="258" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
-  <text x="95" y="277" text-anchor="middle" fill="var(--ink)">tokens &#8594; nn.Embedding (d), mean</text>
+  <text x="95" y="270" text-anchor="middle" fill="var(--ink)">tokens &#8594; nn.Embedding (d)</text>
+  <text x="95" y="283" text-anchor="middle" fill="var(--muted)">mean over tokens</text>
   <rect x="10" y="294" width="170" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
-  <text x="95" y="313" text-anchor="middle" fill="var(--ink)">[x, force N, insert] z-scored</text>
+  <text x="95" y="306" text-anchor="middle" fill="var(--ink)">[x, force N, insert]</text>
+  <text x="95" y="319" text-anchor="middle" fill="var(--muted)">z-scored</text>
   <line x1="180" y1="30" x2="296" y2="130" stroke="var(--muted)" marker-end="url(#emA)"/>
   <line x1="180" y1="80" x2="296" y2="138" stroke="var(--muted)" marker-end="url(#emA)"/>
   <line x1="180" y1="130" x2="296" y2="146" stroke="var(--muted)" marker-end="url(#emA)"/>
@@ -122,7 +152,8 @@ while not env.done.all():
   <rect x="680" y="170" width="72" height="30" rx="15" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
   <text x="716" y="189" text-anchor="middle" fill="var(--loss)" font-weight="700">L (loss)</text>
   <text x="716" y="162" text-anchor="middle" fill="var(--loss)">&#8214;v &minus; u&#8214;&sup2;</text>
-  <text x="400" y="300" text-anchor="middle" fill="var(--muted)">the embedding table (thick block) receives the loss gradient too: it is trained with the policy</text>
+  <text x="460" y="296" text-anchor="middle" fill="var(--muted)">the embedding table (thick block) receives the</text>
+  <text x="460" y="311" text-anchor="middle" fill="var(--muted)">loss gradient too: it is trained with the policy</text>
 </svg>
 <p class="ref">Exactly one encoding block feeds the network in an arm. All arms use the same loss as the earlier tasks,
 $$L = \left\lVert v_\theta(x_t, t, s, c) - (e - x_0) \right\rVert^2,\qquad x_t = t\,e + (1-t)\,x_0,$$

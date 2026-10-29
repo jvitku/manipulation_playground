@@ -37,6 +37,36 @@ network predicts the <b>noise</b> \(\hat\epsilon\):</p>
 deterministic DDIM over a subsequence of \(K\) of the 100 training timesteps. Same idea, curved path, different
 target.</p>
 
+<details class="theory"><summary>Theory &mdash; regressing to the marginal velocity field</summary>
+<p>What the head learns is a transport: a velocity field whose ODE carries the noise distribution onto the expert
+distribution. Sampling integrates that ODE,</p>
+<p>$$\frac{dx}{dt} = v(x, t), \qquad x(1) = e \sim \mathcal{N}(0, I) \;\longrightarrow\; x(0) \sim p_{\text{data}},$$</p>
+<p>run here from \(t = 1\) (noise) down to \(t = 0\) (data) &mdash; the pi0 / SmolVLA convention this code follows
+(Lipman et al. orient \(t\) the other way; only signs change). The true marginal field is intractable: it depends on
+the data distribution you are trying to learn. Flow matching's central result is that it never has to be computed.
+Regress the per-pair velocity \(e - x_0\) of each straight line, and because the L2-optimal prediction at a point is
+a conditional expectation, the minimiser is</p>
+<p>$$v^{*}(x, t) = \mathbb{E}\!\left[\,e - x_0 \;\middle|\; x_t = x\,\right],$$</p>
+<p>the marginal field itself. That is why a loss that can never reach zero &mdash; one output per \((x_t, t)\), many
+valid targets &mdash; still trains the right object, and why the loss curve flattens while the behaviour keeps
+sharpening. The multimodality never has to fit into a single network output; it lives in which basin the initial
+noise falls into.</p>
+<p>Straight conditional paths are a choice (rectified flow): the target velocity is constant in \(t\), and where the
+data is locally unimodal the marginal field is nearly straight too, so a few Euler steps integrate it accurately
+&mdash; the knee you measure in the K-sweep. Where the modes split, the field bends, and extra steps buy accuracy.
+DDPM is the same conditional regression along a curved variance-preserving path with the noise as target, integrated
+by DDIM; the path and parameterisation differ, the principle does not. The \(\text{Beta}(1.5, 1)\) draw tilts
+training toward noisy \(t\), where the field is still deciding between modes &mdash; pi0's weighting.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2210.02747" target="_blank" rel="noopener">Lipman et al., "Flow Matching for Generative Modeling" (2022)</a> &mdash; the equivalence of the conditional and marginal objectives that this lesson rests on.</li>
+<li><a href="https://arxiv.org/abs/2209.03003" target="_blank" rel="noopener">Liu et al., "Flow Straight and Fast" (2022)</a> &mdash; rectified flow: why straight paths let a few integration steps work.</li>
+<li><a href="https://arxiv.org/abs/2006.11239" target="_blank" rel="noopener">Ho et al., "Denoising Diffusion Probabilistic Models" (2020)</a> &mdash; the objective the alternative DDPM head trains.</li>
+<li><a href="https://arxiv.org/abs/2412.06264" target="_blank" rel="noopener">Lipman et al., "Flow Matching Guide and Code" (2024)</a> &mdash; a systematic reference with code; useful for the zoo of time conventions and samplers.</li>
+<li><a href="https://diffusionflow.github.io/" target="_blank" rel="noopener">"Diffusion Meets Flow Matching" (2024)</a> &mdash; shows the two heads of this lesson are two parameterisations of one method.</li>
+</ul>
+</details>
+
 <h3>The architecture</h3>
 <svg viewBox="0 0 760 330" role="img" aria-label="Flow matching: interpolation, network predicting v, loss node; DDPM variant; sampling" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
   <defs>
@@ -48,25 +78,25 @@ target.</p>
     </marker>
   </defs>
   <!-- inputs: x0 and noise -->
-  <rect x="10" y="20" width="110" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="20" width="110" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="x0"/>
   <text x="65" y="36" text-anchor="middle" fill="var(--ink)">x&#8320; expert chunk</text>
   <text x="65" y="50" text-anchor="middle" fill="var(--muted)">(B, H, 2)</text>
-  <rect x="10" y="84" width="110" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="84" width="110" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="noise"/>
   <text x="65" y="100" text-anchor="middle" fill="var(--ink)">e ~ N(0, I)</text>
   <text x="65" y="114" text-anchor="middle" fill="var(--muted)">(B, H, 2)</text>
-  <rect x="10" y="148" width="110" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="148" width="110" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="t"/>
   <text x="65" y="164" text-anchor="middle" fill="var(--ink)">t ~ Beta(1.5, 1)</text>
   <text x="65" y="178" text-anchor="middle" fill="var(--muted)">(B,)</text>
   <!-- interpolation -->
   <line x1="120" y1="39" x2="168" y2="86" stroke="var(--muted)" marker-end="url(#fmA)"/>
   <line x1="120" y1="103" x2="168" y2="103" stroke="var(--muted)" marker-end="url(#fmA)"/>
   <line x1="120" y1="167" x2="168" y2="120" stroke="var(--muted)" marker-end="url(#fmA)"/>
-  <rect x="170" y="76" width="150" height="54" rx="9" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="170" y="76" width="150" height="54" rx="9" fill="var(--chip)" stroke="var(--line)" data-i="interp"/>
   <text x="245" y="97" text-anchor="middle" fill="var(--ink)">interpolate</text>
   <text x="245" y="114" text-anchor="middle" fill="var(--ink)">x_t = t&middot;e + (1&minus;t)&middot;x&#8320;</text>
   <!-- network -->
   <line x1="320" y1="103" x2="358" y2="103" stroke="var(--muted)" marker-end="url(#fmA)"/>
-  <rect x="360" y="68" width="150" height="70" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="360" y="68" width="150" height="70" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="net"/>
   <text x="435" y="92" text-anchor="middle" fill="var(--ink)">MLPDenoiser</text>
   <text x="435" y="108" text-anchor="middle" fill="var(--muted)">(x_t, t embed, obs)</text>
   <text x="435" y="124" text-anchor="middle" fill="var(--muted)">4 &times; Linear(512) + GELU</text>
@@ -74,11 +104,11 @@ target.</p>
   <line x1="120" y1="167" x2="360" y2="130" stroke="var(--muted)" stroke-dasharray="2 3" marker-end="url(#fmA)"/>
   <!-- v -->
   <line x1="510" y1="103" x2="558" y2="103" stroke="var(--muted)" marker-end="url(#fmA)"/>
-  <rect x="560" y="84" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="560" y="84" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="v"/>
   <text x="605" y="100" text-anchor="middle" fill="var(--ink)">v (predicted</text>
   <text x="605" y="114" text-anchor="middle" fill="var(--ink)">velocity)</text>
   <!-- target velocity -->
-  <rect x="560" y="176" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="560" y="176" width="90" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="u"/>
   <text x="605" y="192" text-anchor="middle" fill="var(--ink)">u = e &minus; x&#8320;</text>
   <text x="605" y="206" text-anchor="middle" fill="var(--muted)">(target)</text>
   <line x1="65" y1="58" x2="65" y2="230" stroke="var(--muted)" stroke-dasharray="2 3"/>
@@ -87,16 +117,16 @@ target.</p>
   <!-- loss node on the velocity comparison -->
   <line x1="605" y1="122" x2="690" y2="142" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#fmL)"/>
   <line x1="605" y1="176" x2="690" y2="158" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#fmL)"/>
-  <rect x="660" y="136" width="90" height="32" rx="16" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="660" y="136" width="90" height="32" rx="16" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="loss"/>
   <text x="705" y="157" text-anchor="middle" fill="var(--loss)" font-weight="700">L (loss)</text>
   <text x="705" y="125" text-anchor="middle" fill="var(--loss)">&#8214;v &minus; u&#8214;&sup2;</text>
   <!-- DDPM variant -->
-  <rect x="10" y="256" width="400" height="58" rx="9" fill="none" stroke="var(--line)" stroke-dasharray="4 3"/>
+  <rect x="10" y="256" width="400" height="58" rx="9" fill="none" stroke="var(--line)" stroke-dasharray="4 3" data-i="ddpm"/>
   <text x="20" y="274" fill="var(--ink)" font-weight="700">DDPM head (same net, other target)</text>
   <text x="20" y="291" fill="var(--muted)">x_k = &radic;&#x0101;&middot;x&#8320; + &radic;(1&minus;&#x0101;)&middot;e  &#8594;  net predicts &epsilon;  &#8594;  L = &#8214;&epsilon; &minus; e&#8214;&sup2;</text>
   <text x="20" y="306" fill="var(--muted)">sample: K DDIM steps over the 100-step cosine schedule</text>
   <!-- sampling -->
-  <rect x="430" y="256" width="320" height="58" rx="9" fill="var(--good-soft)" stroke="var(--good)"/>
+  <rect x="430" y="256" width="320" height="58" rx="9" fill="var(--good-soft)" stroke="var(--good)" data-i="sample"/>
   <text x="440" y="274" fill="var(--ink)" font-weight="700">sample (flow): K Euler steps from pure noise</text>
   <text x="440" y="291" fill="var(--muted)">x &#8592; e;  repeat K times:  x &#8592; x &minus; (1/K)&middot;v(x, t)</text>
   <text x="440" y="306" fill="var(--muted)">t runs 1 &#8594; 0; the result is the action chunk</text>
@@ -165,3 +195,5 @@ played open loop before a fresh sample is drawn (clamped to the chunk length). E
 keeps the policy reactive.</li>
 <li><b>Expert noise</b>: jitter on the demonstrated actions; blurs the modes the field has to resolve.</li>
 </ul>
+
+<script type="application/json" class="blkinfo">{"x0": {"t": "x₀ — the expert action chunk", "html": "<p><b>Purpose:</b> the ground truth the model learns to reach: one expert action chunk, actions scaled to [−1, 1].</p><p><b>Shape:</b> <code>(B, H, 2)</code> — B chunks per batch, H actions per chunk, 2 action dims (dx, dz).</p><p><b>Updated:</b> drawn fresh every training step from the demo dataset (with the matching <code>obs</code> condition).</p>"}, "noise": {"t": "e — the noise sample", "html": "<p><b>Purpose:</b> the “start point” of the probability path. The model learns the velocity that carries e to x₀; at inference a fresh e is all you start from, and the multimodality lives in which e you drew.</p><p><b>Shape:</b> <code>(B, H, 2)</code>, drawn i.i.d. from N(0, I) every training step.</p>"}, "t": {"t": "t — the path position", "html": "<p><b>Purpose:</b> where on the noise→data line this training example sits (t = 1 pure noise, t = 0 data).</p><p><b>Shape:</b> <code>(B,)</code>, one t per chunk, redrawn every step.</p><p><b>Detail:</b> <code>Beta(1.5, 1)</code> rather than uniform — more weight near t = 1, where the velocity field is hardest to learn.</p>"}, "interp": {"t": "interpolate — build x_t", "html": "<p><b>Purpose:</b> place the training input on the straight line between noise and data: <code>x_t = t·e + (1−t)·x₀</code>.</p><p><b>Shape:</b> <code>(B, H, 2)</code>; pure arithmetic, no parameters, nothing to train.</p><p><b>Updated:</b> recomputed every step from the fresh draws of x₀, e and t.</p>"}, "net": {"t": "MLPDenoiser — the only trained block", "html": "<p><b>Purpose:</b> predict the velocity v that points from noise toward the expert chunk, given where we are (x_t), when we are (t) and what we see (obs).</p><p><b>Shapes:</b> in <code>x_t (B, H, 2)</code> flattened + <code>t embed (B, 64)</code> + <code>obs</code>; 4 × Linear(512) + GELU; out <code>(B, H, 2)</code>.</p><p><b>Updated:</b> every optimizer step (Adam, the form's learning rate). This is the same net the DDPM head trains — only the target changes.</p>"}, "v": {"t": "v — predicted velocity", "html": "<p><b>Purpose:</b> the model's answer: the direction and speed the chunk should move along the path at (x_t, t).</p><p><b>Shape:</b> <code>(B, H, 2)</code>, same as the chunk.</p><p><b>Detail:</b> at inference the same v drives the Euler integration — training and sampling use one function.</p>"}, "u": {"t": "u = e − x₀ — target velocity", "html": "<p><b>Purpose:</b> the true velocity of the straight path: constant along the whole line, which is what makes flow matching a plain regression.</p><p><b>Shape:</b> <code>(B, H, 2)</code>; costs one subtraction, no parameters.</p><p><b>Detail:</b> sign convention matches sampling — x moves by <code>−(1/K)·v</code>, so v ≈ e − x₀ points from data toward noise.</p>"}, "loss": {"t": "L — the flow-matching loss", "html": "<p><b>Purpose:</b> mean squared error <code>‖v − u‖²</code> between predicted and true velocity.</p><p><b>Shape:</b> scalar, averaged over B, H and the 2 action dims (padding positions masked out).</p><p><b>Updated:</b> backpropagated every step; the only gradient source for the net.</p>"}, "ddpm": {"t": "DDPM head — same net, other target", "html": "<p><b>Purpose:</b> the alternative diffusion objective for comparison: noise x₀ with the cosine schedule <code>x_k = √ā·x₀ + √(1−ā)·e</code> and train the same MLP to predict the noise ε.</p><p><b>Updated:</b> every step, exactly like the flow head; pick the head with the form's <i>head</i> knob.</p><p><b>Detail:</b> sampling then needs K DDIM steps over a 100-step schedule — integrating a curved path, vs the flow head's straight one.</p>"}, "sample": {"t": "sampling — K Euler steps", "html": "<p><b>Purpose:</b> inference: start from pure noise <code>x = e</code> and integrate <code>x ← x − (1/K)·v(x, t)</code> as t runs 1 → 0; the result is the action chunk.</p><p><b>Shape:</b> <code>(1, H, 2)</code> per decision; K is the form's <i>sample_steps</i> (default 8).</p><p><b>Updated:</b> runs once per action chunk at evaluation — never during training.</p>"}}</script>

@@ -17,7 +17,7 @@ of the default run is 0.0.</p>
 <p>The loss is the cross-entropy of every target character. Training uses <b>teacher forcing</b>: the decoder is fed
 <code>&lt;bos&gt;</code> followed by the <em>true</em> target characters, shifted right by one, and at every position must predict
 the next one (and finally <code>&lt;eos&gt;</code>), all positions in one parallel pass:</p>
-<p>$$L = -\frac{1}{N}\sum_{t}\log p_\theta\!\left(y_t \mid y_{<t},\, x\right)$$</p>
+<p>$$L = -\frac{1}{N}\sum_{t}\log p_\theta\!\left(y_t \mid y_{&lt;t},\, x\right)$$</p>
 <p class="ref">\(x\) is the source, \(y_t\) the target character at position \(t\), padding positions are ignored. At test time
 there is no target: <code>greedy_decode</code> starts from <code>&lt;bos&gt;</code> alone and feeds back its <em>own</em> most
 likely character until it emits <code>&lt;eos&gt;</code>.</p>
@@ -31,6 +31,36 @@ A = \operatorname{softmax}\!\left(\frac{Q K^{\top}}{\sqrt{d_k}}\right),\qquad \t
 (11 &times; 12 here): row \(t\) says how much of each source character output \(t\) reads. That matrix is the
 <b>alignment</b> the app draws. Nothing else changes from task 6: the same <code>MHA</code> code in
 <code>lab/tasks/minitf.py</code> is called with <code>x_q = X</code> and <code>x_kv = M</code> instead of one input twice.</p>
+
+<details class="theory"><summary>Theory &mdash; the bottleneck, the mask and teacher forcing</summary>
+<p>Before attention, sequence-to-sequence models (Sutskever et&nbsp;al., 2014) compressed the whole source into the
+encoder's final hidden state and decoded everything from that one vector. The summary has fixed capacity while the source
+does not, and translation quality measurably fell with sentence length. Bahdanau et&nbsp;al. (2014) replaced the single
+context with a per-step read of all encoder states:</p>
+<p>$$c = f(x)\ \text{(one vector for every step)}\qquad\longrightarrow\qquad c_t=\sum_{s=1}^{S}\alpha_{t,s}\,m_s\ \text{(one read per output)}$$</p>
+<p>and the \(\alpha_{t,s}\), trained with no alignment labels at all, came out matching human word alignments. That is
+lesson 6's lookup with the query coming from the writer, and the alignment emerges unsupervised for a structural reason:
+the only path from the source into output \(t\) runs through this read, so lowering the loss <em>forces</em> \(W_Q\) and
+\(W_K\) into an alignment &mdash; nothing else can move the information. The Transformer kept the layout: the encoder runs
+once, the decoder re-reads its memory at every layer (here: one CrossBlock).</p>
+<p>Teacher forcing is what makes training parallel: condition every position on the <em>true</em> prefix and all 11
+predictions happen in one pass, instead of a sequential decode per training example. The causal mask keeps that pass
+honest. The decoder input at position \(t{+}1\) is \(y_t\), so without</p>
+<p>$$\text{mask}_{t,t'}=[\,t'\le t\,]\qquad\text{(scores at masked pairs set to }-\infty\text{ before the softmax)}$$</p>
+<p>every position could copy its own target from the slot one to its right: the loss would collapse to zero while greedy
+decoding stayed at chance. The mask also makes the teacher-forced pass compute exactly what step-by-step decoding computes
+&mdash; which is why the app can re-run a decoded example in one pass and show the same matrices. The price of teacher
+forcing is exposure bias: at test time the decoder conditions on its own outputs, a distribution it never saw in training.
+On a task this short and deterministic the mismatch never bites (held-out exact-match reaches 100%); in open-ended
+generation the errors compound.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/1409.0473" target="_blank" rel="noopener">Bahdanau et al., "Neural Machine Translation by Jointly Learning to Align and Translate" (2014)</a> &mdash; the paper that invented this read, with the famous emergent alignment matrices.</li>
+<li><a href="https://arxiv.org/abs/1409.3215" target="_blank" rel="noopener">Sutskever et al., "Sequence to Sequence Learning with Neural Networks" (2014)</a> &mdash; the fixed-vector encoder&ndash;decoder that attention was invented to fix.</li>
+<li><a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Vaswani et al., "Attention Is All You Need" (2017)</a> &mdash; the encoder&ndash;decoder Transformer; this lesson is one layer of its exact decoder wiring.</li>
+<li><a href="https://jalammar.github.io/visualizing-neural-machine-translation-mechanics-of-seq2seq-models-with-attention/" target="_blank" rel="noopener">Jay Alammar, "Visualizing a Neural Machine Translation Model" (2018)</a> &mdash; the seq2seq-with-attention mechanics, animated.</li>
+</ul>
+</details>
 
 <h3>The architecture</h3>
 <svg viewBox="0 0 790 350" role="img" aria-label="Source characters go through embeddings and an encoder block to the memory. The decoder, fed the start token and the target shifted right, runs causal self-attention, then cross-attention whose queries come from the decoder and whose keys and values come from the encoder memory, then an MLP, a linear head and the cross-entropy loss." style="width:100%;max-width:790px;font-family:var(--mono);font-size:11px">
@@ -66,7 +96,7 @@ A = \operatorname{softmax}\!\left(\frac{Q K^{\top}}{\sqrt{d_k}}\right),\qquad \t
   <!-- decoder column -->
   <rect x="320" y="298" width="400" height="40" rx="8" fill="var(--chip)" stroke="var(--line)"/>
   <text x="520" y="315" text-anchor="middle" fill="var(--ink)">&lt;bos&gt; 2 0 2 6 - 1 0 - 2 3 (11 ids)</text>
-  <text x="520" y="329" text-anchor="middle" fill="var(--muted)">training: the true target, shifted right. Inference: its own output</text>
+  <text x="520" y="329" text-anchor="middle" fill="var(--muted)">training: target shifted right; inference: its own output</text>
   <line x1="520" y1="298" x2="520" y2="276" stroke="var(--muted)" marker-end="url(#caA)"/>
   <rect x="320" y="240" width="400" height="34" rx="7" fill="var(--chip)" stroke="var(--line)"/>
   <text x="520" y="261" text-anchor="middle" fill="var(--ink)">char emb + position emb</text>
@@ -126,7 +156,8 @@ def decode(self, dec_in, memory):
         loss = loss_fn(model(src, teacher_inputs(tgt))[0], tgt)
         opt.zero_grad(set_to_none=True)
         loss.backward()
-        opt.step()</code></pre></details>
+        opt.step()
+        sched.step()</code></pre></details>
 <details class="code"><summary>Inference: greedy decoding from BOS</summary><pre><code class="language-python" data-src="lab/tasks/task_crossattn.py">memory, _ = model.encode(src)
 ids = torch.full((src.shape[0], 1), BOS, dtype=torch.long, device=src.device)
 done = torch.zeros(src.shape[0], dtype=torch.bool, device=src.device)

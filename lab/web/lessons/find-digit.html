@@ -32,6 +32,33 @@ the values it brings back must carry <em>where those patches are</em> (the posit
 matched. Nothing in the loss says "look at the digit": the model learns where to look because that is the only way to lower
 the loss.</p>
 
+<details class="theory"><summary>Theory &mdash; learned queries are content-based routing</summary>
+<p>Lesson 6 built the lookup with a query that came from the data; lesson 7's CLS token asked one fixed, learned question
+("what digit is this?"). This task sits exactly between: ten learned question vectors, and the <em>command picks which one
+is asked</em>. That step &mdash; a query selected at run time rather than wired in &mdash; is the pattern several well-known
+architectures are built from. DETR's object queries are a hundred learned vectors that cross-attend into image features
+(after an encoder has contextualised them, as the blocks do here), each emitting one detection; DETR too needs an explicit
+"no object" answer, the sibling of <b>absent</b>. The Perceiver turns the economics of the same read into its whole design:
+\(M\) latent queries reading \(N\) inputs cost \(O(MN)\) instead of self-attention's \(O(N^2)\), so a small learned array
+can read tens of thousands of input elements once, cheaply &mdash; here \(M{=}1\), \(N{=}32\), and the ViT CLS readout is
+the fixed-question case of the same thing.</p>
+<p>The shared mechanism is <b>content-based routing</b>: no output slot has a wired path to a region of the input. Where to
+read is computed per example, by dotting the slot's question against every key &mdash; which is why one checkpoint serves
+ten different commands with one encoder, and why a VLA can be told at inference time what to attend to. One detail decides
+whether routing can also answer <em>where</em>. The head hands the readout only the mixture</p>
+<p>$$\text{out}=\sum_{i=1}^{32}\alpha_i\,v_i,$$</p>
+<p>never the weights \(\alpha_i\) themselves &mdash; a weighted average has no patch index in it. So finding the right
+patches is useless unless position rides along in the values; attention <em>locates</em>, but the values must
+<em>report</em> the location. That is the deeper reason the learned position vectors must survive into \(X\): take them
+away and the model could still say "present", but left against right would be undecidable from the returned vector.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2005.12872" target="_blank" rel="noopener">Carion et al., "End-to-End Object Detection with Transformers" (DETR, 2020)</a> &mdash; learned object queries as command tokens, "no object" included.</li>
+<li><a href="https://arxiv.org/abs/2103.03206" target="_blank" rel="noopener">Jaegle et al., "Perceiver: General Perception with Iterative Attention" (2021)</a> &mdash; cross-attention from a small latent array as a read-out bottleneck over huge inputs.</li>
+<li><a href="https://arxiv.org/abs/2010.11929" target="_blank" rel="noopener">Dosovitskiy et al., "An Image is Worth 16x16 Words" (ViT, 2020)</a> &mdash; the CLS readout this lesson's query generalises.</li>
+</ul>
+</details>
+
 <h3>The architecture</h3>
 <svg viewBox="0 0 760 300" role="img" aria-label="Canvas cut into 4 by 8 patches, patch tokens through self-attention blocks, a query token embedded from the class cross-attends over the patch tokens, the readout goes through a linear head to left, right or absent, and the loss sits on that answer" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
   <defs>
@@ -55,7 +82,7 @@ the loss.</p>
   <line x1="282" y1="72" x2="310" y2="72" stroke="var(--muted)" marker-end="url(#fdA)"/>
   <rect x="312" y="44" width="116" height="56" rx="8" fill="var(--chip)" stroke="var(--line)"/>
   <text x="370" y="64" text-anchor="middle" fill="var(--ink)">Block x depth</text>
-  <text x="370" y="80" text-anchor="middle" fill="var(--muted)">self-attention + MLP</text>
+  <text x="370" y="80" text-anchor="middle" fill="var(--muted)">self-attn + MLP</text>
   <text x="370" y="93" text-anchor="middle" fill="var(--muted)">patch tokens X</text>
   <!-- query token -->
   <text x="60" y="176" text-anchor="middle" fill="var(--ink)">query: "find the 4"</text>
@@ -98,7 +125,8 @@ logits, _ = model(norm(cv).to(dev), torch.as_tensor(q).to(dev))
 loss = F.cross_entropy(logits, torch.as_tensor(t).to(dev))
 opt.zero_grad(set_to_none=True)
 loss.backward()
-opt.step()</code></pre></details>
+opt.step()
+sched.step()</code></pre></details>
 <details class="code"><summary>Inference: predict and score</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py">    logits, a = model(x, torch.as_tensor(query[i : i + 500]).to(dev))
     probs.append(logits.softmax(-1).cpu())
     attns.append(a[:, :, 0].cpu())

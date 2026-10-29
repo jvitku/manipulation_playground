@@ -16,10 +16,38 @@ jitter on every demonstrated action.</p>
 loss, with the padding mask for chunks that run past the end of an episode:</p>
 <p>$$L = \frac{\sum_h m_h \cdot \operatorname{mean}_d\!\left[(\hat a_{h,d} - a^*_{h,d})^2\right]}{\sum_h m_h}$$</p>
 <p class="ref">where \(m_h\) is the padding mask, \(\hat a\) the predicted chunk and \(a^*\) the expert chunk.</p>
-<p>The network is the same one the later tasks use, but it is fed zeros instead of a noisy chunk and a zero time
-embedding, so it cannot do anything except map the observation to one answer. Minimising squared error then makes
+<p>The network is the same one the later tasks use, but it is fed zeros instead of a noisy chunk, and the time
+embedding is fixed at \(t = 0\), so it cannot do anything except map the observation to one answer. Minimising squared error then makes
 that answer the conditional <b>mean</b> of the expert's actions. With two equally likely modes at \(c - 0.5\) and
 \(c + 0.5\), the mean is \(c\): straight into the obstacle.</p>
+
+<details class="theory"><summary>Theory &mdash; the loss picks the estimator</summary>
+<p>Behaviour cloning turns control into supervised learning, and the loss then decides <em>which</em> statistic of
+the expert the network becomes. Squared error is not a neutral default: for each observation, the action that
+minimises the expected squared error is the conditional mean,</p>
+<p>$$\arg\min_{a}\ \mathbb{E}\!\left[\lVert a - a^{*}\rVert^{2} \mid s\right] \;=\; \mathbb{E}\!\left[a^{*} \mid s\right],$$</p>
+<p>which is exactly the quantity <code>Regression</code> trains the denoiser to output. The mean is the right answer
+only when the expert's conditional distribution has one peak. In T1 it has two, so the optimum is
+\(\tfrac12(c - 0.5) + \tfrac12(c + 0.5) = c\) &mdash; an action no expert ever demonstrated. More data or a bigger
+network cannot help: the network is converging to precisely what the loss asks for. Swapping the loss moves the
+failure without removing it &mdash; L1 regression gives the conditional median, which for two symmetric modes still
+sits between them, and a Gaussian likelihood adds a variance around one peak. The structural fixes either score
+actions instead of regressing them (implicit BC's energy-based model), sample from the distribution (the flow and
+diffusion heads of the next lesson), or keep regression but route the mode through a latent variable (ACT's CVAE).</p>
+<p>Two design choices here are deliberate. The baseline reuses the <em>same</em> MLPDenoiser as the generative heads
+&mdash; zeros for the noisy chunk, the \(t = 0\) embedding &mdash; so any difference you measure against the next
+lesson is attributable to the head alone, not to capacity. And actions are predicted in chunks because single-step
+policies compound their own errors: each small deviation drifts the policy into states slightly further from the
+data, where the next prediction is worse. A chunk cuts the number of decisions per episode; its price, less
+reactivity, returns as a knob in the final lesson.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2109.00137" target="_blank" rel="noopener">Florence et al., "Implicit Behavioral Cloning" (2021)</a> &mdash; measures this failure across robot tasks and replaces regression with energy-based action scoring.</li>
+<li><a href="https://arxiv.org/abs/2303.04137" target="_blank" rel="noopener">Chi et al., "Diffusion Policy" (2023)</a> &mdash; the generative-head fix this lab builds toward, with the same multimodality argument.</li>
+<li><a href="https://arxiv.org/abs/2304.13705" target="_blank" rel="noopener">Zhao et al., "Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware" (2023)</a> &mdash; ACT: action chunking for BC, with a CVAE latent to carry the mode.</li>
+<li><a href="https://rail.eecs.berkeley.edu/deeprlcourse/" target="_blank" rel="noopener">Levine, Berkeley CS285 deep RL course</a> &mdash; the imitation-learning lecture formalises compounding error and distribution shift.</li>
+</ul>
+</details>
 
 <h3>The architecture</h3>
 <svg viewBox="0 0 720 270" role="img" aria-label="MLPDenoiser with the MSE loss node" style="width:100%;max-width:720px;font-family:var(--mono);font-size:11px">
@@ -70,7 +98,7 @@ that answer the conditional <b>mean</b> of the expert's actions. With two equall
   <line x1="565" y1="200" x2="640" y2="182" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#bcL)"/>
   <rect x="620" y="150" width="96" height="32" rx="16" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
   <text x="668" y="171" text-anchor="middle" fill="var(--loss)" font-weight="700">L (loss)</text>
-  <text x="668" y="136" text-anchor="middle" fill="var(--loss)">mean &#8214;&acirc;&minus;a*&#8214;&sup2; &middot; mask</text>
+  <text x="660" y="136" text-anchor="middle" fill="var(--loss)">mean &#8214;&acirc;&minus;a*&#8214;&sup2;&middot;mask</text>
 </svg>
 <p class="ref">B = batch, H = action chunk (1 in T1, <em>Action chunk</em> in T2), 2 = action dims. The loss node
 sits where the network output meets the dataset's expert chunk; nothing else trains the net. Later tasks

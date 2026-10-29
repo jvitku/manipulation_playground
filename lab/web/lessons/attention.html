@@ -26,6 +26,34 @@ softmax; the softmax turns scores into weights that sum to 1; the output is the 
 linear readout turns the result into 16 value scores. The attention code is the shared mini-transformer in
 <code>lab/tasks/minitf.py</code> &mdash; the same module the next attention tasks use.</p>
 
+<details class="theory"><summary>Theory &mdash; attention is a differentiable dictionary</summary>
+<p>A hash map does this task's lookup in one line &mdash; but a hard "take the item whose key equals the query" is not
+differentiable, so nothing upstream of it could be trained. Attention replaces the argmax with a softmax-weighted blend of
+<em>all</em> items, and that one change makes the whole pipeline trainable: the gradient of the loss flows through the
+weights \(\alpha\) into every key and query, telling them how to move so that the right item wins the blend. The mechanism
+predates transformers &mdash; Bahdanau et&nbsp;al. (2014) introduced it so a translation model could reach back into a
+variable-length source sentence; Vaswani et&nbsp;al. (2017) kept only this part and discarded the recurrent network around
+it. In matrix form, per head:</p>
+<p>$$\operatorname{Attn}(Q,K,V)=\operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V$$</p>
+<p>Why three separate projections instead of scoring the raw vectors? A raw dot product \(x_q \cdot x_i\) is symmetric: it
+forces one vector to be both the question and the label, and here it would be worse still &mdash; a pair token literally
+carries key + value in one sum, so \(W_K\) must project <em>out</em> the key part (or the value would pollute the match),
+\(W_V\) the value part, and \(W_Q\) phrases the question in the same learned \(d_k\)-dimensional subspace. Separate maps
+make the three roles independent. Why \(\sqrt{d_k}\): for zero-mean, unit-variance, independent components,</p>
+<p>$$\operatorname{Var}(q\cdot k)=\textstyle\sum_{j=1}^{d_k}\operatorname{Var}(q_j k_j)=d_k,$$</p>
+<p>so unscaled scores grow with the key size and push the softmax into saturation, where the gradient to every losing token
+vanishes. The divisor is a softmax temperature: a larger one flattens the weights towards a uniform average, a smaller one
+sharpens them towards a hard lookup. The model still tunes its own effective temperature by scaling what \(W_Q\) and
+\(W_K\) produce &mdash; watch the weights sharpen as the loss falls off its plateau.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Vaswani et al., "Attention Is All You Need" (2017)</a> &mdash; the transformer paper; section 3.2 is this lesson's equation, the \(\sqrt{d_k}\) argument included.</li>
+<li><a href="https://arxiv.org/abs/1409.0473" target="_blank" rel="noopener">Bahdanau et al., "Neural Machine Translation by Jointly Learning to Align and Translate" (2014)</a> &mdash; where attention began, as a learned alignment over a source sentence.</li>
+<li><a href="https://jalammar.github.io/illustrated-transformer/" target="_blank" rel="noopener">Jay Alammar, "The Illustrated Transformer" (2018)</a> &mdash; the Q/K/V pipeline drawn step by step.</li>
+<li><a href="https://www.3blue1brown.com/lessons/attention" target="_blank" rel="noopener">3Blue1Brown, "Attention in transformers" (2024)</a> &mdash; an animated, geometric walk through the same lookup.</li>
+</ul>
+</details>
+
 <h3>The architecture</h3>
 <svg viewBox="0 0 760 250" role="img" aria-label="Embeddings feed W_Q, W_K, W_V; scores QK^T over sqrt(d_k); softmax; weighted sum of V; readout; loss" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
   <defs>
@@ -36,16 +64,16 @@ linear readout turns the result into 16 value scores. The attention code is the 
       <path d="M0 0L10 5L0 10z" fill="var(--loss)"/>
     </marker>
   </defs>
-  <rect x="8" y="20" width="112" height="56" rx="8" fill="var(--chip)" stroke="var(--line)"/>
-  <text x="64" y="40" text-anchor="middle" fill="var(--ink)">pair tokens</text>
-  <text x="64" y="55" text-anchor="middle" fill="var(--muted)">E_key[k] + E_val[v]</text>
-  <text x="64" y="69" text-anchor="middle" fill="var(--muted)">(n, d_model)</text>
-  <rect x="8" y="110" width="112" height="56" rx="8" fill="var(--chip)" stroke="var(--line)"/>
-  <text x="64" y="130" text-anchor="middle" fill="var(--ink)">query token</text>
-  <text x="64" y="145" text-anchor="middle" fill="var(--muted)">E_key[k*] + "?"</text>
-  <text x="64" y="159" text-anchor="middle" fill="var(--muted)">(1, d_model)</text>
-  <line x1="120" y1="48" x2="168" y2="48" stroke="var(--muted)" marker-end="url(#atA)"/>
-  <line x1="120" y1="138" x2="168" y2="138" stroke="var(--muted)" marker-end="url(#atA)"/>
+  <rect x="8" y="20" width="126" height="56" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="71" y="40" text-anchor="middle" fill="var(--ink)">pair tokens</text>
+  <text x="71" y="55" text-anchor="middle" fill="var(--muted)">E_key[k] + E_val[v]</text>
+  <text x="71" y="69" text-anchor="middle" fill="var(--muted)">(n, d_model)</text>
+  <rect x="8" y="110" width="126" height="56" rx="8" fill="var(--chip)" stroke="var(--line)"/>
+  <text x="71" y="130" text-anchor="middle" fill="var(--ink)">query token</text>
+  <text x="71" y="145" text-anchor="middle" fill="var(--muted)">E_key[k*] + "?"</text>
+  <text x="71" y="159" text-anchor="middle" fill="var(--muted)">(1, d_model)</text>
+  <line x1="134" y1="48" x2="168" y2="48" stroke="var(--muted)" marker-end="url(#atA)"/>
+  <line x1="134" y1="138" x2="168" y2="138" stroke="var(--muted)" marker-end="url(#atA)"/>
   <rect x="170" y="14" width="92" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
   <text x="216" y="33" text-anchor="middle" fill="var(--ink)">W_K &rarr; K</text>
   <rect x="170" y="54" width="92" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
@@ -99,7 +127,8 @@ logits, _, _ = model(keys, vals, qpos)
 loss = F.cross_entropy(logits, target)
 opt.zero_grad(set_to_none=True)
 loss.backward()
-opt.step()</code></pre></details>
+opt.step()
+sched.step()</code></pre></details>
 <details class="code"><summary>Inference: argmax of the logits</summary><pre><code class="language-python" data-src="lab/tasks/task_attention.py">keys, vals, qpos = make_batch(b, n, meta, gen, dev)
 pred = model(keys, vals, qpos)[0].argmax(-1)</code></pre></details>
 

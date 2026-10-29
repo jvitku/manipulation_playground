@@ -1,6 +1,6 @@
 <h3>The task</h3>
 <p>The same Panda arm hidden-hole insertion as the repo's Stage&nbsp;1 behaviour cloning, but now with <b>no expert and no labels</b>. The agent
-sees the last 4 steps of a 20-number observation (tip position and velocity relative to the start, the wrist force/torque, the last action),
+sees the last 4 steps of a 20-number observation (tip position relative to the start, its velocity, the peg tilt, the wrist force/torque, the last action),
 moves the peg tip by at most &plusmn;1&nbsp;mm in x, y and &plusmn;3&nbsp;mm in z per step, and gets a <b>reward</b>. The hole is shifted by a random
 &sigma;&nbsp;=&nbsp;1.5&nbsp;mm and the policy is never told where.</p>
 <p>The reward may look at the true hole (the policy never does): depth progress in mm, a <b>potential-based shaping</b> term that rewards
@@ -31,8 +31,8 @@ environment step.</p>
   <text x="245" y="186" text-anchor="middle" fill="var(--muted)">two independent heads</text>
   <!-- target nets -->
   <rect x="170" y="250" width="150" height="56" rx="9" fill="var(--chip)" stroke="var(--line)" stroke-dasharray="4 3"/>
-  <text x="245" y="272" text-anchor="middle" fill="var(--ink)">target actor &pi;&#8242;, critics Q1&#8242;, Q2&#8242;</text>
-  <text x="245" y="290" text-anchor="middle" fill="var(--muted)">slow copies (&tau; = 0.005)</text>
+  <text x="245" y="272" text-anchor="middle" fill="var(--ink)">targets: &pi;&#8242;, Q1&#8242;, Q2&#8242;</text>
+  <text x="245" y="290" text-anchor="middle" fill="var(--muted)">slow copies (&tau;=0.005)</text>
   <!-- y node -->
   <rect x="400" y="250" width="170" height="56" rx="14" fill="var(--chip)" stroke="var(--line)"/>
   <text x="485" y="272" text-anchor="middle" fill="var(--ink)">TD target y</text>
@@ -60,11 +60,37 @@ environment step.</p>
   <path d="M245 200 V248" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#tdG)"/>
   <text x="256" y="228" fill="var(--accent)">soft copy</text>
   <text x="680" y="150" text-anchor="middle" fill="var(--muted)">target-policy smoothing:</text>
-  <text x="680" y="166" text-anchor="middle" fill="var(--muted)">a&#8242; = clip(&pi;&#8242;(o&#8242;) + clip(&epsilon;, &plusmn;0.5), &plusmn;1)</text>
+  <text x="672" y="166" text-anchor="middle" fill="var(--muted)">a&#8242; = clip(&pi;&#8242;(o&#8242;)+clip(&epsilon;,&plusmn;.5),&plusmn;1)</text>
   <text x="680" y="182" text-anchor="middle" fill="var(--muted)">&epsilon; ~ N(0, 0.2&sup2;)</text>
 </svg>
 <p class="ref">Red = where a loss is computed; blue = how a network is updated. The three tricks that make it TD3 are all in the target: the minimum
 over <em>two</em> critics, noise on the target action, and the actor and target networks moving slowly.</p>
+
+<details class="theory"><summary>Theory &mdash; overestimation bias and the three fixes</summary>
+<p>Bootstrapped value learning has a built-in optimism problem. The TD target evaluates the <em>best</em> action the current policy can name, and a
+maximum over noisy estimates is biased upward: for zero-mean errors \(\epsilon_a\),</p>
+<p>$$\mathbb{E}\Big[\max_a\big(Q(o,a)+\epsilon_a\big)\Big]\;\ge\;\max_a Q(o,a).$$</p>
+<p>In actor-critic the actor <em>is</em> the argmax: gradient ascent on \(Q_1\) steers \(\pi\) toward whatever actions the critic happens to
+overvalue, the inflated \(Q\) of those actions becomes the next target \(y\), the critic trains on it, and the actor climbs the new errors.
+DDPG &mdash; this architecture minus the fixes &mdash; is notorious for exactly that spiral. Each TD3 ingredient cuts one link of the loop.</p>
+<p><b>Clipped double-Q.</b> Two critics trained on the same targets from different initialisations make roughly independent errors, so
+\(\min(Q_1',Q_2')\) in the target trades the upward bias for a mild downward one. Underestimation is the safe direction: a value the critic
+undersells is merely ignored, a value it oversells is actively sought out and amplified.</p>
+<p><b>Target-policy smoothing.</b> The clipped noise on the target action (\(\epsilon\sim\mathcal N(0,0.2^2)\), clipped to \(\pm 0.5\)) makes
+\(y\) an average over a small neighbourhood of actions, so a narrow spike in the critic surface cannot serve as a target &mdash; an error has to
+cover a whole region to survive.</p>
+<p><b>Delayed and soft updates.</b> The actor moves only every second critic step, and the target networks blend slowly,
+\(\theta'\leftarrow(1-\tau)\,\theta'+\tau\,\theta\) with \(\tau=0.005\): the networks that define \(y\) drift with a time constant of hundreds
+of updates, so the critic chases a near-stationary target instead of its own latest mistake. The price of all three is pessimism and slower
+propagation of real values &mdash; one reason the success curve here stays at zero for so long before it jumps.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/1802.09477" target="_blank" rel="noopener">Fujimoto, van Hoof &amp; Meger, &ldquo;Addressing Function Approximation Error in Actor-Critic Methods&rdquo; (2018)</a> &mdash; the TD3 paper: measures the overestimation directly and ablates each fix.</li>
+<li><a href="https://arxiv.org/abs/1509.02971" target="_blank" rel="noopener">Lillicrap et al., &ldquo;Continuous control with deep reinforcement learning&rdquo; (2015)</a> &mdash; DDPG, the baseline TD3 repairs; worth reading to see what breaks without the fixes.</li>
+<li><a href="https://arxiv.org/abs/1709.06560" target="_blank" rel="noopener">Henderson et al., &ldquo;Deep Reinforcement Learning that Matters&rdquo; (2017)</a> &mdash; why a handful of seeds can tell any story you like; this lesson&rsquo;s seed lottery, measured across the field.</li>
+<li><a href="https://spinningup.openai.com/en/latest/algorithms/td3.html" target="_blank" rel="noopener">OpenAI Spinning Up, &ldquo;Twin Delayed DDPG&rdquo;</a> &mdash; a compact walkthrough and reference implementation, close to the code used here.</li>
+</ul>
+</details>
 
 <details class="code"><summary>Critic update: twin critics, smoothed target action, clipped double-Q</summary><pre><code class="language-python" data-src="src/fvb/policy/td3.py">o, a, r, o2, d, p, p2 = buf.sample(c.batch, rng, self.device)
 co, co2 = torch.cat([o, p], -1), torch.cat([o2, p2], -1)  # critic inputs

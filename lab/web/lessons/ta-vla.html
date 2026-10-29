@@ -8,6 +8,34 @@ trained from scratch on the contact scene of the earlier tasks &mdash; two holes
 the policy has to <b>read the hole positions from a 32&times;32 image</b>, read the command from words, and feel the surface through
 the torque token.</p>
 
+<details class="theory"><summary>Theory &mdash; two streams, one mask, and force as a token</summary>
+<p>The two-stream layout is an inference-cost design. A VLA splits the work into understanding the observation (the prefix: image,
+words, state &mdash; the expensive part, a pretrained VLM in pi0 and SmolVLA) and writing the action chunk (the suffix &mdash;
+small, but run once per denoising step). The block mask is what makes the split pay: prefix queries never attend to the suffix, so
+the prefix's keys and values cannot depend on the noisy actions or on the noise level \(t\) &mdash; they are computed once per
+observation and cached, and each of the K denoising steps is one cheap pass of the expert, attending to</p>
+<p>$$\operatorname{Attn}\big(Q_s,\;[K_p; K_s],\;[V_p; V_s]\big),$$</p>
+<p>the cached prefix keys and values concatenated with the suffix's own. Separate weights per stream let the two halves be sized
+independently and a pretrained VLM be reused as the prefix.</p>
+<p>Force enters as a <em>token</em> rather than numbers appended to the state for the same reason words and image patches do: a
+token is the unit attention can select or ignore, so every layer and head decides how much the torque history matters right now,
+instead of it competing inside one state vector. In the suffix (TA-VLA's choice) the token sits beside the
+actions being denoised and is re-read at every denoising step; in the prefix it is folded into the cache with the rest of the
+observation. The auxiliary loss \(L = L_\text{action} + w\,L_\text{torque}\) pushes further: predicting the forces the chunk
+<em>will cause</em> makes the expert's representation a small forward model of contact, not just a decoder of it &mdash; aimed
+exactly at commands whose success is defined in newtons, though the measured effect at this scale is small (below). The action
+head itself is flow matching: sampling integrates \(x \leftarrow x - \tfrac{1}{K}\, v_\theta(x, t, o)\) from noise to a chunk,
+which keeps multimodal demonstrations from being averaged.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2509.07962" target="_blank" rel="noopener">Zhang et&nbsp;al., &ldquo;TA-VLA: Elucidating the Design Space of Torque-aware Vision-Language-Action Models&rdquo; (2025)</a> &mdash; the recipe this task miniaturises: token placement, the auxiliary loss, and their ablations.</li>
+<li><a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener">Black et&nbsp;al., &ldquo;&pi;0: A Vision-Language-Action Flow Model for General Robot Control&rdquo; (2024)</a> &mdash; the prefix/suffix flow-matching layout with a separate action expert.</li>
+<li><a href="https://arxiv.org/abs/2506.01844" target="_blank" rel="noopener">Shukor et&nbsp;al., &ldquo;SmolVLA: A Vision-Language-Action Model for Affordable and Efficient Robotics&rdquo; (2025)</a> &mdash; the small two-stream VLA whose layout this mini copies, KV cache included.</li>
+<li><a href="https://arxiv.org/abs/2406.09246" target="_blank" rel="noopener">Kim et&nbsp;al., &ldquo;OpenVLA: An Open-Source Vision-Language-Action Model&rdquo; (2024)</a> &mdash; the contrasting design: actions as discrete tokens from the VLM itself, no separate expert.</li>
+<li><a href="https://huggingface.co/blog/smolvla" target="_blank" rel="noopener">Hugging Face, &ldquo;SmolVLA&rdquo; blog (2025)</a> &mdash; a readable walk-through of the architecture and training recipe.</li>
+</ul>
+</details>
+
 <h3>The architecture</h3>
 <svg viewBox="0 0 800 440" role="img" aria-label="TAVLAMini: prefix stream with image patches, language and state tokens; action-expert stream with the torque token and noisy action tokens; block attention mask; cached prefix keys and values; flow loss and auxiliary future-torque loss summed into one total" style="width:100%;max-width:800px;font-family:var(--mono);font-size:11px">
   <defs>
@@ -38,7 +66,7 @@ the torque token.</p>
   <text x="12" y="190" fill="var(--accent)" font-weight="700">torque</text>
   <text x="76" y="190" fill="var(--muted)">8 noisy action tokens (+ time t)</text>
   <text x="322" y="157" fill="var(--ink)" font-weight="700">suffix:</text>
-  <text x="322" y="170" fill="var(--chart1)" font-weight="700">action expert</text>
+  <text x="308" y="170" fill="var(--chart1)" font-weight="700">action expert</text>
   <text x="322" y="183" fill="var(--muted)">own weights</text>
 
   <!-- losses: flow -->
@@ -184,7 +212,7 @@ gap there.</p>
 <li><b>T3, peg search with unknown surface</b> (400 demos, 3 seeds): torque token zeroed / prefix / suffix / suffix + aux =
 <b>61.3 / 85.5 / 86.7 / 84.3&nbsp;%</b>. Force is the difference between guessing and knowing when the peg has touched down; without it
 the failures are mostly force aborts.</li>
-<li><b>T4, this task's world</b> (four commands, 400 episodes, 2 seeds): zeroed / prefix / suffix / suffix + aux =
+<li><b>T4, this task's world</b> (four commands, 1&nbsp;600 demos, 2 seeds, 400 evaluation episodes each): zeroed / prefix / suffix / suffix + aux =
 <b>62.9 / 91.3 / 91.4 / 91.8&nbsp;%</b>. The sharpest row is <b>press gently (2&nbsp;N): 98&nbsp;% with the token against 31&nbsp;% zeroed</b>;
 the insertion commands are equal (96&ndash;97&nbsp;%). A policy that cannot feel cannot tell 2&nbsp;N from 6&nbsp;N.</li>
 <li><b>Position and aux at this scale</b>: prefix &asymp; suffix within seed noise, and the auxiliary loss did not help
@@ -200,7 +228,7 @@ they were harmful in a large model with few demonstrations. Measure the zeroed t
 
 <h3>Running it</h3>
 <ul>
-<li>The default (800 demos, 15&nbsp;000 steps, width 128, about four minutes on a GPU) reaches roughly 95&nbsp;% on the two presses but only around 50&ndash;60&nbsp;% on the insertions: localising a 1.2&nbsp;cm hole from a 32&times;32 image (one pixel is 1&nbsp;cm) is the hard part and wants data. The tutorial's reference runs used 1&nbsp;600 demos and 30&nbsp;000 steps and reached 93&nbsp;% overall; raise <i>Demonstrations</i> and <i>Training steps</i> to approach that, or use width 64 and fewer steps for a quick look. A
+<li>The default (800 demos, 15&nbsp;000 steps, width 128, about four minutes on a GPU) reaches roughly 95&nbsp;% on the two presses but only around 50&ndash;60&nbsp;% on the insertions: localising a 1.2&nbsp;cm hole from a 32&times;32 image (one pixel is 1&nbsp;cm) is the hard part and wants data. The tutorial's reference runs used 1&nbsp;600 demos and 30&nbsp;000 steps and reached 91&nbsp;% overall; raise <i>Demonstrations</i> and <i>Training steps</i> to approach that, or use width 64 and fewer steps for a quick look. A
 closed-loop evaluation on 200 fixed scenes runs every <i>Eval every</i> steps and feeds the <b>success per command</b> chart: watch
 <em>press gently</em> and <em>press firmly</em> separately from the two insertions.</li>
 <li>Train two runs that differ in one knob: position <i>suffix</i> vs <i>prefix</i>, or <i>Zero the torque input</i> on/off, or

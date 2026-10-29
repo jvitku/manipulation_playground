@@ -27,6 +27,33 @@ Closed loop, the policy executes the <em>first</em> action of the chunk each ste
 network, same data, no touch. At evaluation, <em>Zero the force input</em> blinds a force-trained model after the fact (the raw channels are set
 to 0 before normalisation). Compare the two at equal settings: the difference is the value of the force token.</p>
 
+<details class="theory"><summary>Theory &mdash; why a force history resolves a hidden hole</summary>
+<p>The task is partially observed: the one variable the action should depend on &mdash; the peg-to-hole offset &mdash; is never in
+the observation. It leaks out only through contact. When the peg lands on the rim instead of in the hole, the contact point is off
+the peg's axis, so the wrist senses a torque whose <em>sign</em> says on which side the hole lies. One frame of that cue is small
+and sits inside an impact transient (the 3 summary channels exist because a spike can fall entirely between two 20&nbsp;Hz
+control ticks); across a window of H frames the jam has a distinctive signature. That is why the force channels ride in <em>every</em> observation token rather than only the current one: the
+encoder's self-attention,</p>
+<p>$$\operatorname{Attn}(Q,K,V)=\operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V,$$</p>
+<p>weights the frames around the jam by their content, wherever they fall in the window. The MLP twin reads each window slot
+through fixed weights, so &ldquo;a jam, three steps ago&rdquo; and &ldquo;a jam, seven steps ago&rdquo; are separate patterns it
+must learn one by one &mdash; it works, just worse (45/50 vs 50/50).</p>
+<p>The loss says why the blind twin dithers instead of failing outright. L1 regression fits the conditional median,
+\(\hat a(o) \approx \operatorname{median}\, p(a^{*}\mid o)\), and without force a jam against a hole to the left and one to the
+right produce the same observation: the two expert corrections (&plusmn;0.5&nbsp;mm) are symmetric modes whose median sits
+uselessly between them. So the blind policy learns the unambiguous half of the recovery (retract) and not the ambiguous half
+(which way to shift); the force token's one sign bit is what makes the target unimodal. The chunk (K&nbsp;=&nbsp;5) plays the same
+trick in time: predicting the whole retract&ndash;shift&ndash;descend program at once commits to one recovery instead of
+re-deciding &mdash; and re-averaging &mdash; every step.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2509.07962" target="_blank" rel="noopener">Zhang et&nbsp;al., &ldquo;TA-VLA: Elucidating the Design Space of Torque-aware Vision-Language-Action Models&rdquo; (2025)</a> &mdash; the paper this stage's force-token recipe follows, scaled up to full VLAs.</li>
+<li><a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Vaswani et&nbsp;al., &ldquo;Attention Is All You Need&rdquo; (2017)</a> &mdash; the transformer and the attention equation above.</li>
+<li><a href="https://arxiv.org/abs/1810.10191" target="_blank" rel="noopener">Lee, Zhu et&nbsp;al., &ldquo;Making Sense of Vision and Touch&rdquo; (2019)</a> &mdash; learning a joint representation of vision and force for contact-rich insertion.</li>
+<li><a href="https://arxiv.org/abs/2303.04137" target="_blank" rel="noopener">Chi et&nbsp;al., &ldquo;Diffusion Policy&rdquo; (2023)</a> &mdash; the standard answer when the expert's actions are multimodal and regression starts averaging modes.</li>
+</ul>
+</details>
+
 <h3>The architecture</h3>
 <svg viewBox="0 0 780 310" role="img" aria-label="ACT-lite: observation window with highlighted force channels and a zeroed-twin switch, encoder, K learned queries, decoder, action chunk and masked L1 loss node" style="width:100%;max-width:780px;font-family:var(--mono);font-size:11px">
   <defs>
@@ -77,7 +104,7 @@ to 0 before normalisation). Compare the two at equal settings: the difference is
   <!-- expert target + loss -->
   <rect x="656" y="206" width="112" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
   <text x="712" y="222" text-anchor="middle" fill="var(--ink)">a* expert chunk</text>
-  <text x="712" y="236" text-anchor="middle" fill="var(--muted)">+ mask m (end of episode)</text>
+  <text x="712" y="236" text-anchor="middle" fill="var(--muted)">+ mask m (end)</text>
   <line x1="712" y1="136" x2="680" y2="164" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#ftL)"/>
   <line x1="712" y1="206" x2="720" y2="190" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#ftL)"/>
   <rect x="652" y="164" width="118" height="28" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
@@ -119,7 +146,7 @@ do not show success: that is only measured by <em>Evaluate</em>, which flies uns
 <tr><td>MLP + force</td><td>0.132</td><td>45/50</td></tr>
 <tr><td>MLP, force zeroed</td><td>0.158</td><td>5/50</td></tr>
 </table>
-<p class="ref">README.md quotes the same headline as &ldquo;50/50 vs 7/50&rdquo; (a different run of the pictured episodes); FINDINGS.md&rsquo; 5/50 is the evaluated table above.</p>
+<p class="ref">README.md quotes the same headline as &ldquo;50/50 vs 7/50&rdquo; (a different run of the pictured episodes); FINDINGS.md&rsquo;s 5/50 is the evaluated table above.</p>
 <p>The validation loss separates the variants only 2&times; (0.07 vs 0.15), because 90&nbsp;% of the steps are &ldquo;descend 2.5 mm&rdquo; and both fit them; the
 closed-loop gap is 10&times;. Without force the policy even learns the jam&rarr;retract reflex, but the same observation precedes
 &ldquo;shift +x&rdquo; and &ldquo;shift &minus;x&rdquo;, an L1 regression averages them, and it retracts about 20 times per episode and dithers

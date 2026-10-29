@@ -2,7 +2,7 @@
 <p>A peg must be inserted into a hole in a surface, seen from the side (x right, z up). The hole is 1.2 cm wide, 6 cm
 deep, and sits at a random x in [-8, 8] cm; the policy is told only a <em>noisy estimate</em> of it (&sigma; = 3 cm
 by default), and the height of the surface (&plusmn;3 cm) is not told at all. The peg is driven by an
-<b>impedance controller</b>: the action (a in [-1, 1]&sup2;) moves a reference point by 1 cm per step, the peg follows the
+<b>impedance controller</b>: the action (a in [-1, 1]&sup2;) moves a reference point by up to 1 cm per step, the peg follows the
 reference until the surface blocks it, and then the controller's spring presses with
 \(F = k\,(\text{pos} - \text{ref})\), where the stiffness \(k\) (200&ndash;1000 N per unit) is drawn per episode and is unobservable
 without the force sensor. Push the reference deeper into the surface and the force rises; above <b>15 N</b> a protective
@@ -30,6 +30,33 @@ sliding down a chamfer, or that it is pressing too hard.</p>
 <p><b>The zeroed twin.</b> <em>Feed the force history</em> off replaces the 20 force channels with zeros (training and
 evaluation), so the net still gets the position but is blind to contact. Compare the two runs at equal settings: that
 difference is the value of touch. At evaluation, <em>Zero the force input</em> blinds a force-trained net after the fact.</p>
+
+<details class="theory"><summary>Theory &mdash; a generative policy in a partially observed loop</summary>
+<p>The insertion task is partially observed: surface height and spring stiffness are drawn per episode and appear in
+no observation, and the hole is told only through a noisy estimate. Position alone therefore cannot distinguish
+hovering above the surface from pressing at 14 N. The force window is the stand-in for a belief state: touchdown is a
+step in \(F_z\), stiffness is how fast force grows per unit of commanded reference (\(F = k\,(\text{pos} -
+\text{ref})\)), and the chamfer shows as a lateral \(F_x\) bias pointing at the hole. The zeroed twin is the
+controlled experiment this design enables &mdash; identical architecture, parameters, data and optimiser, with only
+the information deleted &mdash; so whatever gap remains is the value of touch, not of capacity (TA-VLA's
+<code>zero_torque</code> twin, reduced to an MLP).</p>
+<p>The policy itself is Diffusion Policy's receding-horizon recipe with a flow head: model the distribution of the
+next \(H\) actions given the freshest observation,</p>
+<p>$$a_{t:t+H-1} \sim p_\theta\!\left(\cdot \mid o_t\right), \qquad o_t = \left(x_t - \hat{x}_{\text{hole}},\; z_t,\; F_{t-9:t}\right) \in \mathbb{R}^{22},$$</p>
+<p>play the first <code>n_exec</code> of them, then re-sample. The chunk is for commitment: one sample sweeps one way
+instead of dithering between directions at every step. Partial execution is for reactivity: the force history can
+only change the behaviour at a re-plan, so <code>n_exec</code> is the feedback delay to contact events. The two knobs
+set a commitment-versus-reactivity trade-off, which is why both are exposed; pi0 and SmolVLA run this same loop at
+scale. Training only on the expert's successful episodes keeps the cloned distribution clean, at the usual BC price:
+the policy never sees recoveries from the failures that were filtered out.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2303.04137" target="_blank" rel="noopener">Chi et al., "Diffusion Policy" (2023)</a> &mdash; the receding-horizon action-sampling loop this task runs, and why visuomotor policies want it.</li>
+<li><a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener">Black et al., "&pi;0: A Vision-Language-Action Flow Model" (2024)</a> &mdash; the same flow head and partial chunk execution at VLA scale.</li>
+<li><a href="https://arxiv.org/abs/2304.13705" target="_blank" rel="noopener">Zhao et al., "Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware" (2023)</a> &mdash; the case for action chunking from the regression side (ACT).</li>
+<li><a href="https://www.physicalintelligence.company/blog/pi0" target="_blank" rel="noopener">Physical Intelligence, "&pi;0" blog post (2024)</a> &mdash; a readable account of chunked flow policies on real robots.</li>
+</ul>
+</details>
 
 <h3>The architecture</h3>
 <svg viewBox="0 0 760 300" role="img" aria-label="MLPDenoiser with the 20-dimensional force history input highlighted and the flow loss node" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
@@ -125,9 +152,9 @@ while not env.done.all():
 average is made of noisy levels that are impossible to get right, so the curve drops fast and then flattens early
 (this repo's <code>train.py</code> states it plainly: the loss of a generative head is a poor progress signal because it
 flattens early while closed-loop success keeps improving). So every <em>eval every</em> steps the run also rolls the current
-model out closed loop on 200 fresh scenes, and plots the <b>success</b>. Read the loss as a health check &mdash; it is falling,
+EMA model out closed loop on 200 fresh scenes, and plots the <b>success</b>. Read the loss as a health check &mdash; it is falling,
 no NaN, train and val together &mdash; and the success curve as the score.</p>
-<p>The tutorial journal (docs/ta_tutorial/report_data.json, TAVLAMini with a force token, 400 demos, 3 seeds, lr 1e-3) shows
+<p>The tutorial journal (docs/ta_tutorial/report_data.json, TAVLAMini with a force token, 400 demos, 3 seeds, lr 3e-4) shows
 both halves honestly. The loss falls from 0.185 at 500 steps to 0.130 at 3000 and then only creeps down (0.094 at 15k)
 while success goes 77% (1.5k) &rarr; 86% (3k) and then <em>stays</em> within noise at 85&ndash;87% to 15k: the late loss
 improvement bought nothing measurable. Neither curve alone could tell you that. With the force blanked, the same pipeline
@@ -147,7 +174,7 @@ policy was reading; the dashed lines are the 15 N limit.</p>
 of the force benefit; more mainly raises the plateau slowly.</li>
 <li><b>Training steps</b> and <b>Closed-loop eval every N steps</b>: how long to train and how often to roll out the 200-scene
 evaluation (each one costs seconds, so a small interval slows the run).</li>
-<li><b>Learning rate</b>, <b>Batch size</b>: as before; 1e-3 is the tutorial's setting.</li>
+<li><b>Learning rate</b>, <b>Batch size</b>: as before; the default is 1e-3 (the tutorial's T3 runs used 3e-4).</li>
 <li><b>Action chunk</b> / <b>Actions executed per chunk</b>: how far ahead the net plans and how many actions are played before
 the force history is read again (clamped to the chunk). Playing fewer keeps the policy reactive to contact.</li>
 <li><b>Feed the force history</b>: off = the zeroed twin (position only).</li>

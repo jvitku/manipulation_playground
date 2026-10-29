@@ -26,6 +26,35 @@ through a deep stack. The final CLS vector, after one more LayerNorm and a linea
 out, so it has to <em>collect</em> from the patches whatever tells the digits apart. Where it collects from is its attention
 row, which is what the app draws.</p>
 
+<details class="theory"><summary>Theory &mdash; why patches, positions and a CLS token</summary>
+<p>A convolution hard-wires two assumptions: pixels relate mostly to their neighbours, and the same filter applies
+everywhere. A transformer assumes neither &mdash; any token can read any other from the first block &mdash; and each
+ingredient of this lesson pays for one removed prior. <b>Patches</b> pay the compute bill: attention compares all pairs, so
+with \(T\) tokens every block computes \(T^2\) scores per head, and tokenising single pixels would cost about
+2000&times; more than 7&times;7 patches:</p>
+<p>$$T = 1+(28/p)^2:\qquad T^2 = 289 \;\;(p{=}7)\qquad\text{vs}\qquad T^2 = 785^2 \approx 6.2\times 10^5 \;\;(p{=}1)$$</p>
+<p>The patch embedding is itself the one convolution kept: a linear layer on \(p\times p\) blocks is exactly a
+stride-\(p\), kernel-\(p\) conv. <b>Positions</b> pay for permutation equivariance: shuffle the patch tokens and
+self-attention's outputs shuffle identically, \(\operatorname{MHA}(\Pi x)=\Pi\,\operatorname{MHA}(x)\) &mdash; and since only
+CLS is read out, a digit and any patch-shuffled version of it would be <em>exactly</em> indistinguishable without
+\(E_\text{pos}\). <b>CLS</b> is BERT's trick for turning a set of tokens into one vector: a learned constant whose output
+can differ between images only through what it gathered, i.e. a trained fixed-size summary (mean-pooling the patch tokens
+works about as well; CLS gives the app a single attention row to draw). The removed priors have a price in data: the
+original ViT beat convolutional nets only after pretraining on about 300&thinsp;million images, and DeiT needed heavy
+augmentation plus distillation to match them from ImageNet alone &mdash; the same hunger the <b>training images</b> knob
+shows at MNIST scale. Finally, read attention maps with care: a CLS row shows where a head <em>copies values from</em>, not
+what the classifier <em>uses</em>. After the first block a "patch token" is already a mixture of all patches, and
+information also flows past attention through the residuals &mdash; which is why rollout-style corrections to raw maps
+(Abnar &amp; Zuidema) exist at all.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2010.11929" target="_blank" rel="noopener">Dosovitskiy et al., "An Image is Worth 16x16 Words" (2020)</a> &mdash; the ViT paper; this lesson is its recipe at 1/1000 scale.</li>
+<li><a href="https://arxiv.org/abs/2012.12877" target="_blank" rel="noopener">Touvron et al., "Training data-efficient image transformers" (DeiT, 2020)</a> &mdash; how augmentation and distillation stand in for the convolutional prior when data is scarce.</li>
+<li><a href="https://arxiv.org/abs/2005.00928" target="_blank" rel="noopener">Abnar &amp; Zuidema, "Quantifying Attention Flow in Transformers" (2020)</a> &mdash; why a raw attention map is only a partial explanation, and what to compute instead.</li>
+<li><a href="https://research.google/blog/transformers-for-image-recognition-at-scale/" target="_blank" rel="noopener">Google Research, "Transformers for Image Recognition at Scale" (2020)</a> &mdash; the authors' own short account of ViT and the data-scale story.</li>
+</ul>
+</details>
+
 <h3>The architecture</h3>
 <svg viewBox="0 0 760 292" role="img" aria-label="Image to patches to tokens with CLS and positions, then transformer blocks with attention and MLP, CLS readout, loss" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
   <defs>
@@ -60,10 +89,10 @@ row, which is what the app draws.</p>
   <!-- block internals -->
   <rect x="434" y="16" width="190" height="168" rx="10" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/>
   <text x="529" y="32" text-anchor="middle" fill="var(--muted)">Block x depth</text>
-  <rect x="452" y="44" width="154" height="44" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
-  <text x="529" y="63" text-anchor="middle" fill="var(--ink)">LN &rarr; multi-head attention</text>
-  <text x="529" y="78" text-anchor="middle" fill="var(--muted)">attn (heads, 17, 17); + residual</text>
-  <rect x="452" y="108" width="154" height="44" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="444" y="44" width="170" height="44" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <text x="529" y="63" text-anchor="middle" fill="var(--ink)">LN &rarr; multi-head attn</text>
+  <text x="529" y="78" text-anchor="middle" fill="var(--muted)">(heads, 17, 17) + residual</text>
+  <rect x="444" y="108" width="170" height="44" rx="7" fill="var(--chip)" stroke="var(--line)"/>
   <text x="529" y="127" text-anchor="middle" fill="var(--ink)">LN &rarr; MLP (4 x d_model)</text>
   <text x="529" y="142" text-anchor="middle" fill="var(--muted)">+ residual</text>
   <line x1="529" y1="88" x2="529" y2="106" stroke="var(--muted)" marker-end="url(#vtA)"/>
