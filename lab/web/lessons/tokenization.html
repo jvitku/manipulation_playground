@@ -48,6 +48,24 @@ interface &mdash; a 39-token vocabulary (36 characters plus pad/bos/eos) &mdash;
 character vocabulary, so the playground (section a of the viewer) lets you tokenize &ldquo;23 Oct 2026&rdquo; and the
 two actions with the same moves.</p>
 
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>The diagonal variant.</b> In task 1's problem one bimodal dimension was enough to break regression; here both
+dimensions flip <em>together</em> through \(s\), because correlation is the one property that also separates the two
+token heads &mdash; marginals suffice for independent dims, only a joint model keeps correlated ones paired.</p>
+<p><b>Three heads in one run.</b> Same trunk (the bins head is literally the cont MLP with a wider last layer), same
+data stream, same Adam, steps and batch, fresh seed per head: a controlled comparison in which the action interface is
+the only variable.</p>
+<p><b>Uniform bins.</b> The actions already live in \([-1, 1]\), so the uniform grid doubles as the normalisation
+(nothing is z-scored), and it is the RT-1 recipe in miniature &mdash; 256 bins scaled down to 9/17/33.</p>
+<p><b>The temperature knob.</b> Multimodality lives in the <em>sampling</em>: temperature &le; 0.01 decodes argmax and
+every draw collapses to one pair, which you can watch happen in the scatter.</p>
+<p><b>The probe at c&nbsp;=&nbsp;0.</b> The raw softmax probabilities at one observation, no temperature: the
+distributions the heads actually hold &mdash; two independent marginals for bins, and an AR \(P(t_z \mid c,\, t_x)\)
+that visibly flips when you feed it the other \(t_x\).</p>
+<p><b>A text playground in an action task.</b> The AR head&rsquo;s machinery &mdash; ids as embedding rows, the chain
+rule &mdash; is exactly text tokenization, so the evaluation ships task 8&rsquo;s character vocabulary to show the same
+moves on a date string.</p>
+</details>
 <details class="theory"><summary>Theory &mdash; why tokenize at all, and what the factorisation buys</summary>
 <p>Tokenising an action buys the entire language-model toolchain. A softmax over ids gives an <em>exact, normalised
 likelihood</em> for any discrete joint via the chain rule,</p>

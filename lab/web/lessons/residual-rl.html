@@ -1,5 +1,11 @@
+<h3>The question</h3>
+<p>You have a decent flow policy from demonstrations (task&nbsp;4, flow-bc) and a reward signal. What is the <b>cheapest
+safe way to let reward improve it</b> &mdash; without retraining the generative model, without risking the competence it
+already has, and without the seed lottery of RL from scratch? This task&rsquo;s answer is the smallest one: freeze the
+policy and learn only a bounded correction on top.</p>
+
 <h3>Why not just fine-tune the flow policy with RL?</h3>
-<p>You have a decent policy from imitation (task&nbsp;4, flow-bc). The natural next step is to improve it with reward. But a flow-matching policy does not hand you a likelihood
+<p>A flow-matching policy does not hand you a likelihood
 or a one-step action: an action is the end point of an ODE integrated over \(K\) network calls, and it is only trained to match demonstrations.
 That makes the textbook policy-gradient and actor-critic recipes awkward. Two lines of recent work attack exactly this; both are <b>literature context only</b>, nothing in this lab
 reproduces them and none of their numbers are ours.</p>
@@ -41,6 +47,23 @@ and a regularisation weight to tune.</p>
 whose &ldquo;environment&rdquo; happens to contain a good controller. The last layer of the actor starts near zero, so training <b>begins at the base policy&rsquo;s own
 behaviour</b> and can only walk away from it if the critic says so.</p>
 
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>The frozen base.</b> No gradient ever reaches the flow weights (they appear in no loss), so the imitation
+competence cannot be trained away &mdash; whatever the critic believes, the prior survives intact.</p>
+<p><b>A residual with a small-init last layer.</b> The actor&rsquo;s final layer starts at weights &times;0.01, bias 0,
+and the target actor is synced to it: &delta;&nbsp;&asymp;&nbsp;0, so step one of training <em>is</em> the base policy,
+not a random network flailing in contact.</p>
+<p><b>The &alpha; clip.</b> <code>residual_scale</code> (default 0.3) bounds the executed action to within &alpha; per
+axis of the base&rsquo;s &mdash; the safety dial, and honestly also the method&rsquo;s ceiling.</p>
+<p><b>TD3 for the residual.</b> The stored action is &delta;, so the correction is an ordinary small continuous-control
+problem; the same proven <code>fvb.policy.td3</code> as task&nbsp;11 plugs in unchanged, and it needs no demos or BC
+term because the base already supplies the prior.</p>
+<p><b>UTD 0.5, N_ENVS 16.</b> Sixteen parallel scenes amortise the expensive part &mdash; the base flow&rsquo;s K-step
+sampling &mdash; over one batched call; at that data rate half a gradient update per transition keeps compute and data
+balanced.</p>
+<p><b>The Residual-off knob.</b> Evaluating the same checkpoint with &delta; forced to 0 replays the base alone on the
+same scenes: the difference is the residual&rsquo;s causal contribution, nothing else.</p>
+</details>
 <details class="theory"><summary>Theory &mdash; why a residual learns fast and fails safe</summary>
 <p>RL from scratch pays twice: exploration has to <em>find</em> rewarding behaviour before the critic has anything to rank (task&nbsp;11&rsquo;s seed
 lottery), and the critic then has to be right everywhere the actor can wander. A competent frozen base shrinks both bills. Exploration starts where the base puts the system &mdash; at the hole, in contact &mdash; so reward flows from the first episodes; and the

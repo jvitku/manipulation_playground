@@ -4,6 +4,12 @@ a grid of pixels. The trick that turned transformers into image models is to <em
 picture into small squares (patches), treat every patch as a word, and let attention work out which patches matter for the
 answer. The robot policy in task 10 (ta-vla) uses the same recipe on camera and force tokens. Here it is on the smallest
 vision problem there is: reading handwritten digits (MNIST), with a transformer small enough to train in seconds.</p>
+<p>In the ladder's taxonomy &mdash; <b>attention</b> is one operation, three wirings of it &mdash; this lesson is the
+<b>self-attention</b> wiring: Q, K and V all come from the same token sequence, here the 17 tokens (16 patches + CLS) of
+one image, and the sequence talks to itself. Contrast task 6, where a single external query asked and nothing else did:
+now every token asks every token. CLS is a token that exists only to <em>read</em> the others &mdash; it carries no
+pixel, it just queries the sequence it belongs to &mdash; the in-sequence cousin of task 9's command token, where the
+asker will leave the sequence entirely (<b>cross-attention</b>).</p>
 
 <h3>The task</h3>
 <p>The input is a 28&times;28 grey digit, the output one of 10 classes. Training uses <code>train_n</code> images (default
@@ -18,7 +24,7 @@ each flattened to a vector and embedded by one linear layer. Attention itself ig
 vector</em> is added to every patch token; in front goes a learned <b>CLS</b> token that belongs to no patch:</p>
 <p>$$x_0 = [\,c;\; p_1 W_E;\; \dots;\; p_N W_E\,] + E_\text{pos}\in\mathbb{R}^{(N+1)\times d_\text{model}}$$</p>
 <p>Then <code>depth</code> transformer blocks (<code>minitf.Block</code>, shared with the next tasks) refine the tokens. Each block
-does self-attention &mdash; every token queries all tokens, as in task 6 &mdash; and then a small MLP, both wrapped in a
+does self-attention &mdash; task 6's lookup, but now every token queries all tokens of its own sequence &mdash; and then a small MLP, both wrapped in a
 LayerNorm and a residual connection:</p>
 <p>$$x \leftarrow x + \operatorname{MHA}(\operatorname{LN}(x)),\qquad x \leftarrow x + \operatorname{MLP}(\operatorname{LN}(x))$$</p>
 <p class="ref">The residual "+ x" lets a layer add information without erasing what is already there, and keeps gradients healthy
@@ -26,6 +32,20 @@ through a deep stack. The final CLS vector, after one more LayerNorm and a linea
 out, so it has to <em>collect</em> from the patches whatever tells the digits apart. Where it collects from is its attention
 row, which is what the app draws.</p>
 
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>Patches.</b> Attention compares all pairs of tokens, so the token count sets the bill: 7&times;7 patches give 17
+tokens and 289 scores per head where single pixels would give about \(6\times10^5\). Cutting the image into patches is
+the one move that turns a picture into something the task-6 operation can run on.</p>
+<p><b>Learned position vectors.</b> Self-attention is order-blind, and only CLS is read out, so without \(E_\text{pos}\)
+a digit and any patch-shuffle of it would be exactly indistinguishable.</p>
+<p><b>The CLS token.</b> The readout needs one vector from a set of 17; a learned constant that can differ between
+images only through what it gathers is that summary &mdash; and it gives the app a single attention row to draw.</p>
+<p><b>A tiny model.</b> 105&thinsp;098 parameters, d_model 64, 2 blocks, about 8 s a run: small enough to retrain per
+knob turn and watch the attention organise live, yet it reaches 93&ndash;96%.</p>
+<p><b>MNIST and the training-images knob.</b> The transformer's removed priors are paid for in data; a dataset with a
+60&thinsp;000-image dial makes that price measurable (train on 1000, then 60&thinsp;000, and watch the validation
+gap).</p>
+</details>
 <details class="theory"><summary>Theory &mdash; why patches, positions and a CLS token</summary>
 <p>A convolution hard-wires two assumptions: pixels relate mostly to their neighbours, and the same filter applies
 everywhere. A transformer assumes neither &mdash; any token can read any other from the first block &mdash; and each

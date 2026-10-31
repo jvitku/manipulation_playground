@@ -1,5 +1,6 @@
 <h3>The question</h3>
-<p>Tasks 6 and 7 used <em>self</em>-attention: every token asks a question of the other tokens of the <em>same</em> sequence.
+<p>Task 7 used <b>self-attention</b>: every token asks a question of the other tokens of the <em>same</em> sequence (and
+task 6's lone lookup query, read with the names this lesson introduces, was secretly the other wiring all along).
 Many problems have two sequences instead. A translator reads a sentence and writes another one; a robot policy reads a history
 of observations and writes a chunk of actions. The writer needs to look at the reader's notes, but the notes are not part of
 its own sequence. <b>Cross-attention</b> is attention where the questions come from one sequence and the keys and values from
@@ -23,6 +24,14 @@ there is no target: <code>greedy_decode</code> starts from <code>&lt;bos&gt;</co
 likely character until it emits <code>&lt;eos&gt;</code>.</p>
 
 <h3>The method: where Q, K and V come from</h3>
+<p>This is the naming lesson, so first the taxonomy in one place &mdash; one operation, three wirings. <b>Attention</b>
+is the operation: a query vector asks, every key answers &ldquo;how relevant am I?&rdquo;, and the values are mixed by
+those weights &mdash; \(\operatorname{softmax}(QK^\top/\sqrt{d_k})\,V\). Who supplies Q and who supplies K and V is a
+wiring choice. <b>Self-attention</b>: Q, K and V all come from the same token sequence &mdash; the sequence talks to
+itself. <b>Cross-attention</b>: Q comes from one stream, K and V from another &mdash; one stream reads the other. This
+model runs both wirings, finally named: first the decoder's <b>causal self-attention</b> (Q, K and V all from the output
+string being written, masked to the past &mdash; the string talks to itself), then <b>cross-attention</b> (Q from the
+decoder's stream, K and V from the encoder's memory &mdash; the writer reads the reader's notes).</p>
 <p>In self-attention one sequence produces all three. In cross-attention they come from two places. With \(X\) the decoder's
 hidden states (one row per output position) and \(M\) the encoder's output, the <b>memory</b> (one row per source character):</p>
 <p>$$Q = X W_Q,\qquad K = M W_K,\qquad V = M W_V,\qquad
@@ -31,6 +40,23 @@ A = \operatorname{softmax}\!\left(\frac{Q K^{\top}}{\sqrt{d_k}}\right),\qquad \t
 (11 &times; 12 here): row \(t\) says how much of each source character output \(t\) reads. That matrix is the
 <b>alignment</b> the app draws. Nothing else changes from task 6: the same <code>MHA</code> code in
 <code>lab/tasks/minitf.py</code> is called with <code>x_q = X</code> and <code>x_kv = M</code> instead of one input twice.</p>
+
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>Dates, in three formats.</b> The alignment is <em>checkable</em>: for every output character you know which source
+characters it needs, and the right column moves with the format ("26" of the year sits at columns 10&ndash;11 in
+<code>Oct 23, 2026</code> but 8&ndash;9 in <code>23/10/2026</code>) &mdash; so a content-based read is visibly different
+from a memorised position-to-position mapping.</p>
+<p><b>The split by day.</b> A fixed hash holds out 3&thinsp;690 of the 36&thinsp;890 days entirely, so held-out
+exact-match cannot be passed by memorising training dates.</p>
+<p><b>Teacher forcing.</b> Conditioning every position on the true prefix trains all 11 output positions in one parallel
+pass instead of a sequential decode per example; the causal mask is what keeps that pass honest.</p>
+<p><b>Greedy decoding.</b> The score that matters feeds the decoder its <em>own</em> characters from
+<code>&lt;bos&gt;</code> on &mdash; the condition training never sees &mdash; and counts a date only when all ten
+characters match.</p>
+<p><b>The alignment-matrix viewer.</b> \(A\) has one row per output and one column per source position
+(11&nbsp;&times;&nbsp;12), so the emergent, label-free alignment &mdash; the historical reason this wiring exists
+&mdash; is directly drawable, head by head and decode step by decode step.</p>
+</details>
 
 <details class="theory"><summary>Theory &mdash; the bottleneck, the mask and teacher forcing</summary>
 <p>Before attention, sequence-to-sequence models (Sutskever et&nbsp;al., 2014) compressed the whole source into the
@@ -203,6 +229,9 @@ the answer.</li>
 </ul>
 
 <h3>Where cross-attention is used</h3>
+<p>One question sorts every case below &mdash; and tells self- from cross-attention anywhere: <em>who supplies Q, and who
+supplies K and V?</em> The same sequence for all three is self-attention; Q from one stream and K, V from another is
+cross-attention; the operation inside never changes.</p>
 <ul>
 <li><b>Sequence-to-sequence models.</b> The original encoder&ndash;decoder Transformer for translation has this exact layout in
 every decoder layer, with the encoder run once and its memory re-read at every output step; speech models that write text from
@@ -243,5 +272,6 @@ fall quickly, so very short runs show the plateau only.</li>
 always measured on 2000 held-out day/format pairs.</li>
 </ul>
 <p class="ref">Previous: task 7 (vit-mnist) used self-attention over image patches. Next: task 9 (find-digit) lets a language query read
-an image, which is cross-attention again; task 10 (ta-vla) applies it to a robot policy.</p>
+an image, which is cross-attention again; task 10 (ta-vla) applies both wirings to a robot policy and shows that one
+masked softmax can do the two of them at once.</p>
 <script type="application/json" class="blkinfo">{"src": {"t": "source characters", "html": "<p><b>Purpose:</b> the input date in one of three formats, one vocabulary id per character, right-padded to a fixed length.</p><p><b>Shape:</b> <code>(12,)</code> ids per example — SRC_LEN 12; vocabulary 39 (36 characters + pad / bos / eos).</p><p><b>Updated:</b> a fresh batch of 128 (day, format) pairs is drawn from the 33&thinsp;200 training days every step; no parameters.</p>"}, "embS": {"t": "encoder embeddings", "html": "<p><b>Purpose:</b> turn each source id into a vector and add a learned position vector — the encoder&rsquo;s self-attention is order-blind without it.</p><p><b>Shapes:</b> char table <code>(39, d_model)</code> + position table <code>(12, d_model)</code> &rarr; <code>(12, d_model)</code>; d_model default 64.</p><p><b>Updated:</b> both tables train every optimizer step (AdamW). The decoder has its own separate pair of tables.</p>"}, "enc": {"t": "encoder Block", "html": "<p><b>Purpose:</b> one <code>minitf.Block</code> of self-attention (Q, K and V all from the source) plus an MLP: each character&rsquo;s row gets to see the whole date before the decoder reads it.</p><p><b>Shapes:</b> <code>(12, d_model)</code> in and out; its self-attention weights are <code>(heads, 12, 12)</code>.</p><p><b>Updated:</b> every step — but only through the K and V the memory supplies to cross-attention; no loss sits on the encoder itself.</p>"}, "mem": {"t": "memory M — the encoder output", "html": "<p><b>Purpose:</b> the notes the decoder reads: one row per source character. It is computed once per example and re-read at every decode step — the memory side never looks back at the writer.</p><p><b>Shape:</b> <code>(12, d_model)</code>.</p><p><b>Updated:</b> recomputed on every forward pass; it has no parameters of its own.</p>"}, "decin": {"t": "decoder input", "html": "<p><b>Purpose:</b> what the decoder conditions on. Training (teacher forcing): &lt;bos&gt; + the <i>true</i> target shifted right, all 11 positions in one parallel pass. Inference: &lt;bos&gt; + its <i>own</i> argmax outputs so far.</p><p><b>Shape:</b> <code>(11,)</code> ids — &lt;bos&gt; plus the 10 target characters.</p><p><b>Updated:</b> rebuilt per step (training) or per decode step (inference); no parameters.</p>"}, "embT": {"t": "decoder embeddings", "html": "<p><b>Purpose:</b> the decoder&rsquo;s own character and position tables (not shared with the encoder), giving each output position a distinct vector to ask questions from.</p><p><b>Shapes:</b> char table <code>(39, d_model)</code> + position table <code>(11, d_model)</code> &rarr; <code>(11, d_model)</code>.</p><p><b>Updated:</b> every optimizer step.</p>"}, "crossblock": {"t": "CrossBlock — the whole decoder", "html": "<p><b>Purpose:</b> one <code>minitf.CrossBlock</code>: masked self-attention over the output prefix, cross-attention into the memory, then an MLP — each sublayer pre-LayerNorm with a residual connection.</p><p><b>Shape:</b> <code>(11, d_model)</code> in and out.</p><p><b>Updated:</b> all its weights train every step. The whole default model (d_model 64, 4 heads) is 125&thinsp;863 parameters.</p>"}, "selfattn": {"t": "masked self-attention", "html": "<p><b>Purpose:</b> lets each output position read the characters already written. The causal mask sets scores at forbidden pairs to &minus;&infin;, so position t sees only positions &le; t — without it, every position could copy its target from the slot one to its right and the loss would collapse while decoding stayed at chance.</p><p><b>Shape:</b> weights <code>(heads, 11, 11)</code>, lower-triangular support.</p><p><b>Updated:</b> its projections train every step; the weights are recomputed per forward.</p>"}, "crossattn": {"t": "cross-attention — the read of the source", "html": "<p><b>Purpose:</b> the lesson&rsquo;s mechanism: Q comes from the decoder&rsquo;s own stream, K and V from the memory M. Row t of A says how much of each source character output t reads — the alignment the app draws, learned with no alignment labels.</p><p><b>Shapes:</b> A is <code>(heads, 11, 12)</code> — 11 output positions over 12 source positions; per head d_k = d_model / heads (defaults: 64 / 4 = 16).</p><p><b>Updated:</b> W_Q, W_K, W_V, W_O train every step; A itself is recomputed on every forward pass.</p>"}, "mlp": {"t": "MLP — per-position feed-forward", "html": "<p><b>Purpose:</b> a two-layer network (Linear &rarr; GELU &rarr; Linear, hidden 4&middot;d_model) applied to each output position separately, after the two attention reads.</p><p><b>Shape:</b> <code>(11, d_model)</code> in and out.</p><p><b>Updated:</b> every optimizer step.</p>"}, "readout": {"t": "readout — next-character logits", "html": "<p><b>Purpose:</b> a final LayerNorm and a linear map giving a distribution over the 39-symbol vocabulary at every output position.</p><p><b>Shape:</b> head <code>(d_model, 39)</code> &rarr; logits <code>(11, 39)</code>.</p><p><b>Updated:</b> every optimizer step.</p><p><b>Detail:</b> at inference <code>greedy_decode</code> takes the argmax of the <i>last</i> position&rsquo;s logits, one character per decode step, until &lt;eos&gt;.</p>"}, "loss": {"t": "L — cross-entropy on the next character", "html": "<p><b>Purpose:</b> compares every position&rsquo;s prediction with the true next character (the target, then &lt;eos&gt;), padding ignored — all 11 positions scored in one teacher-forced pass.</p><p><b>Shape:</b> scalar, averaged over positions and the batch of 128. A uniform guess gives ln 39 &asymp; 3.66.</p><p><b>Updated:</b> backpropagated every step; the only gradient source — the encoder is trained purely through this path.</p>"}}</script>

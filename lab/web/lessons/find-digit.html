@@ -5,6 +5,12 @@ A robot policy needs both at once: it looks at a scene (image tokens) and is <em
 the command decides where in the scene to look. This is a vision-language-action model (VLA) in miniature, with the action
 replaced by the simplest grounded answer there is: <b>where is the digit I was asked about &mdash; left, right, or not on
 the picture at all?</b></p>
+<p>In the ladder's wiring terms &mdash; one operation, three wirings &mdash; this is pure <b>cross-attention</b> used as
+an <em>interface</em>: Q comes from a command token that never came from the image, K and V from the 32 patch tokens,
+which first talked to each other through <b>self-attention</b> so a patch knows it belongs to a 4 before anybody asks for
+4s. Compare where the queries come from across the ladder: in task 8 they are the string being written, one per output
+character; here the query is a command picked at run time; in task 5 (force-token) they are K learned constants, one per
+action slot. Three sources of Q &mdash; one operation underneath.</p>
 
 <h3>The task</h3>
 <p>Each sample is a 28&times;56 canvas: two MNIST digits of <em>different</em> classes side by side, and a query, a class from
@@ -31,6 +37,22 @@ has to <em>find the matching patches</em> (its \(W_Q e_q\) must score high again
 the values it brings back must carry <em>where those patches are</em> (the position vectors travel in \(X\)), or nothing at all if none
 matched. Nothing in the loss says "look at the digit": the model learns where to look because that is the only way to lower
 the loss.</p>
+
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>The query skips the blocks.</b> The command reads the scene through exactly one cross-attention call
+(<code>(heads, 1, 32)</code>), and \(e_q\) never rides through the encoder &mdash; so the interface stays pure: the
+scene representation cannot be pre-mixed with the question, and the drawn attention row <em>is</em> the whole read.</p>
+<p><b>Two digits per canvas, different classes.</b> With two digits present, "what is on the canvas" does not determine
+the answer &mdash; only the command does &mdash; so the model is forced into content-based routing rather than plain
+classification.</p>
+<p><b>Left / right / absent.</b> Left vs right forces position to ride in the values (a weighted average carries no
+patch index); absent &mdash; a third of the samples &mdash; forces "I found nothing" to be expressible, the sibling of
+DETR's no-object class, and gets its own accuracy curve.</p>
+<p><b>Fresh canvases from a fixed digit pool.</b> Pairs never repeat but the <code>train_n</code> digits do, so the
+knob cleanly shows the price of a small set (92.3% at 2000 digits against 96.9% at 10&thinsp;000).</p>
+<p><b>The evaluation noise knob.</b> Gaussian pixel noise the training never saw probes what the learned read relies
+on: absent holds up best (82.7% at std 0.5) while left / right collapse first.</p>
+</details>
 
 <details class="theory"><summary>Theory &mdash; learned queries are content-based routing</summary>
 <p>Lesson 6 built the lookup with a query that came from the data; lesson 7's CLS token asked one fixed, learned question

@@ -1,3 +1,9 @@
+<h3>The question</h3>
+<p>What goes wrong when you clone an expert with plain regression? Behaviour cloning looks like the safe default:
+collect demonstrations, fit the actions with squared error, deploy. This lesson is the ladder's deliberate floor
+&mdash; the expert demonstrates two equally good behaviours, and the network converges to something no expert ever
+did. How and why it fails is what every later head is measured against.</p>
+
 <h3>The task</h3>
 <p>Two small problems, trained back to back in one run. <b>T1</b> is one step: an obstacle sits at position
 \(c \in [-0.4,\, 0.4]\); the policy must output a 2-D waypoint that gets past it. <b>T2</b> is closed
@@ -21,6 +27,24 @@ embedding is fixed at \(t = 0\), so it cannot do anything except map the observa
 that answer the conditional <b>mean</b> of the expert's actions. With two equally likely modes at \(c - 0.5\) and
 \(c + 0.5\), the mean is \(c\): straight into the obstacle.</p>
 
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>The MSE head &mdash; the deliberate floor.</b> The baseline every later head is measured against. The point is
+not to make it work but to make it fail for a stated reason: squared error fits the conditional mean, and with a
+bimodal expert the mean is an action nobody demonstrated (100% of T1 samples inside the obstacle).</p>
+<p><b>The same net as the generative heads.</b> The Regression head feeds the shared MLPDenoiser zeros where the next
+lesson feeds a noisy chunk, and pins the time embedding at \(t = 0\). Whatever the next lesson gains over this one is
+then the head, never capacity.</p>
+<p><b>Two sub-tasks, T1 and T2.</b> T1 is one step, so the mode average is directly visible as the scatter on
+\(a_x = c\); T2 is closed loop, where feedback partially corrects the averaged chunk (87% success at H = 16 in the
+tutorial, against T1's 100% collision). The pair is the warning that open-loop and closed-loop numbers do not move
+together.</p>
+<p><b>Action chunking.</b> The <em>Action chunk</em> knob (1/8/16) is here because single-step policies compound their
+own errors. In this task the whole chunk is executed; partial execution (<code>n_exec</code>) only arrives with the
+generative head.</p>
+<p><b>Z-scoring and EMA.</b> Observations are normalised with the training set's statistics, and evaluation uses an
+EMA copy (0.999) of the weights &mdash; shared plumbing of the whole ladder, so the measured failure is the
+estimator's property, not scaling or optimiser jitter.</p>
+</details>
 <details class="theory"><summary>Theory &mdash; the loss picks the estimator</summary>
 <p>Behaviour cloning turns control into supervised learning, and the loss then decides <em>which</em> statistic of
 the expert the network becomes. Squared error is not a neutral default: for each observation, the action that

@@ -26,6 +26,34 @@ softmax; the softmax turns scores into weights that sum to 1; the output is the 
 linear readout turns the result into 16 value scores. The attention code is the shared mini-transformer in
 <code>lab/tasks/minitf.py</code> &mdash; the same module the next attention tasks use.</p>
 
+<p><b>One operation, three wirings.</b> Attention is <em>one operation</em>: a query vector asks, every key answers
+&ldquo;how relevant am I?&rdquo;, and the values are mixed by those weights &mdash;
+\(\operatorname{softmax}(QK^\top/\sqrt{d_k})\,V\), nothing more. Who supplies Q and who supplies K and V is a
+<em>wiring</em> choice, and the wirings have names. <b>Self-attention</b>: Q, K and V all come from the same token
+sequence &mdash; the sequence talks to itself. <b>Cross-attention</b>: Q comes from one stream, K and V from another
+&mdash; one stream reads the other. This lesson's wiring is the operation in its purest form: one query token reads a
+set of stored pairs. To be honest about the names: in the wiring taxonomy that is already cross-attention &mdash; the
+query is its own one-token stream &mdash; the lesson just meets the operation before the names. The road ahead walks the
+wirings one by one: task 7 is self-attention (17 image tokens from one sequence talk to each other), task 8 runs both
+wirings in one model and finally names them, task 9 uses pure cross-attention as an interface, and task 10 delivers the
+punchline &mdash; self- and cross-attention are not different machinery but a mask pattern inside one softmax.</p>
+
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>One attention layer, one query token.</b> The lesson isolates the operation itself: a single \(q\) asking one
+question of a handful of tokens. No depth, no MLP between, no robot &mdash; whatever the live panel shows is attention
+doing it, not something downstream.</p>
+<p><b>Fused key+value tokens from 16 ids each.</b> A pair token is the <em>sum</em> of a key and a value embedding, so
+\(W_K\) and \(W_V\) are forced into their distinct roles (project out the label, project out the payload) &mdash; a raw
+dot product could not solve this. Sixteen ids keep chance at an honest \(1/16\), so the cliff from 6% to 100% is
+unmistakable.</p>
+<p><b>No position embeddings.</b> Position cannot carry the answer, so matching keys is the only route to the value
+&mdash; and it is why the trained model scores 100% on 2 to 12 pairs without retraining.</p>
+<p><b>Watching Q, K, V form.</b> The task is solved the moment \(W_Q\) and \(W_K\) line up; the heatmaps and vector
+grids exist to show that alignment happening &mdash; the plateau, then the concentration of weight.</p>
+<p><b>Fresh examples every step.</b> Batch 256 is drawn anew each step, so the accuracy curve is also held-out
+accuracy: nothing can be memorised.</p>
+</details>
+
 <details class="theory"><summary>Theory &mdash; attention is a differentiable dictionary</summary>
 <p>A hash map does this task's lookup in one line &mdash; but a hard "take the item whose key equals the query" is not
 differentiable, so nothing upstream of it could be trained. Attention replaces the argmax with a softmax-weighted blend of

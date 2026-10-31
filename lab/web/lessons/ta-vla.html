@@ -8,6 +8,22 @@ trained from scratch on the contact scene of the earlier tasks &mdash; two holes
 the policy has to <b>read the hole positions from a 32&times;32 image</b>, read the command from words, and feel the surface through
 the torque token.</p>
 
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>Two streams.</b> The prefix (image, words, state) and the suffix (torque token + noisy actions) get separate
+weights so the two halves can be sized independently &mdash; and so a pretrained VLM can stand in as the prefix, as in
+pi0 and SmolVLA; the mini keeps the layout at trainable-from-scratch size.</p>
+<p><b>The block mask and the KV cache.</b> Prefix queries never see the suffix, so the prefix keys and values cannot
+depend on the noisy actions or on \(t\): encoded once per observation, reused for all K denoising steps &mdash; the
+design reason the two-stream layout pays at inference, and worth seeing in the mini where it is four lines of code.</p>
+<p><b>The torque token.</b> Force enters as a token because a token is the unit attention can select or ignore, per
+layer and head. Measured here: press gently (2&nbsp;N) succeeds 98% with the token against 31% zeroed &mdash; a policy
+that cannot feel cannot tell 2&nbsp;N from 6&nbsp;N.</p>
+<p><b>The auxiliary force loss.</b> Predicting the forces the chunk <em>will cause</em> pushes the expert toward a small
+forward model of contact; at this scale the measured effect is small (&minus;2 points in T3, +0.4 in T4), which is
+exactly why it is a knob (<i>w</i>) and not a default claim.</p>
+<p><b>The zeroed twin.</b> Same parameters, zeros in: the cleanest control for "what did force buy?", kept from task 5.</p>
+</details>
+
 <details class="theory"><summary>Theory &mdash; two streams, one mask, and force as a token</summary>
 <p>The two-stream layout is an inference-cost design. A VLA splits the work into understanding the observation (the prefix: image,
 words, state &mdash; the expensive part, a pretrained VLM in pi0 and SmolVLA) and writing the action chunk (the suffix &mdash;
@@ -170,6 +186,14 @@ policy encodes the prefix <b>once per observation</b> (<code>with model.cache(co
 every layer, and reuses them for all <i>K</i> flow-matching steps; only the cheap suffix is recomputed <i>K</i> times. Each
 denoising step is one pass of the action expert over 9 tokens that attend to the cached prefix. (The image is rendered from the
 5-number scene state inside the prefix encoder, so the training set stores numbers, not pixels, and the camera is simulated.)</p>
+<p><b>The ladder's punchline: self vs cross is a mask pattern, not machinery.</b> Tasks 6&ndash;9 wired one operation
+three ways: a lone query reading a set of stored pairs (task 6), a sequence talking to itself (<b>self-attention</b>,
+task 7), one stream reading another (<b>cross-attention</b>, named in task 8, used as an interface in task 9 and by
+task 5's learned queries). TAVLAMini retires the distinction: it has no separate cross-attention module, just one
+softmax over \([K_p; K_s]\) with a block mask. Inside that one softmax the prefix quadrant is self-attention (the
+observation talks to itself) and the suffix-reads-prefix quadrant is cross-attention (the action expert reads the
+observation) &mdash; the same operation, told apart only by who is allowed to see whom. One operation, three wirings,
+and a mask can express every one of them.</p>
 
 <h3>Two losses</h3>
 <p>The action tokens are trained exactly like the earlier flow tasks. With \(x_t = t\,e + (1-t)\,x_0\) a noisy chunk,

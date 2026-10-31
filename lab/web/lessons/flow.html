@@ -1,5 +1,11 @@
+<h3>The question</h3>
+<p>Same data, same net &mdash; can a generative head keep both modes? The previous lesson ended with a network
+faithfully converging to the conditional mean, an action nobody demonstrated. If the failure lived in the loss rather
+than in the data or the capacity, swapping only the output head should make the crash rate collapse &mdash; and the
+size of the collapse is the measurement.</p>
+
 <h3>The task</h3>
-<p>The same two problems as the previous task, with the same scripted bimodal expert and the same data. <b>T1</b>: an
+<p>The two problems of the previous task, unchanged, with the same scripted bimodal expert. <b>T1</b>: an
 obstacle at \(c \in [-0.4,\, 0.4]\), the policy outputs a 2-D waypoint that passes it on the left or on the right.
 <b>T2</b>: a closed-loop point mass from near (0, -1) to near (0, 1) around a disc of radius 0.3, with action chunks of
 <code>horizon</code> steps of which the first <code>n_exec</code> are played before re-planning. The only thing that
@@ -38,6 +44,23 @@ network predicts the <b>noise</b> \(\hat\epsilon\):</p>
 deterministic DDIM over a subsequence of \(K\) of the 100 training timesteps. Same idea, curved path, different
 target.</p>
 
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>The flow head.</b> The fix under test: model the distribution of expert chunks and sample from it. Each noise
+draw lands in one mode's basin, so the multimodality never has to fit into a single network output &mdash; tutorial
+T1: 3.0% collision against MSE's 100%.</p>
+<p><b>Same net, same data as the previous task.</b> Only the zeros become a noisy chunk and the pinned \(t = 0\)
+becomes the real time embedding. The controlled comparison: whatever changes is attributable to the head alone.</p>
+<p><b>The Beta(1.5, 1) time draw.</b> pi0's weighting: tilt training toward noisy \(t\), where the field is still
+deciding between modes and is hardest to learn.</p>
+<p><b>The K Euler-steps knob.</b> Sampling is numerical integration, and K makes its cost&ndash;accuracy trade
+measurable: one step integrates a bent field in a straight line and lands on the mean again (99.95% collision at
+K = 1 in the tutorial sweep); the knee sits around 8&ndash;16.</p>
+<p><b>The DDPM head.</b> The comparison arm: the same net trained to predict the noise along a curved path, sampled
+with DDIM. It shows the principle is not flow-specific &mdash; and its rougher K-sweep and weaker closed loop
+(67.5% vs 99% at H = 16) are part of the lesson.</p>
+<p><b>n_exec &mdash; partial chunk execution.</b> New in this task: play only the first <code>n_exec</code> actions of
+a chunk, then re-sample. Commitment versus reactivity &mdash; the trade the contact lessons lean on.</p>
+</details>
 <details class="theory"><summary>Theory &mdash; regressing to the marginal velocity field</summary>
 <p>What the head learns is a transport: a velocity field whose ODE carries the noise distribution onto the expert
 distribution. Sampling integrates that ODE,</p>

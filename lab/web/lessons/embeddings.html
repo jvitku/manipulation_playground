@@ -70,6 +70,23 @@ while not env.done.all():
     a = pol.act(c2d.t4_obs(env))
     env.step(a)</code></pre></details>
 
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>The four encoding arms.</b> The controlled comparison is the experiment: state, force window, net, loss and data
+are identical, and only the command vector's geometry changes. The four span the design space &mdash; one-hot is pure
+identity on orthogonal axes, binary is the same information compressed into an arbitrary geometry, text is meaning
+learned from the loss alone (the VLA miniature), continuous is meaning pre-resolved by a human.</p>
+<p><b>A fresh net per arm.</b> Every arm trains its own MLPDenoiser from scratch (the text arm's embedding table lives
+inside its checkpointed CondDenoiser), so no arm inherits features from another and the curves compare encodings, not
+training order.</p>
+<p><b>Same demos, split and scenes.</b> One collection of successful demonstrations, the same train/val split and the
+same 200 fixed closed-loop scenes for all arms &mdash; even the per-episode hole-perception noise is seeded by episode
+index, so every arm sees the same perceived holes.</p>
+<p><b>hole_obs.</b> <em>Tell every arm where the holes are</em> removes the confound that the continuous code alone
+carries the target's x; off is kept as a knob to show what a confounded comparison looks like.</p>
+<p><b>Per-encoding normalisation.</b> One-hot, binary and token ids pass through unnormalised (categories have no
+scale), while the continuous code is z-scored (it mixes metres and newtons): the scale of a representation is part of
+the design, so it is decided per arm.</p>
+</details>
 <details class="theory"><summary>Theory &mdash; what a conditioning code decides</summary>
 <p>The command vector \(c\) enters the network once, concatenated with the state and force history, so the only thing the four
 arms change is the <em>geometry</em> the first layer sees &mdash; and that geometry decides what is easy to learn. A one-hot gives

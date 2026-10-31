@@ -1,3 +1,9 @@
+<h3>The question</h3>
+<p>Stage&nbsp;1 solved this insertion by copying an expert. This task asks the opposite: can the insertion be learned from
+<b>reward alone</b>, with no demonstrations at all? The agent starts knowing nothing, acts, and gets a number back &mdash;
+the question is whether that signal, pushed through an off-policy actor-critic, is enough to find a 0.5&nbsp;mm-precision
+behaviour that random motion essentially never performs by accident.</p>
+
 <h3>The task</h3>
 <p>The same Panda arm hidden-hole insertion as the repo's Stage&nbsp;1 behaviour cloning, but now with <b>no expert and no labels</b>. The agent
 sees the last 4 steps of a 20-number observation (tip position relative to the start, its velocity, the peg tilt, the wrist force/torque, the last action),
@@ -66,6 +72,24 @@ environment step.</p>
 <p class="ref">Red = where a loss is computed; blue = how a network is updated. The three tricks that make it TD3 are all in the target: the minimum
 over <em>two</em> critics, noise on the target action, and the actor and target networks moving slowly.</p>
 
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>Twin critics.</b> The actor is gradient ascent on \(Q\), so it actively seeks out whatever the critic overvalues;
+taking \(\min(Q_1', Q_2')\) in the target trades that upward spiral for mild pessimism. Without this the architecture is
+DDPG, notorious for exactly that divergence.</p>
+<p><b>Delayed actor + target smoothing.</b> The actor moves only every 2nd critic step, targets blend with
+&tau;&nbsp;=&nbsp;0.005, and the target action carries clipped noise (&sigma;&nbsp;=&nbsp;0.2, clip &plusmn;0.5): the
+target \(y\) stays near-stationary and a narrow spike in the critic surface cannot serve as one.</p>
+<p><b>Replay buffer.</b> The simulation, not the networks, is the cost here; storing every transition and sampling
+decorrelated batches of 256 lets each expensive environment step teach many gradient steps (one update per step), off
+the trajectory order.</p>
+<p><b>Random warm-up.</b> The first min(5000, steps/5) actions are uniform random, before any update: the buffer gets
+broad, policy-independent coverage before the networks start shaping the data they will train on.</p>
+<p><b>Reward shaping.</b> The +50 bonus sits behind a 0.5&nbsp;mm needle Gaussian exploration never threads, so the
+reward adds a gradient toward it: depth progress and potential-based xy shaping (provably policy-preserving) point the
+way, the time cost punishes hovering, and the force penalty makes the dive-to-abort basin expensive.</p>
+<p><b>Video evals (render_n).</b> The success number alone cannot say <em>which</em> local optimum a failed seed fell
+into; the rendered episodes show dive-and-abort vs hover-until-timeout at a glance.</p>
+</details>
 <details class="theory"><summary>Theory &mdash; overestimation bias and the three fixes</summary>
 <p>Bootstrapped value learning has a built-in optimism problem. The TD target evaluates the <em>best</em> action the current policy can name, and a
 maximum over noisy estimates is biased upward: for zero-mean errors \(\epsilon_a\),</p>

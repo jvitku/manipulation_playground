@@ -1,3 +1,9 @@
+<h3>The question</h3>
+<p>Can a cloned policy find a hole it cannot see, by feel? The earlier tasks cloned an expert on a toy point mass that
+observed everything that mattered; here the decisive facts &mdash; where the hole really is, whether the peg has
+touched down, how hard it is pressing &mdash; reach the policy only through a force sensor. The same flow head is
+asked to use that channel, and an identical twin trained without it measures what touch is worth.</p>
+
 <h3>The task</h3>
 <p>A peg must be inserted into a hole in a surface, seen from the side (x right, z up). The hole is 1.2 cm wide, 6 cm
 deep, and sits at a random x in [-8, 8] cm; the policy is told only a <em>noisy estimate</em> of it (&sigma; = 3 cm
@@ -32,6 +38,25 @@ sliding down a chamfer, or that it is pressing too hard.</p>
 evaluation), so the net still gets the position but is blind to contact. Compare the two runs at equal settings: that
 difference is the value of touch. At evaluation, <em>Zero the force input</em> blinds a force-trained net after the fact.</p>
 
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>The force history in the observation (20 of 22 channels).</b> Surface height and spring stiffness appear in no
+observation, and the hole estimate is often wrong by more than the chamfer catches; touchdown, the stiffness slope and
+the chamfer's Fx bias exist only in the force window. It is what makes the task solvable &mdash; tutorial reference
+86.7% with force vs 61.3% zeroed.</p>
+<p><b>The zeroed twin.</b> <code>use_force</code> off blanks those 20 channels in training and evaluation: identical
+net, data and optimiser, only the information deleted, so the gap between the runs is the value of touch.</p>
+<p><b>Successful episodes only.</b> The scripted expert fails some scenes; the filter keeps the cloned distribution
+clean (the status line says how many survived), at the standard BC price that the policy never sees recoveries from
+the discarded failures.</p>
+<p><b>Chunk vs n_exec.</b> The chunk (default 16) is commitment &mdash; one sample sweeps one way instead of dithering
+&mdash; while <code>n_exec</code> (default 8) is the feedback delay: the fresh force window can only change behaviour
+at a re-plan.</p>
+<p><b>The impedance controller and the 15 N stop.</b> Realism with consequences: the action moves a reference, a
+spring does the pressing, and pressing without feel ends as a force abort &mdash; the blind twin's dominant failure
+(74&ndash;80 of 200 episodes against 22&ndash;24 with force).</p>
+<p><b>Sensor noise (0.05 N).</b> The readings arrive noisy, so the policy must read patterns in the window rather than
+exact values; the evaluation knob lets you raise it.</p>
+</details>
 <details class="theory"><summary>Theory &mdash; a generative policy in a partially observed loop</summary>
 <p>The insertion task is partially observed: surface height and spring stiffness are drawn per episode and appear in
 no observation, and the hole is told only through a noisy estimate. Position alone therefore cannot distinguish

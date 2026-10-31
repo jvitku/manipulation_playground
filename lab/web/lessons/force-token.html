@@ -1,3 +1,6 @@
+<h3>The question</h3>
+<p>What is a force reading worth to a policy that cannot see what it needs to know? The hole sits under a position estimate that is wrong by more than the chamfer catches in half the episodes, and nothing in the proprioceptive channels says where it really is &mdash; the information arrives only through contact. This experiment trains the same policy with and without the 9 force channels and lets the success-rate gap put a number on touch.</p>
+
 <h3>The task</h3>
 <p>This is the headline result of the repo's Stage&nbsp;1 (docs/FINDINGS.md, &ldquo;Stage 1&rdquo;), run here on the real
 simulator: a 3-axis <b>gantry</b> holds a square peg over a square hole with <b>0.5 mm clearance</b>. The hole is at a random
@@ -18,7 +21,11 @@ The 9 force numbers are the <b>force token</b>. <em>Demo action noise</em> pertu
 <h3>The method: ACT-lite</h3>
 <p>A small action-chunking transformer. The H observation tokens go through a linear embedding plus learned positions and a 3-layer
 transformer encoder; K <b>learned queries</b> cross-attend to that memory in a 2-layer decoder and a linear head reads out K actions
-(about 800&nbsp;k parameters; the <em>MLP</em> baseline flattens the window instead, 116&nbsp;k). It is trained by plain regression.
+(about 800&nbsp;k parameters; the <em>MLP</em> baseline flattens the window instead, 116&nbsp;k). In the wiring taxonomy
+that task&nbsp;8 later names &mdash; one operation, three wirings &mdash; the encoder is <b>self-attention</b> over the
+history (Q, K and V all from the same window of observation tokens: the window talks to itself) and the decoder is
+<b>cross-attention</b> (Q from the K learned queries, K and V from the encoder's memory: the queries read the history).
+It is trained by plain regression.
 Near the end of an episode there are fewer than K future actions, so those slots are masked:</p>
 <p>$$L = \frac{\sum_{b}\sum_{k} m_{b,k}\;\tfrac{1}{3}\left\lVert \hat a_{b,k} - a^{*}_{b,k}\right\rVert_1}{\sum_{b}\sum_{k} m_{b,k}}$$</p>
 <p class="ref">where \(m\) is the validity mask, \(\hat a\) the predicted chunk and \(a^*\) the expert chunk, both z-scored per channel.
