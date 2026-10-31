@@ -73,9 +73,10 @@ class AttnLookup(nn.Module):
         return torch.cat([self.ek(keys) + self.ev(vals), query], 1)
 
     def forward(self, keys, vals, qpos):
-        x = self.tokens(keys, vals, qpos)
-        out, attn = self.mha(x[:, -1:], x)  # attn: [B, H, 1, n+1]
-        return self.readout(out[:, 0]), x, attn
+        # legend: B = batch, n = pairs, T = n + 1 tokens, D = d_model, H = heads, V = n_vals
+        x = self.tokens(keys, vals, qpos)  # keys [B, n], vals [B, n], qpos [B] -> x [B, T, D]
+        out, attn = self.mha(x[:, -1:], x)  # q from the query token [B, 1, D]; attn [B, H, 1, T]
+        return self.readout(out[:, 0]), x, attn  # out [B, 1, D] -> logits [B, V]
 
 
 def build(meta: dict) -> AttnLookup:
@@ -152,19 +153,21 @@ def _qkv_payload(model, keys, vals, qpos) -> dict:
 
 @torch.no_grad()
 def accuracy(model, meta: dict, n: int, count: int, seed: int, dev) -> float:
+    # legend: b = chunk of examples, n = pairs, V = n_vals
     model.eval()
     gen = torch.Generator(device=dev).manual_seed(seed)
     hit = tot = 0
     while tot < count:
         b = min(EVAL_BATCH, count - tot)
-        keys, vals, qpos = make_batch(b, n, meta, gen, dev)
-        pred = model(keys, vals, qpos)[0].argmax(-1)
+        keys, vals, qpos = make_batch(b, n, meta, gen, dev)  # keys/vals [b, n], qpos [b]
+        pred = model(keys, vals, qpos)[0].argmax(-1)  # logits [b, V] -> pred [b]
         hit += int((pred == vals.gather(1, qpos[:, None])[:, 0]).sum())
         tot += b
     return hit / tot
 
 
 def train(ctx) -> None:
+    # legend: B = BATCH examples per step, n = pairs per example, V = n_vals value classes
     P = ctx.params
     steps, n = int(P["steps"]), int(P["n_pairs"])
     meta = {"heads": int(P["heads"]), "d_k": int(P["d_k"]), "n_keys": N_KEYS, "n_vals": N_VALS,
@@ -187,10 +190,10 @@ def train(ctx) -> None:
             ctx.set_status(state="stopped")
             return
         model.train()
-        keys, vals, qpos = make_batch(BATCH, n, meta, gen, dev)
-        target = vals.gather(1, qpos[:, None])[:, 0]
-        logits, _, _ = model(keys, vals, qpos)
-        loss = F.cross_entropy(logits, target)
+        keys, vals, qpos = make_batch(BATCH, n, meta, gen, dev)  # keys/vals [B, n], qpos [B]
+        target = vals.gather(1, qpos[:, None])[:, 0]  # the value under the queried key: [B]
+        logits, _, _ = model(keys, vals, qpos)  # [B, V]
+        loss = F.cross_entropy(logits, target)  # [B, V] vs [B] -> scalar
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()

@@ -135,25 +135,34 @@ away and the model could still say "present", but left against right would be un
 <p class="ref">Shapes are for the defaults (2 blocks, 2 heads, d_model 64, 122&thinsp;947 parameters). The query row of the
 attention is what the app draws: one 4&times;8 map per head over the canvas.</p>
 
-<details class="code"><summary>Encoder: patches to tokens</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py">x = self.embed(patchify(imgs, PATCH)) + self.pos
+<details class="code"><summary>Encoder: patches to tokens</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py"># legend: B = batch, N = 32 patch tokens (4 x 8 grid), D = d_model, H = heads
+# ...
+x = self.embed(patchify(imgs, PATCH)) + self.pos  # [B, N, 7*7] -&gt; [B, N, D]
 for blk in self.blocks:
-    x, _ = blk(x)
-return self.ln_kv(x)</code></pre></details>
-<details class="code"><summary>The command attends over the patches</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py">qt = self.query(q)[:, None]  # [B, 1, D]
-out, attn = self.readout(qt, tokens)
-return self.head(self.norm(qt + out)[:, 0]), attn</code></pre></details>
-<details class="code"><summary>Training step</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py">cv, q, t, _ = make_canvases(pool_x, None, BATCH, rng, pools=pool_pools)
-logits, _ = model(norm(cv).to(dev), torch.as_tensor(q).to(dev))
-loss = F.cross_entropy(logits, torch.as_tensor(t).to(dev))
+    x, _ = blk(x)  # self-attention keeps [B, N, D]
+return self.ln_kv(x)  # [B, N, D]</code></pre></details>
+<details class="code"><summary>The command attends over the patches</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py"># legend: B = batch, N = 32 patch tokens (4 x 8 grid), D = d_model, H = heads
+# ...
+qt = self.query(q)[:, None]  # class ids [B] -&gt; query token [B, 1, D]
+out, attn = self.readout(qt, tokens)  # out [B, 1, D], attn [B, H, 1, N]
+return self.head(self.norm(qt + out)[:, 0]), attn  # [B, D] -&gt; logits [B, 3]</code></pre></details>
+<details class="code"><summary>Training step</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py"># legend: B = BATCH canvases per step
+# ...
+cv, q, t, _ = make_canvases(pool_x, None, BATCH, rng, pools=pool_pools)  # cv [B, 28, 56]
+logits, _ = model(norm(cv).to(dev), torch.as_tensor(q).to(dev))  # q [B] -&gt; logits [B, 3]
+loss = F.cross_entropy(logits, torch.as_tensor(t).to(dev))  # vs truth t [B]
 opt.zero_grad(set_to_none=True)
 loss.backward()
 opt.step()
 sched.step()</code></pre></details>
-<details class="code"><summary>Inference: predict and score</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py">    logits, a = model(x, torch.as_tensor(query[i : i + 500]).to(dev))
-    probs.append(logits.softmax(-1).cpu())
-    attns.append(a[:, :, 0].cpu())
+<details class="code"><summary>Inference: predict and score</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py"># legend: n = all canvases, b = chunk of &lt;= 500, H = heads, N = 32 patches
 # ...
-pred = predict(model, canvas, query, dev)[0].argmax(-1).numpy()</code></pre></details>
+    x = norm(canvas[i : i + 500]).to(dev)  # [b, 28, 56]
+    logits, a = model(x, torch.as_tensor(query[i : i + 500]).to(dev))  # [b, 3], [b, H, 1, N]
+    probs.append(logits.softmax(-1).cpu())  # [b, 3]
+    attns.append(a[:, :, 0].cpu())  # [b, H, 1, N] -&gt; [b, H, N]
+# ...
+pred = predict(model, canvas, query, dev)[0].argmax(-1).numpy()  # probs [n, 3] -&gt; pred [n]</code></pre></details>
 
 <h3>What to watch</h3>
 <p>While the run trains, the <b>live attention</b> panel under the charts shows a fixed probe canvas (the first two test digits of

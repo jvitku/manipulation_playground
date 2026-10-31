@@ -116,10 +116,11 @@ class _Base:
 
 
 def _make_actor_agent(obs_dim: int, device: str = "cpu"):
+    # legend: B = batch; obs_dim = 24 = norm obs 22 + base action 2; act_dim = 2 (delta)
     from fvb.policy.td3 import TD3, TD3Config
 
     cfg = TD3Config()
-    agent = TD3(obs_dim, 2, cfg, device)
+    agent = TD3(obs_dim, 2, cfg, device)  # actor [B, obs_dim] -> delta [B, 2]
     with torch.no_grad():  # start AT the base policy: delta ~ 0
         agent.actor.net[-1].weight.mul_(0.01)
         agent.actor.net[-1].bias.zero_()
@@ -129,7 +130,8 @@ def _make_actor_agent(obs_dim: int, device: str = "cpu"):
 
 @torch.no_grad()
 def _delta(actor, feats: np.ndarray) -> np.ndarray:
-    return actor(torch.as_tensor(feats)).numpy()
+    # legend: N = parallel scenes; feats [N, 24] = norm obs [N, 22] + base action [N, 2]
+    return actor(torch.as_tensor(feats)).numpy()  # [N, 24] -> delta [N, 2] in [-1, 1]
 
 
 def _rollout(base: _Base, actor, scale, n, seed, est_sigma=EST_SIGMA, sensor_noise=SENSOR_NOISE,
@@ -144,12 +146,14 @@ def _rollout(base: _Base, actor, scale, n, seed, est_sigma=EST_SIGMA, sensor_noi
             "delta": []} for i in range(record)]  # fmt: skip
     ret = np.zeros(n)
     rew = _Reward(env, **(ret_params or {}))
+    # legend: N = parallel scenes (vectorised env); actions and deltas are [N, 2]
     while not env.done.all():
         live = ~env.done.copy()
         raw = c2d.t3_obs(env)
-        ab = pol.act(raw)
+        ab = pol.act(raw)  # base action [N, 2]
+        # feats [N, 22] + [N, 2] -> [N, 24]; actor -> delta [N, 2], scaled; zeros when off
         d = scale * _delta(actor, base.feats(raw, ab)) if actor is not None else np.zeros_like(ab)
-        a = np.clip(ab + d, -1, 1)
+        a = np.clip(ab + d, -1, 1)  # compose: [N, 2] + [N, 2] -> [N, 2], clipped
         env.step(a)
         ret += rew.step(live)
         for i in range(record):
@@ -236,7 +240,7 @@ def train(ctx) -> None:
     base_success = b["success"]
     ctx.log(0, base_success=base_success)
 
-    agent, cfg = _make_actor_agent(2 + 2 * c2d.HIST + 2)
+    agent, cfg = _make_actor_agent(2 + 2 * c2d.HIST + 2)  # 22-D obs + 2-D base action = 24-D in
     from fvb.policy.td3 import ReplayBuffer
 
     buf = ReplayBuffer(agent.obs_dim, 2, min(1_000_000, max(steps, 1000)))
@@ -268,6 +272,7 @@ def train(ctx) -> None:
             ctx.log(at, **{k: round(float(np.mean(v)), 4) for k, v in acc.items()})
             acc = {}
 
+    # legend: N = N_ENVS parallel scenes; o [N, 24] = norm obs [N, 22] + base action [N, 2]
     while t < steps:
         env = c2d.t3_scenes(N_ENVS, 1_000_000 * (seed + 1) + rnd, EST_SIGMA)
         env.noise = SENSOR_NOISE
@@ -276,7 +281,7 @@ def train(ctx) -> None:
         rew = _Reward(env, **rwd)
         raw = c2d.t3_obs(env)
         ab = pol.act(raw)
-        o = base.feats(raw, ab)
+        o = base.feats(raw, ab)  # [N, 22] + [N, 2] -> [N, 24]
         ep_ret, ep_d, ep_n = np.zeros(N_ENVS), np.zeros(N_ENVS), np.zeros(N_ENVS)
         while not env.done.all() and t < steps:
             if not ctx.should_continue():
@@ -286,13 +291,15 @@ def train(ctx) -> None:
                 ctx.set_status(state="stopped")
                 return
             live = ~env.done.copy()
+            # actor: o [N, 24] -> delta [N, 2]; + exploration noise, clipped to [-1, 1]
             d = np.clip(_delta(agent.actor, o) + rng.normal(0, expl, (N_ENVS, 2)), -1, 1)
-            env.step(np.clip(ab + scale * d, -1, 1))
+            env.step(np.clip(ab + scale * d, -1, 1))  # [N, 2] + scale * [N, 2] -> [N, 2], clipped
             r = rew.step(live)
             raw = c2d.t3_obs(env)
-            ab = pol.act(raw)
-            o2 = base.feats(raw, ab)
+            ab = pol.act(raw)  # base action [N, 2]
+            o2 = base.feats(raw, ab)  # [N, 22] + [N, 2] -> [N, 24]
             term = np.isin(env.outcome, ("success", "force_abort"))
+            # store per live scene: o[i] [24], action = delta d[i] [2] (not the sum)
             for i in np.flatnonzero(live):
                 buf.add(o[i], d[i].astype(np.float32), float(r[i]), o2[i], bool(term[i]))
             ep_ret += r

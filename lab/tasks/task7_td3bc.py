@@ -92,6 +92,7 @@ class BCHooks:
     def prepare(self, ctx, env, buf, rng) -> bool:
         from fvb.policy.td3 import ReplayBuffer
 
+        # legend: O = obs dims, A = action dims; buffer rows hold o [O], a [A] transitions
         self.demo_buf = ReplayBuffer(env.obs_dim, env.act_dim, max(1, self.n_demos) * 250)
         stats = collect_demos(ctx, env, self.n_demos, [buf, self.demo_buf])
         if stats is None:

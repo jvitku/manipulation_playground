@@ -133,29 +133,38 @@ information also flows past attention through the residuals &mdash; which is why
 tokens of 196 pixels each. Per block the attention weights have shape (heads, tokens, tokens); the app draws only row 0, the
 CLS token's row.</p>
 
-<details class="code"><summary>Patchify: image to a sequence of tokens</summary><pre><code class="language-python" data-src="lab/tasks/task_vit.py">x = imgs.reshape(b, gh, patch, gw, patch).permute(0, 1, 3, 2, 4)  # [B, gy, gx, py, px]
-return x.reshape(b, gh * gw, patch * patch)</code></pre></details>
-<details class="code"><summary>ViT forward: CLS token, positions, blocks</summary><pre><code class="language-python" data-src="lab/tasks/task_vit.py">x = self.embed(patchify(imgs, self.patch))
-x = torch.cat([self.cls.expand(x.shape[0], -1, -1), x], 1) + self.pos
+<details class="code"><summary>Patchify: image to a sequence of tokens</summary><pre><code class="language-python" data-src="lab/tasks/task_vit.py"># legend: B = batch, gh x gw = patch grid, p = patch side (px), N = gh * gw patches
+b, hh, ww = imgs.shape  # [B, hh, ww] pixels
+gh, gw = hh // patch, ww // patch  # patch grid
+x = imgs.reshape(b, gh, patch, gw, patch).permute(0, 1, 3, 2, 4)  # -&gt; [B, gh, gw, p, p]
+return x.reshape(b, gh * gw, patch * patch)  # [B, N, p*p]</code></pre></details>
+<details class="code"><summary>ViT forward: CLS token, positions, blocks</summary><pre><code class="language-python" data-src="lab/tasks/task_vit.py"># legend: B = batch, N = patches (p x p px), T = N + 1 (CLS first), D = d_model, H = heads
+x = self.embed(patchify(imgs, self.patch))  # [B, N, p*p] -&gt; [B, N, D]
+x = torch.cat([self.cls.expand(x.shape[0], -1, -1), x], 1) + self.pos  # [B, T, D]
 attns = []
 for blk in self.blocks:
-    x, a = blk(x)
+    x, a = blk(x)  # x [B, T, D], a [B, H, T, T]
     attns.append(a)
-return self.head(self.norm(x)[:, 0]), attns</code></pre></details>
-<details class="code"><summary>Transformer block (pre-LayerNorm, residuals)</summary><pre><code class="language-python" data-src="lab/tasks/minitf.py">h = self.ln1(x)
-a, attn = self.attn(h, mask=mask)
-x = x + a
-return x + self.mlp(self.ln2(x)), attn</code></pre></details>
-<details class="code"><summary>Training step</summary><pre><code class="language-python" data-src="lab/tasks/task_vit.py">idx = torch.randint(n, (BATCH,), generator=gen, device=dev)
-loss = F.cross_entropy(model(x[idx])[0], y[idx])
+return self.head(self.norm(x)[:, 0]), attns  # CLS row [B, D] -&gt; logits [B, 10]</code></pre></details>
+<details class="code"><summary>Transformer block (pre-LayerNorm, residuals)</summary><pre><code class="language-python" data-src="lab/tasks/minitf.py"># legend: B = batch, T = tokens, D = d_model, H = heads; x: [B, T, D]
+h = self.ln1(x)  # [B, T, D], normalised
+a, attn = self.attn(h, mask=mask)  # a [B, T, D], attn [B, H, T, T]
+x = x + a  # residual: [B, T, D]
+return x + self.mlp(self.ln2(x)), attn  # MLP keeps [B, T, D]</code></pre></details>
+<details class="code"><summary>Training step</summary><pre><code class="language-python" data-src="lab/tasks/task_vit.py"># legend: B = BATCH images per step
+# ...
+idx = torch.randint(n, (BATCH,), generator=gen, device=dev)  # [B]
+loss = F.cross_entropy(model(x[idx])[0], y[idx])  # logits [B, 10] vs labels [B]
 opt.zero_grad(set_to_none=True)
 loss.backward()
 opt.step()
 sched.step()</code></pre></details>
 <details class="code"><summary>Inference: argmax over the class logits</summary><pre><code class="language-python" data-src="lab/tasks/task_vit.py">def accuracy(model, x, y, dev) -&gt; float:
+    # x [N, 28, 28] images, y [N] labels; N = images, scored in chunks of 1000
     model.eval()
     hit = 0
     for i in range(0, len(x), 1000):
+        # chunk logits [1000, 10] -&gt; pred [1000], compared with the labels chunk
         hit += int((model(x[i : i + 1000].to(dev))[0].argmax(-1).cpu() == y[i : i + 1000]).sum())
     # ...</code></pre></details>
 

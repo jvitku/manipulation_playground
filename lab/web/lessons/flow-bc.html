@@ -150,28 +150,32 @@ the policy never sees recoveries from the failures that were filtered out.</p>
 previous task.</p>
 
 <details class="code"><summary>Observation: state plus the force-history window</summary><pre><code class="language-python" data-src="lab/tasks/task3_flow_bc.py">def _obs_tensor(raw: dict, dev, use_force: bool) -&gt; torch.Tensor:
-    """env obs dict (state 2 + torque 20) -&gt; (n, 22); torque zeroed when `use_force` is false."""
-    tq = raw["torque"] if use_force else np.zeros_like(raw["torque"])
+    """env obs dict (state 2 + torque 20) -&gt; [n, 22]; torque zeroed when `use_force` is false."""
+    # n = episodes, O = obs dims; concat state [n, 2] + torque [n, 20] -&gt; [n, O] with O = 22
+    tq = raw["torque"] if use_force else np.zeros_like(raw["torque"])  # [n, 20]
     return torch.as_tensor(np.concatenate([raw["state"], tq], 1), dtype=torch.float32, device=dev)</code></pre></details>
 <details class="code"><summary>Flow-matching loss: regress the velocity of a straight line</summary><pre><code class="language-python" data-src="src/fvb/ta_tutorial/generative.py">def loss(self, model, x0: torch.Tensor, cond, mask: torch.Tensor | None = None):
     # ...
-    e = torch.randn_like(x0)
-    t = self.sample_t(x0.shape[0], x0.device)
-    tt = t[:, None, None]
-    x_t = tt * e + (1 - tt) * x0
-    v, extra = model(x_t, t, cond)
-    err = (v - (e - x0)).pow(2).mean(-1)  # (B, H)
+    # B = batch, H = chunk horizon, A = action dims; x0 [B, H, A] is the expert chunk
+    e = torch.randn_like(x0)  # noise [B, H, A]
+    t = self.sample_t(x0.shape[0], x0.device)  # noise level per sample [B]
+    tt = t[:, None, None]  # [B] -&gt; [B, 1, 1] for broadcasting
+    x_t = tt * e + (1 - tt) * x0  # interpolate on the line: [B, H, A]
+    v, extra = model(x_t, t, cond)  # predicted velocity [B, H, A]
+    err = (v - (e - x0)).pow(2).mean(-1)  # target e - x0: [B, H, A] -&gt; [B, H]
     # ...
-    return err.mean(1), extra</code></pre></details>
-<details class="code"><summary>Closed-loop evaluation step</summary><pre><code class="language-python" data-src="lab/tasks/task3_flow_bc.py">pol = ChunkPolicy(
+    return err.mean(1), extra  # [B, H] -&gt; [B]</code></pre></details>
+<details class="code"><summary>Closed-loop evaluation step</summary><pre><code class="language-python" data-src="lab/tasks/task3_flow_bc.py"># n = episodes, O = obs dims (22), H = chunk horizon, K = sampling steps, 2 = action dims
+# make_cond maps env obs -&gt; {"obs": [n, O]}; the policy samples action chunks [n, H, 2]
+pol = ChunkPolicy(
     model, make_gen(), ds_like, lambda o: {"obs": _obs_tensor(o, dev, use_force)}, n_exec, K,
     seed=seed,
 )  # fmt: skip
 # ...
 while not env.done.all():
     # ...
-    a = pol.act(c2d.t3_obs(env))
-    env.step(a)</code></pre></details>
+    a = pol.act(c2d.t3_obs(env))  # obs [n, O] -&gt; the next action [n, 2]
+    env.step(a)  # apply [n, 2]</code></pre></details>
 
 <h3>What to watch: loss is health, closed-loop success is the metric</h3>
 <p>Two charts, and they disagree on purpose. The <b>flow loss</b> is an average over all noise levels, and most of that

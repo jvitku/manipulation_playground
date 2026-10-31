@@ -119,9 +119,10 @@ collapse early into dive-and-abort. <b>One run in this lab lands in one of those
 almost nothing about whether a change helped; the 62.2&nbsp;% needs ten. Also note the lab default is 100k steps and a decay over 66k, a shorter run than the repo&rsquo;s
 150k / 100k (same ratio). And for this task, behaviour cloning with the right regularisation reaches 50/50: RL is here to learn the recipe, not to beat the imitator.</p>
 
-<details class="code"><summary>The BC term in the actor loss (demo batch, Q normalised)</summary><pre><code class="language-python" data-src="src/fvb/policy/td3.py">if demo is not None and bc_weight &gt; 0 and demo.n &gt; 0:
-    od, ad, *_ = demo.sample(c.batch, rng, self.device)
-    bc = ((self.actor(od) - ad) ** 2).mean()
+<details class="code"><summary>The BC term in the actor loss (demo batch, Q normalised)</summary><pre><code class="language-python" data-src="src/fvb/policy/td3.py"># legend: B = batch, O = obs dims, A = action dims, P = privileged dims (0 if none)
+if demo is not None and bc_weight &gt; 0 and demo.n &gt; 0:
+    od, ad, *_ = demo.sample(c.batch, rng, self.device)  # demo od [B, O], ad [B, A]
+    bc = ((self.actor(od) - ad) ** 2).mean()  # [B, A] -&gt; scalar BC loss
     # floor 1.0: a near-zero |Q| early on would blow the Q term up into noise
     a_loss = q_weight * a_loss / q.abs().mean().detach().clamp_min(1.0) + bc_weight * bc</code></pre></details>
 <details class="code"><summary>The decaying weight, with a floor it never leaves</summary><pre><code class="language-python" data-src="lab/tasks/task7_td3bc.py">def bc_weight_at(t: int, start: float, floor: float, decay_steps: int) -&gt; float:
@@ -133,6 +134,7 @@ out = agent.update(buf, rng, self.demo_buf, w)
 out["bc_weight"] = w</code></pre></details>
 <details class="code"><summary>Seeding the buffers with demonstrations</summary><pre><code class="language-python" data-src="lab/tasks/task7_td3bc.py">def prepare(self, ctx, env, buf, rng) -&gt; bool:
     # ...
+    # legend: O = obs dims, A = action dims; buffer rows hold o [O], a [A] transitions
     self.demo_buf = ReplayBuffer(env.obs_dim, env.act_dim, max(1, self.n_demos) * 250)
     stats = collect_demos(ctx, env, self.n_demos, [buf, self.demo_buf])</code></pre></details>
 

@@ -60,15 +60,16 @@ resolve local order, &ldquo;the digit right before me&rdquo;); high pairs spin s
 <em>not</em> apply: the cross-attention read is position-free in <em>both</em> modes &mdash; the decoder's and the
 encoder's positions live on different axes, so &ldquo;query position minus key position&rdquo; has no meaning across the
 two streams.</p>
-<details class="code"><summary>RoPE: rotate each head's Q and K pairs by position-dependent angles</summary><pre><code class="language-python" data-src="lab/tasks/minitf.py">    dh = x.shape[-1]
+<details class="code"><summary>RoPE: rotate each head's Q and K pairs by position-dependent angles</summary><pre><code class="language-python" data-src="lab/tasks/minitf.py">    # legend: B = batch, H = heads, T = tokens, dh = per-head dim
+    dh = x.shape[-1]  # x: [B, H, T, dh]
     theta = base ** (-torch.arange(0, dh, 2, device=x.device) / dh)  # [dh/2]
     ang = torch.arange(x.shape[-2], device=x.device)[:, None] * theta  # [T, dh/2]
-    cos, sin = ang.cos(), ang.sin()
-    x1, x2 = x[..., 0::2], x[..., 1::2]  # the pair (x1, x2) is one 2D point to rotate
-    out = torch.empty_like(x)
-    out[..., 0::2] = x1 * cos - x2 * sin
-    out[..., 1::2] = x1 * sin + x2 * cos
-    return out</code></pre></details>
+    cos, sin = ang.cos(), ang.sin()  # [T, dh/2] each
+    x1, x2 = x[..., 0::2], x[..., 1::2]  # [B, H, T, dh/2] each: one 2D point per pair
+    out = torch.empty_like(x)  # [B, H, T, dh]
+    out[..., 0::2] = x1 * cos - x2 * sin  # rotated x-coords [B, H, T, dh/2]
+    out[..., 1::2] = x1 * sin + x2 * cos  # rotated y-coords [B, H, T, dh/2]
+    return out  # [B, H, T, dh], same shape as x</code></pre></details>
 <p>On this task the two modes tie: both reach exact match <b>1.000</b> on held-out dates (the short reference run; RoPE
 saturates about 100 steps later). Twelve fixed slots do not need relative structure &mdash; RoPE's wins are elsewhere:
 no table to size, and scores that generalise by offset rather than by slot. After evaluating a rope-trained
@@ -193,41 +194,50 @@ self-attention, cross-attention, MLP), width <code>d_model</code> and <code>head
 125&thinsp;863 parameters. The shapes shown are for the defaults of the date formats: 12 source positions (padded), 11 decoder
 positions (&lt;bos&gt; plus the 10 target characters; the 11th output is &lt;eos&gt;).</p>
 
-<details class="code"><summary>Cross-attention: queries from the decoder, keys/values from the encoder</summary><pre><code class="language-python" data-src="lab/tasks/minitf.py">a, self_attn = self.self_attn(self.ln1(x), mask=self_mask)
-x = x + a
-c, cross_attn = self.cross_attn(self.ln2(x), memory)  # q from x, k/v from memory
-x = x + c
-return x + self.mlp(self.ln3(x)), self_attn, cross_attn</code></pre></details>
+<details class="code"><summary>Cross-attention: queries from the decoder, keys/values from the encoder</summary><pre><code class="language-python" data-src="lab/tasks/minitf.py"># legend: B = batch, L = target tokens, S = memory tokens, D = d_model, H = heads
+a, self_attn = self.self_attn(self.ln1(x), mask=self_mask)  # attn [B, H, L, L]
+x = x + a  # [B, L, D]
+c, cross_attn = self.cross_attn(self.ln2(x), memory)  # q from x, k/v from memory [B, S, D]
+x = x + c  # [B, L, D]; cross_attn: [B, H, L, S]
+return x + self.mlp(self.ln3(x)), self_attn, cross_attn  # [B, L, D]</code></pre></details>
 <details class="code"><summary>Encoder and decoder</summary><pre><code class="language-python" data-src="lab/tasks/task_crossattn.py">def encode(self, src):
     """src [B, S] -&gt; (memory [B, S, D], encoder self-attention [B, H, S, S])."""
-    x = self.emb_s(src)
+    # legend: B = batch, S = source length, D = d_model, H = heads
+    x = self.emb_s(src)  # char ids [B, S] -&gt; [B, S, D]
     if self.pos_s is not None:
-        x = x + self.pos_s(torch.arange(src.shape[1], device=src.device))
-    return self.enc(x)
+        x = x + self.pos_s(torch.arange(src.shape[1], device=src.device))  # + pos table [S, D]
+    return self.enc(x)  # -&gt; ([B, S, D], [B, H, S, S])
 # ...
 def decode(self, dec_in, memory):
     """dec_in [B, L] (BOS + chars so far) -&gt; (logits [B, L, V], self_attn, cross_attn)."""
-    L = dec_in.shape[1]
+    # legend: B = batch, L = decoder len, S = source len, D = d_model, V = vocab, H = heads
+    L = dec_in.shape[1]  # tokens decoded so far (incl. BOS)
+    x = self.emb_t(dec_in)  # [B, L] -&gt; [B, L, D]
 # ...
-    mask = _causal(L, str(dec_in.device))
-    x, self_attn, cross_attn = self.dec(x, memory, mask)
-    return self.head(self.ln_f(x)), self_attn, cross_attn</code></pre></details>
+    mask = _causal(L, str(dec_in.device))  # [L, L] bool, True = may attend
+    x, self_attn, cross_attn = self.dec(x, memory, mask)  # attns [B, H, L, L], [B, H, L, S]
+    return self.head(self.ln_f(x)), self_attn, cross_attn  # logits [B, L, V]</code></pre></details>
 <details class="code"><summary>Training step (teacher forcing)</summary><pre><code class="language-python" data-src="lab/tasks/task_crossattn.py">def teacher_inputs(tgt):
     """Decoder input for teacher forcing: BOS then the target shifted right (the last EOS drops)."""
+    # tgt [B, L] -&gt; [B, L]: BOS + tgt[:-1] (B = batch, L = target length + EOS)
+    return torch.cat([torch.full_like(tgt[:, :1], BOS), tgt[:, :-1]], 1)
 # ...
-        src, tgt = make_batch("train", BATCH, gen, dev)
-        loss = loss_fn(model(src, teacher_inputs(tgt))[0], tgt)
+# legend: B = BATCH, S = padded source length, L = target length + EOS, V = vocab
+# ...
+        src, tgt = make_batch("train", BATCH, gen, dev)  # src [B, S], tgt [B, L]
+        loss = loss_fn(model(src, teacher_inputs(tgt))[0], tgt)  # logits [B, L, V] vs tgt [B, L]
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()
         sched.step()</code></pre></details>
-<details class="code"><summary>Inference: greedy decoding from BOS</summary><pre><code class="language-python" data-src="lab/tasks/task_crossattn.py">memory, _ = model.encode(src)
-ids = torch.full((src.shape[0], 1), BOS, dtype=torch.long, device=src.device)
-done = torch.zeros(src.shape[0], dtype=torch.bool, device=src.device)
+<details class="code"><summary>Inference: greedy decoding from BOS</summary><pre><code class="language-python" data-src="lab/tasks/task_crossattn.py"># legend: B = batch, S = source len, L = ids decoded so far, D = d_model, V = vocab
+memory, _ = model.encode(src)  # [B, S] -&gt; memory [B, S, D]
+ids = torch.full((src.shape[0], 1), BOS, dtype=torch.long, device=src.device)  # [B, 1]
+done = torch.zeros(src.shape[0], dtype=torch.bool, device=src.device)  # [B]
 for _ in range(MAX_OUT):
-    nxt = model.decode(ids, memory)[0][:, -1].argmax(-1)
-    nxt = torch.where(done, torch.full_like(nxt, PAD), nxt)
-    ids = torch.cat([ids, nxt[:, None]], 1)
+    nxt = model.decode(ids, memory)[0][:, -1].argmax(-1)  # logits [B, L, V] -&gt; next id [B]
+    nxt = torch.where(done, torch.full_like(nxt, PAD), nxt)  # [B]: finished rows emit PAD
+    ids = torch.cat([ids, nxt[:, None]], 1)  # [B, L] + [B, 1] -&gt; [B, L + 1]
     done = done | (nxt == EOS)
     if bool(done.all()):
         break</code></pre></details>

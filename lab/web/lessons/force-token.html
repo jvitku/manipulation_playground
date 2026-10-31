@@ -142,18 +142,20 @@ re-deciding &mdash; and re-averaging &mdash; every step.</p>
 <p class="ref">B = batch. The highlighted block is the 9 force channels (the force token); the dashed <code>use_force</code> switch is the zeroed
 twin. The loss node compares the chunk with the expert chunk, ignoring slots past the episode end.</p>
 
-<details class="code"><summary>ACT-lite: observation tokens in, learned queries cross-attend, actions out</summary><pre><code class="language-python" data-src="src/fvb/policy/models.py">def forward(self, x: torch.Tensor) -&gt; torch.Tensor:  # x (B,H,obs) -&gt; (B,K,act)
-    h = self.norm_in(self.embed(x) + self.pos)
-    mem = self.encoder(h)
-    q = self.queries.expand(x.shape[0], -1, -1)
-    out = self.decoder(q, mem)
-    return self.head(out)</code></pre></details>
-<details class="code"><summary>Stage-1 training step: masked L1 on action windows</summary><pre><code class="language-python" data-src="lab/tasks/task4_force_token.py">def masked_l1(pred, y, m):
-    return ((pred - y).abs().mean(-1) * m).sum() / m.sum()
+<details class="code"><summary>ACT-lite: observation tokens in, learned queries cross-attend, actions out</summary><pre><code class="language-python" data-src="src/fvb/policy/models.py">def forward(self, x: torch.Tensor) -&gt; torch.Tensor:  # [B, H, O] -&gt; [B, K, A]
+    # legend: B = batch, H = history, K = chunk, O = obs dims, A = action dims, D = width
+    h = self.norm_in(self.embed(x) + self.pos)  # embed [B, H, O] -&gt; [B, H, D]; pos [1, H, D]
+    mem = self.encoder(h)  # encoder: [B, H, D] -&gt; [B, H, D]
+    q = self.queries.expand(x.shape[0], -1, -1)  # [1, K, D] -&gt; [B, K, D]
+    out = self.decoder(q, mem)  # cross-attend: [B, K, D] x [B, H, D] -&gt; [B, K, D]
+    return self.head(out)  # [B, K, D] -&gt; [B, K, A]</code></pre></details>
+<details class="code"><summary>Stage-1 training step: masked L1 on action windows</summary><pre><code class="language-python" data-src="lab/tasks/task4_force_token.py"># legend: B = batch, H = history, K = chunk, O = obs dims, A = action dims
+def masked_l1(pred, y, m):  # pred, y [B, K, A]; mask m [B, K]
+    return ((pred - y).abs().mean(-1) * m).sum() / m.sum()  # [B, K, A] -&gt; [B, K] -&gt; scalar
 # ...
 for i in range(spe):
-    idx = perm[i * BATCH : (i + 1) * BATCH]
-    loss = masked_l1(model(Xtr_t[idx]), Ytr_t[idx], Mtr_t[idx])
+    idx = perm[i * BATCH : (i + 1) * BATCH]  # window indices [B]
+    loss = masked_l1(model(Xtr_t[idx]), Ytr_t[idx], Mtr_t[idx])  # [B, H, O] -&gt; [B, K, A]
     opt.zero_grad(set_to_none=True)
     loss.backward()
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

@@ -116,32 +116,36 @@ propagation of real values &mdash; one reason the success curve here stays at ze
 </ul>
 </details>
 
-<details class="code"><summary>Critic update: twin critics, smoothed target action, clipped double-Q</summary><pre><code class="language-python" data-src="src/fvb/policy/td3.py">o, a, r, o2, d, p, p2 = buf.sample(c.batch, rng, self.device)
-co, co2 = torch.cat([o, p], -1), torch.cat([o2, p2], -1)  # critic inputs
+<details class="code"><summary>Critic update: twin critics, smoothed target action, clipped double-Q</summary><pre><code class="language-python" data-src="src/fvb/policy/td3.py"># legend: B = batch, O = obs dims, A = action dims, P = privileged dims (0 if none)
+o, a, r, o2, d, p, p2 = buf.sample(c.batch, rng, self.device)  # o, o2 [B, O]; a [B, A]
+co, co2 = torch.cat([o, p], -1), torch.cat([o2, p2], -1)  # critic inputs [B, O+P]
 with torch.no_grad():
     noise = (torch.randn_like(a) * c.target_noise).clamp(-c.noise_clip, c.noise_clip)
-    a2 = (self.actor_t(o2) + noise).clamp(-1.0, 1.0)
-    q1t, q2t = self.critic_t(co2, a2)
-    y = r + c.gamma * (1.0 - d) * torch.min(q1t, q2t)
-q1, q2 = self.critic(co, a)
-c_loss = ((q1 - y) ** 2).mean() + ((q2 - y) ** 2).mean()
+    a2 = (self.actor_t(o2) + noise).clamp(-1.0, 1.0)  # target action [B, O] -&gt; [B, A]
+    q1t, q2t = self.critic_t(co2, a2)  # ([B, O+P], [B, A]) -&gt; twin targets [B, 1]
+    y = r + c.gamma * (1.0 - d) * torch.min(q1t, q2t)  # min of twins; r, d, y [B, 1]
+q1, q2 = self.critic(co, a)  # ([B, O+P], [B, A]) -&gt; [B, 1] each
+c_loss = ((q1 - y) ** 2).mean() + ((q2 - y) ** 2).mean()  # [B, 1] -&gt; scalar
 self.c_opt.zero_grad(set_to_none=True)
 c_loss.backward()
 self.c_opt.step()</code></pre></details>
-<details class="code"><summary>Delayed actor update and slow target networks</summary><pre><code class="language-python" data-src="src/fvb/policy/td3.py">if self.updates % c.policy_delay == 0:
-    q = self.critic(co, self.actor(o))[0]
-    a_loss = -q.mean()
+<details class="code"><summary>Delayed actor update and slow target networks</summary><pre><code class="language-python" data-src="src/fvb/policy/td3.py"># legend: B = batch, O = obs dims, A = action dims, P = privileged dims (0 if none)
+if self.updates % c.policy_delay == 0:
+    q = self.critic(co, self.actor(o))[0]  # actor [B, O] -&gt; [B, A]; q = q1 [B, 1]
+    a_loss = -q.mean()  # [B, 1] -&gt; scalar
 # ...
 self.a_opt.zero_grad(set_to_none=True)
 a_loss.backward()
 self.a_opt.step()
 # ...
 pt.mul_(1 - c.tau).add_(c.tau * p)</code></pre></details>
-<details class="code"><summary>Exploration and replay: random warm-up, then actor + Gaussian noise</summary><pre><code class="language-python" data-src="lab/tasks/task6_td3.py">if t &lt;= start_steps:
-    a = rng.uniform(-1, 1, env.act_dim).astype(np.float32)
+<details class="code"><summary>Exploration and replay: random warm-up, then actor + Gaussian noise</summary><pre><code class="language-python" data-src="lab/tasks/task6_td3.py"># legend: O = obs dims, A = action dims (single env here: no batch dim)
+if t &lt;= start_steps:
+    a = rng.uniform(-1, 1, env.act_dim).astype(np.float32)  # random action [A]
 else:
+    # actor: o [O] -&gt; [A]; + exploration noise [A]; clipped to [-1, 1]
     a = np.clip(agent.act(o) + rng.normal(0, expl, env.act_dim), -1, 1).astype(np.float32)
-o2, r, term, trunc, info = env.step(a)
+o2, r, term, trunc, info = env.step(a)  # a [A] -&gt; next obs o2 [O]
 buf.add(o, a, r, o2, term)  # truncation (timeout) still bootstraps
 # ...
 if t &gt; start_steps:

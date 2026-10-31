@@ -124,8 +124,9 @@ def train(ctx) -> None:
     to = lambda a: torch.as_tensor(a, dtype=torch.float32, device=dev)  # noqa: E731
     Xtr_t, Ytr_t, Mtr_t, Xva_t, Yva_t, Mva_t = map(to, (Xtr, Ytr, Mtr, Xva, Yva, Mva))
 
-    def masked_l1(pred, y, m):
-        return ((pred - y).abs().mean(-1) * m).sum() / m.sum()
+    # legend: B = batch, H = history, K = chunk, O = obs dims, A = action dims
+    def masked_l1(pred, y, m):  # pred, y [B, K, A]; mask m [B, K]
+        return ((pred - y).abs().mean(-1) * m).sum() / m.sum()  # [B, K, A] -> [B, K] -> scalar
 
     meta = {"model": kind, "H": H, "K": K, "use_force": use_force, "task": GANTRY.name,
             "action_mode": p.action_mode, "model_kw": model_kw, "obs_dim": GANTRY.obs_dim,
@@ -153,8 +154,8 @@ def train(ctx) -> None:
         perm = torch.randperm(len(Xtr_t), generator=g).to(dev)
         tr = 0.0
         for i in range(spe):
-            idx = perm[i * BATCH : (i + 1) * BATCH]
-            loss = masked_l1(model(Xtr_t[idx]), Ytr_t[idx], Mtr_t[idx])
+            idx = perm[i * BATCH : (i + 1) * BATCH]  # window indices [B]
+            loss = masked_l1(model(Xtr_t[idx]), Ytr_t[idx], Mtr_t[idx])  # [B, H, O] -> [B, K, A]
             opt.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

@@ -30,7 +30,8 @@ def start_job(kind: str, job_dir: Path) -> int:
     # The subprocess spends several seconds importing python + torch before it can report
     # anything itself; the message covers that window (run_job overwrites it once it is up).
     atomic_write_json(
-        job_dir / "status.json", {"state": "running", "message": "starting: loading python and torch"}
+        job_dir / "status.json",
+        {"state": "running", "message": "starting: loading python and torch"},
     )
     try:
         with (job_dir / "job.log").open("ab") as log:

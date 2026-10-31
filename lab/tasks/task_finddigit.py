@@ -127,6 +127,7 @@ def add_noise(canvas, noise: float, rng):
 
 # ---- model -----------------------------------------------------------------------------------
 class FindDigit(nn.Module):
+    # legend: B = batch, N = 32 patch tokens (4 x 8 grid), D = d_model, H = heads
     def __init__(self, depth: int, heads: int, d_model: int):
         super().__init__()
         self.embed = nn.Linear(PATCH * PATCH, d_model)
@@ -140,16 +141,16 @@ class FindDigit(nn.Module):
 
     def encode(self, imgs):
         """normalised float [B, 28, 56] -> patch tokens [B, 32, D] (what the query reads)."""
-        x = self.embed(patchify(imgs, PATCH)) + self.pos
+        x = self.embed(patchify(imgs, PATCH)) + self.pos  # [B, N, 7*7] -> [B, N, D]
         for blk in self.blocks:
-            x, _ = blk(x)
-        return self.ln_kv(x)
+            x, _ = blk(x)  # self-attention keeps [B, N, D]
+        return self.ln_kv(x)  # [B, N, D]
 
     def read(self, q, tokens):
         """q: [B] query classes -> (logits [B, 3], attn [B, H, 1, 32])."""
-        qt = self.query(q)[:, None]  # [B, 1, D]
-        out, attn = self.readout(qt, tokens)
-        return self.head(self.norm(qt + out)[:, 0]), attn
+        qt = self.query(q)[:, None]  # class ids [B] -> query token [B, 1, D]
+        out, attn = self.readout(qt, tokens)  # out [B, 1, D], attn [B, H, 1, N]
+        return self.head(self.norm(qt + out)[:, 0]), attn  # [B, D] -> logits [B, 3]
 
     def forward(self, imgs, q):
         return self.read(q, self.encode(imgs))
@@ -166,25 +167,28 @@ def _device() -> str:
 @torch.no_grad()
 def predict(model, canvas, query, dev):
     """uint8 canvases + query classes -> (probs [n, 3], attn [n, heads, 32]) on the cpu."""
+    # legend: n = all canvases, b = chunk of <= 500, H = heads, N = 32 patches
     model.eval()
     probs, attns = [], []
     for i in range(0, len(canvas), 500):
-        x = norm(canvas[i : i + 500]).to(dev)
-        logits, a = model(x, torch.as_tensor(query[i : i + 500]).to(dev))
-        probs.append(logits.softmax(-1).cpu())
-        attns.append(a[:, :, 0].cpu())
-    return torch.cat(probs), torch.cat(attns)
+        x = norm(canvas[i : i + 500]).to(dev)  # [b, 28, 56]
+        logits, a = model(x, torch.as_tensor(query[i : i + 500]).to(dev))  # [b, 3], [b, H, 1, N]
+        probs.append(logits.softmax(-1).cpu())  # [b, 3]
+        attns.append(a[:, :, 0].cpu())  # [b, H, 1, N] -> [b, H, N]
+    return torch.cat(probs), torch.cat(attns)  # [n, 3], [n, H, N]
 
 
 def score(model, canvas, query, truth, dev) -> tuple[float, float]:
     """(accuracy, accuracy on the absent cases only)."""
-    pred = predict(model, canvas, query, dev)[0].argmax(-1).numpy()
+    # n = canvases scored; truth [n]: 0 left, 1 right, 2 absent
+    pred = predict(model, canvas, query, dev)[0].argmax(-1).numpy()  # probs [n, 3] -> pred [n]
     hit = pred == truth
     absent = truth == 2
     return float(hit.mean()), float(hit[absent].mean()) if absent.any() else 0.0
 
 
 def train(ctx) -> None:
+    # legend: B = BATCH canvases per step
     P = ctx.params
     steps = int(P["steps"])
     meta = {"patch": PATCH, "depth": int(P["depth"]), "heads": int(P["heads"]),
@@ -223,9 +227,9 @@ def train(ctx) -> None:
             ctx.set_status(state="stopped")
             return
         model.train()
-        cv, q, t, _ = make_canvases(pool_x, None, BATCH, rng, pools=pool_pools)
-        logits, _ = model(norm(cv).to(dev), torch.as_tensor(q).to(dev))
-        loss = F.cross_entropy(logits, torch.as_tensor(t).to(dev))
+        cv, q, t, _ = make_canvases(pool_x, None, BATCH, rng, pools=pool_pools)  # cv [B, 28, 56]
+        logits, _ = model(norm(cv).to(dev), torch.as_tensor(q).to(dev))  # q [B] -> logits [B, 3]
+        loss = F.cross_entropy(logits, torch.as_tensor(t).to(dev))  # vs truth t [B]
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()

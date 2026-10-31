@@ -202,11 +202,13 @@ def _train_loop(ctx, P: dict, env, p, rp, hooks=None) -> None:
                 _save(ctx, agent, {**meta, "t": t - 1}, t - 1, "last")
             ctx.set_status(state="stopped")
             return
+        # legend: O = obs dims, A = action dims (single env here: no batch dim)
         if t <= start_steps:
-            a = rng.uniform(-1, 1, env.act_dim).astype(np.float32)
+            a = rng.uniform(-1, 1, env.act_dim).astype(np.float32)  # random action [A]
         else:
+            # actor: o [O] -> [A]; + exploration noise [A]; clipped to [-1, 1]
             a = np.clip(agent.act(o) + rng.normal(0, expl, env.act_dim), -1, 1).astype(np.float32)
-        o2, r, term, trunc, info = env.step(a)
+        o2, r, term, trunc, info = env.step(a)  # a [A] -> next obs o2 [O]
         buf.add(o, a, r, o2, term)  # truncation (timeout) still bootstraps
         o = o2
         ep_ret += r

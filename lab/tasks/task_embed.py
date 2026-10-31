@@ -92,17 +92,18 @@ def enc_labels(kind: str, d_embed: int) -> list[str]:
 def enc_raw(kind: str, task: np.ndarray, est: np.ndarray) -> np.ndarray:
     """Raw conditioning array for command ids `task` (n,) and perceived hole xs `est` (n, 2):
     float32 (n, dim) for onehot/binary/cont, int64 token ids (n, LANG_LEN) for text."""
-    task = np.asarray(task, int)
+    # n = commands in the batch, L = LANG_LEN text tokens
+    task = np.asarray(task, int)  # command ids [n]
     if kind == "onehot":
-        return np.eye(4, dtype=np.float32)[task]
+        return np.eye(4, dtype=np.float32)[task]  # row lookup: [n] -> [n, 4]
     if kind == "binary":
-        return np.stack([task & 1, (task >> 1) & 1], 1).astype(np.float32)
+        return np.stack([task & 1, (task >> 1) & 1], 1).astype(np.float32)  # 2 x [n] -> [n, 2]
     if kind == "text":
-        return np.array([c2d.tokens(int(t)) for t in task], np.int64)
-    ins = task <= 1
-    x = np.where(ins, est[np.arange(len(task)), np.minimum(task, 1)], 0.0)
-    f = np.array([c2d.PRESS_N.get(int(t), 0.0) for t in task])
-    return np.stack([x, f, ins.astype(float)], 1).astype(np.float32)
+        return np.array([c2d.tokens(int(t)) for t in task], np.int64)  # token ids [n, L]
+    ins = task <= 1  # [n] bool: insert commands
+    x = np.where(ins, est[np.arange(len(task)), np.minimum(task, 1)], 0.0)  # target hole x [n]
+    f = np.array([c2d.PRESS_N.get(int(t), 0.0) for t in task])  # target force [n]
+    return np.stack([x, f, ins.astype(float)], 1).astype(np.float32)  # 3 x [n] -> [n, 3]
 
 
 class CondDenoiser(nn.Module):
@@ -111,22 +112,27 @@ class CondDenoiser(nn.Module):
     def __init__(self, arch: dict):
         super().__init__()
         self.kind, self.key = arch["enc"], ENC_KEY[arch["enc"]]
-        self.d = enc_dim(self.kind, arch["d_embed"])
+        self.d = enc_dim(self.kind, arch["d_embed"])  # E = encoding dims fed to the net
         self.emb = None
         if self.kind == "text":
+            # the text arm's word-embedding table: [V, E] with V = vocab size, E = d_embed
             self.emb = nn.Embedding(len(c2d.VOCAB), arch["d_embed"], padding_idx=0)
         self.net = MLPDenoiser(arch["act_dim"], arch["horizon"], arch["state_dim"] + 20 + self.d,
                                arch["hidden"], arch["depth"])  # fmt: skip
 
     def encode(self, e: torch.Tensor) -> torch.Tensor:
+        # B = batch, L = text tokens, E = encoding dims; e [B, E] floats or [B, L] token ids
         if self.emb is None:
-            return e.float()
-        m = (e != 0).float().unsqueeze(-1)  # mean over the real tokens, not the padding
-        return (self.emb(e) * m).sum(1) / m.sum(1).clamp_min(1.0)
+            return e.float()  # onehot / binary / cont pass through: [B, E]
+        m = (e != 0).float().unsqueeze(-1)  # mean over the real tokens, not the padding: [B, L, 1]
+        # lookup self.emb(e): ids [B, L] -> vectors [B, L, E]; masked mean pools over L
+        return (self.emb(e) * m).sum(1) / m.sum(1).clamp_min(1.0)  # [B, L, E] -> [B, E]
 
     def forward(self, x_t, t, cond):
+        # B = batch, S = state dims, E = encoding dims, O = obs dims, H = horizon, A = action dims
+        # concat [B, S] + [B, 20] + [B, E] -> obs [B, O]
         obs = torch.cat([cond["state"], cond["torque"], self.encode(cond[self.key])], 1)
-        return self.net(x_t, t, {"obs": obs})
+        return self.net(x_t, t, {"obs": obs})  # x_t [B, H, A] -> velocity [B, H, A]
 
 
 def _build(arch: dict) -> CondDenoiser:
@@ -167,13 +173,15 @@ def _rollout(model, ds_like, kind, hole_obs, n, seed, n_exec, K, est_sigma, sens
     key = ENC_KEY[kind]
 
     def make_cond(o):
-        raw = enc_raw(kind, env.task, est) if kind != "text" else o["lang"]
+        # n = episodes, S = state dims (4 with hole_obs), E = encoding dims, L = text tokens
+        raw = enc_raw(kind, env.task, est) if kind != "text" else o["lang"]  # [n, E] or ids [n, L]
         return {
-            "state": torch.as_tensor(_state(o["state"], est, hole_obs), device=dev),
-            "torque": torch.as_tensor(o["torque"], device=dev),
-            key: torch.as_tensor(raw, device=dev),
+            "state": torch.as_tensor(_state(o["state"], est, hole_obs), device=dev),  # [n, S]
+            "torque": torch.as_tensor(o["torque"], device=dev),  # [n, 20]
+            key: torch.as_tensor(raw, device=dev),  # [n, E]; text: token ids [n, L]
         }
 
+    # the policy samples action chunks [n, H, 2] every n_exec steps (H = chunk horizon)
     pol = ChunkPolicy(model, make_gen(), ds_like, make_cond, n_exec, K, seed=seed)
     record = min(record, n)
     pos = [[env.pos[i].tolist()] for i in range(record)]
@@ -181,8 +189,8 @@ def _rollout(model, ds_like, kind, hole_obs, n, seed, n_exec, K, est_sigma, sens
     act = [[] for _ in range(record)]
     while not env.done.all():
         live = ~env.done.copy()
-        a = pol.act(c2d.t4_obs(env))
-        env.step(a)
+        a = pol.act(c2d.t4_obs(env))  # obs -> the next action [n, 2]
+        env.step(a)  # apply [n, 2]
         for i in range(record):
             if live[i]:
                 act[i].append(np.asarray(a[i], float).tolist())

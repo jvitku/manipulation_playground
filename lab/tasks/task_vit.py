@@ -55,13 +55,15 @@ def patchify(imgs: torch.Tensor, patch: int) -> torch.Tensor:
 
     Square 28x28 digits give 28/patch squared patches; find-digit's 28x56 canvas gives 4x8.
     """
-    b, hh, ww = imgs.shape
-    gh, gw = hh // patch, ww // patch
-    x = imgs.reshape(b, gh, patch, gw, patch).permute(0, 1, 3, 2, 4)  # [B, gy, gx, py, px]
-    return x.reshape(b, gh * gw, patch * patch)
+    # legend: B = batch, gh x gw = patch grid, p = patch side (px), N = gh * gw patches
+    b, hh, ww = imgs.shape  # [B, hh, ww] pixels
+    gh, gw = hh // patch, ww // patch  # patch grid
+    x = imgs.reshape(b, gh, patch, gw, patch).permute(0, 1, 3, 2, 4)  # -> [B, gh, gw, p, p]
+    return x.reshape(b, gh * gw, patch * patch)  # [B, N, p*p]
 
 
 class ViT(nn.Module):
+    # legend: B = batch, N = patches (p x p px), T = N + 1 (CLS first), D = d_model, H = heads
     def __init__(self, patch: int, depth: int, heads: int, d_model: int):
         super().__init__()
         self.patch, n = patch, (IMG // patch) ** 2
@@ -74,18 +76,18 @@ class ViT(nn.Module):
 
     def input_tokens(self, imgs):
         """imgs -> [B, 1 + n, d_model]: CLS + patch embeddings + position (the blocks' input)."""
-        x = self.embed(patchify(imgs, self.patch))
-        x = torch.cat([self.cls.expand(x.shape[0], -1, -1), x], 1) + self.pos
+        x = self.embed(patchify(imgs, self.patch))  # [B, N, p*p] -> [B, N, D]
+        x = torch.cat([self.cls.expand(x.shape[0], -1, -1), x], 1) + self.pos  # [B, T, D]
         return x
 
     def forward(self, imgs):
         """imgs: normalised float [B, 28, 28] -> (logits [B, 10], attn list of [B, H, T, T])."""
-        x = self.input_tokens(imgs)
+        x = self.input_tokens(imgs)  # [B, T, D]
         attns = []
         for blk in self.blocks:
-            x, a = blk(x)
+            x, a = blk(x)  # x [B, T, D], a [B, H, T, T]
             attns.append(a)
-        return self.head(self.norm(x)[:, 0]), attns
+        return self.head(self.norm(x)[:, 0]), attns  # CLS row [B, D] -> logits [B, 10]
 
 
 def build(meta: dict) -> ViT:
@@ -104,14 +106,17 @@ def _cls_rows(attns) -> torch.Tensor:
 
 @torch.no_grad()
 def accuracy(model, x, y, dev) -> float:
+    # x [N, 28, 28] images, y [N] labels; N = images, scored in chunks of 1000
     model.eval()
     hit = 0
     for i in range(0, len(x), 1000):
+        # chunk logits [1000, 10] -> pred [1000], compared with the labels chunk
         hit += int((model(x[i : i + 1000].to(dev))[0].argmax(-1).cpu() == y[i : i + 1000]).sum())
     return hit / len(x)
 
 
 def train(ctx) -> None:
+    # legend: B = BATCH images per step
     P = ctx.params
     steps = int(P["steps"])
     meta = {"patch": int(P["patch"]), "depth": int(P["depth"]), "heads": int(P["heads"]),
@@ -146,8 +151,8 @@ def train(ctx) -> None:
             ctx.set_status(state="stopped")
             return
         model.train()
-        idx = torch.randint(n, (BATCH,), generator=gen, device=dev)
-        loss = F.cross_entropy(model(x[idx])[0], y[idx])
+        idx = torch.randint(n, (BATCH,), generator=gen, device=dev)  # [B]
+        loss = F.cross_entropy(model(x[idx])[0], y[idx])  # logits [B, 10] vs labels [B]
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()

@@ -112,17 +112,20 @@ def diag_metrics(c: np.ndarray, a: np.ndarray) -> dict:
 
 
 def bin_edges(n_bins: int) -> np.ndarray:
-    return np.linspace(-1.0, 1.0, n_bins + 1)
+    # legend: K = n_bins
+    return np.linspace(-1.0, 1.0, n_bins + 1)  # [K + 1] uniform edges over [-1, 1]
 
 
 def bin_centers(n_bins: int) -> np.ndarray:
-    e = bin_edges(n_bins)
-    return (e[:-1] + e[1:]) / 2
+    # legend: K = n_bins
+    e = bin_edges(n_bins)  # [K + 1]
+    return (e[:-1] + e[1:]) / 2  # midpoints: [K + 1] -> [K]
 
 
 def quantize(a: torch.Tensor, n_bins: int) -> torch.Tensor:
     """[-1, 1] values (clipped first) -> bin indices, same shape, int64."""
-    return (((a.clamp(-1, 1) + 1) / 2) * n_bins).long().clamp(0, n_bins - 1)
+    # legend: B = batch, K = n_bins; a is the action batch [B, 2] here
+    return (((a.clamp(-1, 1) + 1) / 2) * n_bins).long().clamp(0, n_bins - 1)  # [B, 2] -> [B, 2] int
 
 
 def _pick(logits: torch.Tensor, temperature: float, gen: torch.Generator) -> torch.Tensor:
@@ -145,6 +148,8 @@ def _mlp(out_dim: int) -> nn.Sequential:
 class ARTokenHead(nn.Module):
     """Tiny causal transformer over [obs-token, tok_x]; logits [B, T, n_bins] per position."""
 
+    # legend: B = batch, T = seq len (1 or 2), d = d_model, K = n_bins (the vocab)
+
     def __init__(self, arch: dict):
         super().__init__()
         n_bins, d = int(arch["n_bins"]), int(arch["d_model"])
@@ -157,14 +162,14 @@ class ARTokenHead(nn.Module):
         self.ln_f, self.head = nn.LayerNorm(d), nn.Linear(d, n_bins)
 
     def forward(self, c: torch.Tensor, tok_x: torch.Tensor | None = None) -> torch.Tensor:
-        x = self.obs(c)[:, None]  # [B, 1, D]
+        x = self.obs(c)[:, None]  # obs token: c [B, 1] -> [B, d] -> [B, 1, d]
         if tok_x is not None:
-            x = torch.cat([x, self.emb(tok_x)[:, None]], 1)  # [B, 2, D]
-        x = x + self.pos(torch.arange(x.shape[1], device=x.device))
-        mask = causal_mask(x.shape[1]).to(x.device)
+            x = torch.cat([x, self.emb(tok_x)[:, None]], 1)  # + tok_x emb [B, 1, d] -> [B, 2, d]
+        x = x + self.pos(torch.arange(x.shape[1], device=x.device))  # + pos [T, d] -> [B, T, d]
+        mask = causal_mask(x.shape[1]).to(x.device)  # causal [T, T]
         for b in self.blocks:
-            x, _ = b(x, mask)
-        return self.head(self.ln_f(x))
+            x, _ = b(x, mask)  # [B, T, d] -> [B, T, d]
+        return self.head(self.ln_f(x))  # [B, T, d] -> logits [B, T, K]
 
 
 def _build(name: str, arch: dict) -> nn.Module:
@@ -189,14 +194,18 @@ def _loss_cont(model, c, a, n_bins):
 
 
 def _loss_bins(model, c, a, n_bins):
-    logits = model(c).view(-1, 2, n_bins)
-    tok = quantize(a, n_bins)
+    # legend: B = batch, K = n_bins; obs c [B, 1], expert actions a [B, 2]
+    logits = model(c).view(-1, 2, n_bins)  # [B, 2*K] -> [B, 2, K]
+    tok = quantize(a, n_bins)  # [B, 2] -> [B, 2] int targets
+    # independent CE per dim: logits[:, i] [B, K] vs tok[:, i] [B]; mean of the two -> scalar
     return (F.cross_entropy(logits[:, 0], tok[:, 0]) + F.cross_entropy(logits[:, 1], tok[:, 1])) / 2
 
 
 def _loss_ar(model, c, a, n_bins):
-    tok = quantize(a, n_bins)
-    logits = model(c, tok[:, 0])  # [B, 2, n_bins]
+    # legend: B = batch, K = n_bins; obs c [B, 1], expert actions a [B, 2]
+    tok = quantize(a, n_bins)  # [B, 2] -> [B, 2] int targets
+    logits = model(c, tok[:, 0])  # teacher forcing: c [B, 1] + expert tok_x [B] -> [B, 2, K]
+    # CE per position: pos 0 predicts tok_x, pos 1 predicts tok_z; each [B, K] vs [B] -> scalar
     return (F.cross_entropy(logits[:, 0], tok[:, 0]) + F.cross_entropy(logits[:, 1], tok[:, 1])) / 2
 
 
@@ -206,15 +215,18 @@ LOSS = {"cont": _loss_cont, "bins": _loss_bins, "ar": _loss_ar}
 @torch.no_grad()
 def bins_sample(model, c, n_bins, temperature, gen):
     """Per-dim independent softmax sample -> token ids tx, tz [B]."""
-    logits = model(c).view(-1, 2, n_bins)
+    # legend: B = batch, K = n_bins; obs c [B, 1]
+    logits = model(c).view(-1, 2, n_bins)  # [B, 2*K] -> [B, 2, K]
+    # x and z drawn apart: each dim's logits [B, K] -> token ids [B]
     return _pick(logits[:, 0], temperature, gen), _pick(logits[:, 1], temperature, gen)
 
 
 @torch.no_grad()
 def ar_sample(model, c, n_bins, temperature, gen):
     """tok_x from P(.|c), then tok_z from P(.|c, tok_x) -> token ids tx, tz [B]."""
-    tx = _pick(model(c)[:, 0], temperature, gen)
-    tz = _pick(model(c, tx)[:, 1], temperature, gen)
+    # legend: B = batch, K = n_bins; obs c [B, 1]
+    tx = _pick(model(c)[:, 0], temperature, gen)  # step 1: [B, 1, K] -> [B, K] -> ids [B]
+    tz = _pick(model(c, tx)[:, 1], temperature, gen)  # step 2: [B, 2, K] -> [B, K] -> ids [B]
     return tx, tz
 
 

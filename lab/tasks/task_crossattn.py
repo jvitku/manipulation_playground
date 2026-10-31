@@ -183,20 +183,22 @@ class DateTranslator(nn.Module):
 
     def encode(self, src):
         """src [B, S] -> (memory [B, S, D], encoder self-attention [B, H, S, S])."""
-        x = self.emb_s(src)
+        # legend: B = batch, S = source length, D = d_model, H = heads
+        x = self.emb_s(src)  # char ids [B, S] -> [B, S, D]
         if self.pos_s is not None:
-            x = x + self.pos_s(torch.arange(src.shape[1], device=src.device))
-        return self.enc(x)
+            x = x + self.pos_s(torch.arange(src.shape[1], device=src.device))  # + pos table [S, D]
+        return self.enc(x)  # -> ([B, S, D], [B, H, S, S])
 
     def decode(self, dec_in, memory):
         """dec_in [B, L] (BOS + chars so far) -> (logits [B, L, V], self_attn, cross_attn)."""
-        L = dec_in.shape[1]
-        x = self.emb_t(dec_in)
+        # legend: B = batch, L = decoder len, S = source len, D = d_model, V = vocab, H = heads
+        L = dec_in.shape[1]  # tokens decoded so far (incl. BOS)
+        x = self.emb_t(dec_in)  # [B, L] -> [B, L, D]
         if self.pos_t is not None:
-            x = x + self.pos_t(torch.arange(L, device=dec_in.device))
-        mask = _causal(L, str(dec_in.device))
-        x, self_attn, cross_attn = self.dec(x, memory, mask)
-        return self.head(self.ln_f(x)), self_attn, cross_attn
+            x = x + self.pos_t(torch.arange(L, device=dec_in.device))  # + pos table [L, D]
+        mask = _causal(L, str(dec_in.device))  # [L, L] bool, True = may attend
+        x, self_attn, cross_attn = self.dec(x, memory, mask)  # attns [B, H, L, L], [B, H, L, S]
+        return self.head(self.ln_f(x)), self_attn, cross_attn  # logits [B, L, V]
 
     def forward(self, src, dec_in):
         memory, enc_attn = self.encode(src)
@@ -211,6 +213,7 @@ def build(meta: dict) -> DateTranslator:
 
 def teacher_inputs(tgt):
     """Decoder input for teacher forcing: BOS then the target shifted right (the last EOS drops)."""
+    # tgt [B, L] -> [B, L]: BOS + tgt[:-1] (B = batch, L = target length + EOS)
     return torch.cat([torch.full_like(tgt[:, :1], BOS), tgt[:, :-1]], 1)
 
 
@@ -222,18 +225,19 @@ def loss_fn(logits, tgt):
 def greedy_batch(model, src):
     """src [B, S] ids -> generated ids [B, <= MAX_OUT] (EOS included, PAD after it). Starts from BOS
     alone; the decoder only ever sees BOS and its own earlier outputs."""
+    # legend: B = batch, S = source len, L = ids decoded so far, D = d_model, V = vocab
     model.eval()
-    memory, _ = model.encode(src)
-    ids = torch.full((src.shape[0], 1), BOS, dtype=torch.long, device=src.device)
-    done = torch.zeros(src.shape[0], dtype=torch.bool, device=src.device)
+    memory, _ = model.encode(src)  # [B, S] -> memory [B, S, D]
+    ids = torch.full((src.shape[0], 1), BOS, dtype=torch.long, device=src.device)  # [B, 1]
+    done = torch.zeros(src.shape[0], dtype=torch.bool, device=src.device)  # [B]
     for _ in range(MAX_OUT):
-        nxt = model.decode(ids, memory)[0][:, -1].argmax(-1)
-        nxt = torch.where(done, torch.full_like(nxt, PAD), nxt)
-        ids = torch.cat([ids, nxt[:, None]], 1)
+        nxt = model.decode(ids, memory)[0][:, -1].argmax(-1)  # logits [B, L, V] -> next id [B]
+        nxt = torch.where(done, torch.full_like(nxt, PAD), nxt)  # [B]: finished rows emit PAD
+        ids = torch.cat([ids, nxt[:, None]], 1)  # [B, L] + [B, 1] -> [B, L + 1]
         done = done | (nxt == EOS)
         if bool(done.all()):
             break
-    return ids[:, 1:]
+    return ids[:, 1:]  # drop the BOS column
 
 
 def greedy_decode(model, src: str) -> str:
@@ -264,6 +268,7 @@ def _probe(dev):
 
 
 def train(ctx) -> None:
+    # legend: B = BATCH, S = padded source length, L = target length + EOS, V = vocab
     P = ctx.params
     steps = int(P["steps"])
     meta = {"d_model": int(P["d_model"]), "heads": int(P["heads"]), "steps": steps,
@@ -289,8 +294,8 @@ def train(ctx) -> None:
             ctx.set_status(state="stopped")
             return
         model.train()
-        src, tgt = make_batch("train", BATCH, gen, dev)
-        loss = loss_fn(model(src, teacher_inputs(tgt))[0], tgt)
+        src, tgt = make_batch("train", BATCH, gen, dev)  # src [B, S], tgt [B, L]
+        loss = loss_fn(model(src, teacher_inputs(tgt))[0], tgt)  # logits [B, L, V] vs tgt [B, L]
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()

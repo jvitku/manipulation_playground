@@ -94,21 +94,27 @@ defect is local; it is not a route from a broken policy to a good one.</p>
 <p>The flow weights never appear in either loss. <b>Residual scale</b> \(\alpha\) is the safety dial: it bounds how far the correction can push (a delta of 1 moves the action by \(\alpha\)).
 A small \(\alpha\) is safe but can only polish the base; a large one can repair a bad base but also break a good one.</p>
 
-<details class="code"><summary>Composition: frozen base action plus a scaled residual, clipped</summary><pre><code class="language-python" data-src="lab/tasks/task8_residual.py">ab = pol.act(raw)
+<details class="code"><summary>Composition: frozen base action plus a scaled residual, clipped</summary><pre><code class="language-python" data-src="lab/tasks/task8_residual.py"># legend: N = parallel scenes (vectorised env); actions and deltas are [N, 2]
+ab = pol.act(raw)  # base action [N, 2]
+# feats [N, 22] + [N, 2] -&gt; [N, 24]; actor -&gt; delta [N, 2], scaled; zeros when off
 d = scale * _delta(actor, base.feats(raw, ab)) if actor is not None else np.zeros_like(ab)
-a = np.clip(ab + d, -1, 1)</code></pre></details>
+a = np.clip(ab + d, -1, 1)  # compose: [N, 2] + [N, 2] -&gt; [N, 2], clipped</code></pre></details>
 <details class="code"><summary>The residual actor starts at zero, so training starts at the base policy</summary><pre><code class="language-python" data-src="lab/tasks/task8_residual.py">def _make_actor_agent(obs_dim: int, device: str = "cpu"):
+    # legend: B = batch; obs_dim = 24 = norm obs 22 + base action 2; act_dim = 2 (delta)
     from fvb.policy.td3 import TD3, TD3Config
 
     cfg = TD3Config()
-    agent = TD3(obs_dim, 2, cfg, device)
+    agent = TD3(obs_dim, 2, cfg, device)  # actor [B, obs_dim] -&gt; delta [B, 2]
     with torch.no_grad():  # start AT the base policy: delta ~ 0
         agent.actor.net[-1].weight.mul_(0.01)
         agent.actor.net[-1].bias.zero_()
     agent.actor_t.load_state_dict(agent.actor.state_dict())</code></pre></details>
-<details class="code"><summary>Residual TD3 step: explore on delta, store delta, update</summary><pre><code class="language-python" data-src="lab/tasks/task8_residual.py">d = np.clip(_delta(agent.actor, o) + rng.normal(0, expl, (N_ENVS, 2)), -1, 1)
-env.step(np.clip(ab + scale * d, -1, 1))
+<details class="code"><summary>Residual TD3 step: explore on delta, store delta, update</summary><pre><code class="language-python" data-src="lab/tasks/task8_residual.py"># legend: N = N_ENVS parallel scenes; o [N, 24] = norm obs [N, 22] + base action [N, 2]
+# actor: o [N, 24] -&gt; delta [N, 2]; + exploration noise, clipped to [-1, 1]
+d = np.clip(_delta(agent.actor, o) + rng.normal(0, expl, (N_ENVS, 2)), -1, 1)
+env.step(np.clip(ab + scale * d, -1, 1))  # [N, 2] + scale * [N, 2] -&gt; [N, 2], clipped
 # ...
+# store per live scene: o[i] [24], action = delta d[i] [2] (not the sum)
 for i in np.flatnonzero(live):
     buf.add(o[i], d[i].astype(np.float32), float(r[i]), o2[i], bool(term[i]))
 # ...

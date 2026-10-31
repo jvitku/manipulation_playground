@@ -56,8 +56,10 @@ class MLPDenoiser(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x_t, t, cond):
+        # B = batch, H = chunk horizon, A = action dims, O = obs dims
+        # flatten the chunk [B, H, A] -> [B, H*A]; cat with obs [B, O] and time [B, 64]
         h = torch.cat([x_t.flatten(1), cond["obs"], time_embedding(t, 64)], dim=1)
-        return self.net(h).view(-1, self.horizon, self.act_dim), {}
+        return self.net(h).view(-1, self.horizon, self.act_dim), {}  # [B, H*A] -> [B, H, A]
 
 
 class _Stream(nn.Module):
@@ -69,14 +71,17 @@ class _Stream(nn.Module):
         self.mlp = nn.Sequential(nn.Linear(d, mlp * d), nn.GELU(), nn.Linear(mlp * d, d))
 
     def qkv_heads(self, x):
-        b, n, d = x.shape
-        q, k, v = self.qkv(self.ln1(x)).chunk(3, dim=-1)
+        # B = batch, T = tokens, D = width, h = heads, dh = D/h
+        b, n, d = x.shape  # x [B, T, D]
+        q, k, v = self.qkv(self.ln1(x)).chunk(3, dim=-1)  # [B, T, 3*D] -> 3 x [B, T, D]
+        # split heads: each [B, T, D] -> [B, h, T, dh]
         return [z.view(b, n, self.heads, d // self.heads).transpose(1, 2) for z in (q, k, v)]
 
     def finish(self, x, attn):
+        # B = batch, T = tokens, D = width, h = heads, dh = D/h; x [B, T, D], attn [B, h, T, dh]
         b, h, n, dh = attn.shape
-        x = x + self.proj(attn.transpose(1, 2).reshape(b, n, h * dh))
-        return x + self.mlp(self.ln2(x))
+        x = x + self.proj(attn.transpose(1, 2).reshape(b, n, h * dh))  # merge heads -> [B, T, D]
+        return x + self.mlp(self.ln2(x))  # residual MLP: [B, T, D]
 
 
 class TwoStreamBlock(nn.Module):
@@ -85,15 +90,19 @@ class TwoStreamBlock(nn.Module):
         self.vlm, self.expert = _Stream(d, heads), _Stream(d, heads)
 
     def prefix(self, xp):
-        q, k, v = self.vlm.qkv_heads(xp)
+        # B = batch, P = prefix tokens, D = width, h = heads, dh = D/h; xp [B, P, D]
+        q, k, v = self.vlm.qkv_heads(xp)  # each [B, h, P, dh]
+        # out [B, P, D]; (k, v) is this layer's KV-cache entry, each [B, h, P, dh]
         return self.vlm.finish(xp, F.scaled_dot_product_attention(q, k, v)), (k, v)
 
     def suffix(self, xs, kv_prefix):
-        q, k, v = self.expert.qkv_heads(xs)
-        kp, vp = kv_prefix
+        # B = batch, S = suffix tokens, P = prefix tokens, D = width, h = heads, dh = D/h
+        q, k, v = self.expert.qkv_heads(xs)  # xs [B, S, D] -> each [B, h, S, dh]
+        kp, vp = kv_prefix  # cached prefix keys/values, each [B, h, P, dh]
         # the suffix attends to the prefix AND to itself (bidirectionally within the chunk)
+        # keys/values cat along tokens: [B, h, P + S, dh]; attn out [B, h, S, dh]
         attn = F.scaled_dot_product_attention(q, torch.cat([kp, k], 2), torch.cat([vp, v], 2))
-        return self.expert.finish(xs, attn)
+        return self.expert.finish(xs, attn)  # [B, h, S, dh] -> [B, S, D]
 
 
 class TAVLAMini(nn.Module):
@@ -150,46 +159,53 @@ class TAVLAMini(nn.Module):
 
     # ---- the pieces --------------------------------------------------------------------------
     def torque_token(self, cond):
-        tq = cond["torque"]
+        # B = batch, D = width, Tq = flattened torque-history dims; cond["torque"] [B, Tq]
+        tq = cond["torque"]  # [B, Tq]
         if self.zero_torque:
-            tq = torch.zeros_like(tq)
-        return self.torque_mlp(tq)[:, None, :]
+            tq = torch.zeros_like(tq)  # the zeroed twin: same parameters, no signal
+        return self.torque_mlp(tq)[:, None, :]  # [B, Tq] -> [B, D] -> one token [B, 1, D]
 
     def encode_prefix(self, cond):
         """Run the VLM stream over the prefix; returns each layer's (keys, values)."""
+        # B = batch, D = width, P = prefix tokens, L = lang tokens, h = heads, dh = D/h
+        # P = image patches + L + 1 state token (+ 1 torque token when torque_pos == "prefix")
         toks = []
         if self.image_hw:
             f = self.cnn(cond["image"])  # (B, d, 4, 4)
-            toks.append(f.flatten(2).transpose(1, 2) + self.img_pos)
+            toks.append(f.flatten(2).transpose(1, 2) + self.img_pos)  # [B, D, 4, 4] -> [B, 16, D]
         if self.vocab:
-            toks.append(self.lang(cond["lang"]) + self.lang_pos)
-        toks.append(self.state_in(cond["state"])[:, None, :])
+            toks.append(self.lang(cond["lang"]) + self.lang_pos)  # ids [B, L] -> [B, L, D]
+        toks.append(self.state_in(cond["state"])[:, None, :])  # [B, state_dim] -> [B, 1, D]
         if self.torque_pos == "prefix":
-            toks.append(self.torque_token(cond))
-        x = torch.cat(toks, dim=1)
+            toks.append(self.torque_token(cond))  # [B, 1, D]
+        x = torch.cat(toks, dim=1)  # [B, P, D]
         kvs = []
         for blk in self.blocks:
-            x, kv = blk.prefix(x)
-            kvs.append(kv)
+            x, kv = blk.prefix(x)  # kv = (k, v), each [B, h, P, dh]
+            kvs.append(kv)  # the KV cache: one (k, v) per layer
         return kvs
 
     def forward(self, x_t, t, cond):
-        kvs = self._kv if self._kv is not None else self.encode_prefix(cond)
-        a = self.action_in(x_t)
-        te = time_embedding(t, self.d)[:, None, :].expand(-1, self.horizon, -1)
-        s = self.action_time(torch.cat([a, te], dim=-1)) + self.act_pos
+        # B = batch, H = chunk horizon, A = action dims, D = width, S = suffix tokens, F = aux dims
+        kvs = self._kv if self._kv is not None else self.encode_prefix(cond)  # prefix kv per layer
+        a = self.action_in(x_t)  # [B, H, A] -> [B, H, D]
+        te = time_embedding(t, self.d)[:, None, :].expand(-1, self.horizon, -1)  # [B] -> [B, H, D]
+        s = self.action_time(torch.cat([a, te], dim=-1)) + self.act_pos  # [B, H, 2*D] -> [B, H, D]
         if self.torque_pos == "suffix":
+            # prepend the torque token: [B, H, D] -> [B, S, D] with S = 1 + H (else S = H)
             s = torch.cat([self.torque_token(cond).expand(s.shape[0], -1, -1), s], dim=1)
         for blk, kv in zip(self.blocks, kvs, strict=True):
-            s = blk.suffix(s, kv)
-        h = self.ln_out(s[:, -self.horizon :])  # the action tokens
+            s = blk.suffix(s, kv)  # [B, S, D] -> [B, S, D]
+        h = self.ln_out(s[:, -self.horizon :])  # the action tokens: [B, S, D] -> [B, H, D]
+        # aux head: h.mean(1) [B, H, D] -> [B, D] -> future-torque prediction [B, F]
         extra = {"aux": self.aux_head(h.mean(1))} if self.aux_head is not None else {}
-        return self.action_out(h), extra
+        return self.action_out(h), extra  # velocity [B, H, D] -> [B, H, A]
 
     @contextlib.contextmanager
     def cache(self, cond):
         """Encode the prefix once and reuse it for every denoising step of one sample() call."""
-        self._kv = self.encode_prefix(cond)
+        # B = batch, h = heads, P = prefix tokens, dh = width / heads
+        self._kv = self.encode_prefix(cond)  # each layer's (k, v), both [B, h, P, dh]
         try:
             yield
         finally:

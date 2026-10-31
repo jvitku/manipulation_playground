@@ -137,29 +137,36 @@ readout only, so everything before it &mdash; the embeddings, \(W_Q, W_K, W_V, W
 right value comes out.</p>
 
 <details class="code"><summary>Attention: scores, softmax, weighted sum</summary><pre><code class="language-python" data-src="lab/tasks/minitf.py">def forward(self, x_q, x_kv=None, mask=None):
+    # legend: B = batch, H = heads, Tq / Tk = query / key tokens, D = d_model, dh = D / H
     x_kv = x_q if x_kv is None else x_kv  # self-attention unless told otherwise
+    # project then split heads: [B, Tq|Tk, D] -&gt; q [B, H, Tq, dh], k / v [B, H, Tk, dh]
     q, k, v = self.split(self.q(x_q)), self.split(self.k(x_kv)), self.split(self.v(x_kv))
     scores = q @ k.transpose(-2, -1) / self.dh**0.5  # [B, H, Tq, Tk]: how well q matches k
     if mask is not None:
         scores = scores.masked_fill(~mask, float("-inf"))
-    attn = scores.softmax(-1)  # each query's weights over the keys sum to 1
-    mixed = (attn @ v).transpose(1, 2).reshape(x_q.shape)  # weighted sum of values
-    return self.out(mixed), attn
+    attn = scores.softmax(-1)  # [B, H, Tq, Tk]: each query's weights over the keys sum to 1
+    mixed = (attn @ v).transpose(1, 2).reshape(x_q.shape)  # weighted sum of values: [B, Tq, D]
+    return self.out(mixed), attn  # out [B, Tq, D], attn [B, H, Tq, Tk]
 </code></pre></details>
 <details class="code"><summary>Lookup model: the query attends over the stored pairs</summary><pre><code class="language-python" data-src="lab/tasks/task_attention.py">def forward(self, keys, vals, qpos):
-    x = self.tokens(keys, vals, qpos)
-    out, attn = self.mha(x[:, -1:], x)  # attn: [B, H, 1, n+1]
-    return self.readout(out[:, 0]), x, attn</code></pre></details>
-<details class="code"><summary>Training step</summary><pre><code class="language-python" data-src="lab/tasks/task_attention.py">keys, vals, qpos = make_batch(BATCH, n, meta, gen, dev)
-target = vals.gather(1, qpos[:, None])[:, 0]
-logits, _, _ = model(keys, vals, qpos)
-loss = F.cross_entropy(logits, target)
+    # legend: B = batch, n = pairs, T = n + 1 tokens, D = d_model, H = heads, V = n_vals
+    x = self.tokens(keys, vals, qpos)  # keys [B, n], vals [B, n], qpos [B] -&gt; x [B, T, D]
+    out, attn = self.mha(x[:, -1:], x)  # q from the query token [B, 1, D]; attn [B, H, 1, T]
+    return self.readout(out[:, 0]), x, attn  # out [B, 1, D] -&gt; logits [B, V]</code></pre></details>
+<details class="code"><summary>Training step</summary><pre><code class="language-python" data-src="lab/tasks/task_attention.py"># legend: B = BATCH examples per step, n = pairs per example, V = n_vals value classes
+# ...
+keys, vals, qpos = make_batch(BATCH, n, meta, gen, dev)  # keys/vals [B, n], qpos [B]
+target = vals.gather(1, qpos[:, None])[:, 0]  # the value under the queried key: [B]
+logits, _, _ = model(keys, vals, qpos)  # [B, V]
+loss = F.cross_entropy(logits, target)  # [B, V] vs [B] -&gt; scalar
 opt.zero_grad(set_to_none=True)
 loss.backward()
 opt.step()
 sched.step()</code></pre></details>
-<details class="code"><summary>Inference: argmax of the logits</summary><pre><code class="language-python" data-src="lab/tasks/task_attention.py">keys, vals, qpos = make_batch(b, n, meta, gen, dev)
-pred = model(keys, vals, qpos)[0].argmax(-1)</code></pre></details>
+<details class="code"><summary>Inference: argmax of the logits</summary><pre><code class="language-python" data-src="lab/tasks/task_attention.py"># legend: b = chunk of examples, n = pairs, V = n_vals
+# ...
+keys, vals, qpos = make_batch(b, n, meta, gen, dev)  # keys/vals [b, n], qpos [b]
+pred = model(keys, vals, qpos)[0].argmax(-1)  # logits [b, V] -&gt; pred [b]</code></pre></details>
 
 <h3>What to watch</h3>
 <p>While the run trains, the <b>live attention</b> panel under the charts shows one heatmap per head for a fixed probe

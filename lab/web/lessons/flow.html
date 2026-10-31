@@ -162,29 +162,32 @@ real time embedding.</p>
 
 <details class="code"><summary>Flow-matching loss: regress the velocity of a straight line</summary><pre><code class="language-python" data-src="src/fvb/ta_tutorial/generative.py">def loss(self, model, x0: torch.Tensor, cond, mask: torch.Tensor | None = None):
     # ...
-    e = torch.randn_like(x0)
-    t = self.sample_t(x0.shape[0], x0.device)
-    tt = t[:, None, None]
-    x_t = tt * e + (1 - tt) * x0
-    v, extra = model(x_t, t, cond)
-    err = (v - (e - x0)).pow(2).mean(-1)  # (B, H)
+    # B = batch, H = chunk horizon, A = action dims; x0 [B, H, A] is the expert chunk
+    e = torch.randn_like(x0)  # noise [B, H, A]
+    t = self.sample_t(x0.shape[0], x0.device)  # noise level per sample [B]
+    tt = t[:, None, None]  # [B] -&gt; [B, 1, 1] for broadcasting
+    x_t = tt * e + (1 - tt) * x0  # interpolate on the line: [B, H, A]
+    v, extra = model(x_t, t, cond)  # predicted velocity [B, H, A]
+    err = (v - (e - x0)).pow(2).mean(-1)  # target e - x0: [B, H, A] -&gt; [B, H]
     # ...
-    return err.mean(1), extra</code></pre></details>
+    return err.mean(1), extra  # [B, H] -&gt; [B]</code></pre></details>
 <details class="code"><summary>Sampling: Euler steps from noise to an action chunk</summary><pre><code class="language-python" data-src="src/fvb/ta_tutorial/generative.py">def sample(self, model, shape, cond, steps: int = 10, generator=None, trace: bool = False):
-    x = torch.randn(shape, generator=generator, device=_dev(cond, model))
+    # B = batch, H = chunk horizon, A = action dims; shape = (B, H, A), steps = K
+    x = torch.randn(shape, generator=generator, device=_dev(cond, model))  # x at t=1 [B, H, A]
     xs = [x]
     dt = 1.0 / steps
     for i in range(steps):
-        t = torch.full((shape[0],), 1.0 - i * dt, device=x.device)
-        v, _ = model(x, t, cond)
-        x = x - dt * v
+        t = torch.full((shape[0],), 1.0 - i * dt, device=x.device)  # [B], t: 1 -&gt; 1/K
+        v, _ = model(x, t, cond)  # velocity [B, H, A]
+        x = x - dt * v  # Euler step toward the data: [B, H, A]
         if trace:
             xs.append(x)
-    return (x, torch.stack(xs)) if trace else x</code></pre></details>
-<details class="code"><summary>Training step (shared loop)</summary><pre><code class="language-python" data-src="lab/core/loop.py">idx = torch.randint(0, ds.n, (batch,), generator=g).to(dev)
-cond, x0, mask, aux_t = ds.batch(idx)
-per, extra = gen.loss(model, x0, cond, mask)
-loss = per.mean()
+    return (x, torch.stack(xs)) if trace else x  # [B, H, A]; trace adds [K+1, B, H, A]</code></pre></details>
+<details class="code"><summary>Training step (shared loop)</summary><pre><code class="language-python" data-src="lab/core/loop.py"># B = batch, H = chunk horizon, A = action dims, F = aux-target dims (future torques)
+idx = torch.randint(0, ds.n, (batch,), generator=g).to(dev)  # [B] dataset indices
+cond, x0, mask, aux_t = ds.batch(idx)  # x0 [B, H, A], mask [B, H], aux_t [B, F] or None
+per, extra = gen.loss(model, x0, cond, mask)  # per-sample loss [B]
+loss = per.mean()  # [B] -&gt; scalar
 # ...
 opt.zero_grad(set_to_none=True)
 loss.backward()
