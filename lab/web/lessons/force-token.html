@@ -27,6 +27,27 @@ Closed loop, the policy executes the <em>first</em> action of the chunk each ste
 network, same data, no touch. At evaluation, <em>Zero the force input</em> blinds a force-trained model after the fact (the raw channels are set
 to 0 before normalisation). Compare the two at equal settings: the difference is the value of the force token.</p>
 
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>The force token (9 channels in every observation).</b> The hole position is hidden; contact is the only channel
+through which it leaks. Putting the compensated F/T readings plus the between-ticks summary into the observation is the
+experiment's actual subject &mdash; everything else exists to measure what that information is worth.</p>
+<p><b>A history window (H&nbsp;=&nbsp;10), not one frame.</b> The informative event &mdash; the jam on the rim &mdash; is a
+transient that lasts a frame or two and can fall anywhere in the recent past; one frame routinely misses it.</p>
+<p><b>The zeroed twin.</b> The ablation control: identical network, data and training, only the 9 channels blanked. Whatever
+separates the two runs is the force token, not an architecture or tuning difference.</p>
+<p><b>A transformer (ACT-lite) &mdash; kept, but not required by the tokens.</b> The MLP baseline eats the same force
+channels and already reaches 45/50 (vs 5/50 blind): the finding is the input, not the network. Attention adds the last step
+(50/50) because it weights the jam frames by their <em>content</em> wherever they fall in the window, while the MLP's fixed
+per-slot weights must learn &ldquo;jam three steps ago&rdquo; and &ldquo;jam seven steps ago&rdquo; separately. And tokens
+are the interface the rest of the ladder scales on: image patches (task&nbsp;7), words (tasks&nbsp;3, 10) and a torque token
+(task&nbsp;10) join the same sequence without redesigning the net.</p>
+<p><b>The MLP baseline &mdash; kept for the same reason.</b> It is the proof that the claim above is honest.</p>
+<p><b>Action chunking (K&nbsp;=&nbsp;5 learned queries).</b> One parallel decode per window (the ACT recipe), and
+commitment between re-plans; closed loop only the first action runs, so reactivity to contact is kept.</p>
+<p><b>Masked L1, not L2.</b> L1 fits the conditional median &mdash; robust to the demo noise &mdash; and its failure mode
+under ambiguity (dithering between symmetric corrections) is exactly the behaviour the blind twin exhibits, which makes the
+comparison legible.</p>
+</details>
 <details class="theory"><summary>Theory &mdash; why a force history resolves a hidden hole</summary>
 <p>The task is partially observed: the one variable the action should depend on &mdash; the peg-to-hole offset &mdash; is never in
 the observation. It leaks out only through contact. When the peg lands on the rim instead of in the hole, the contact point is off
