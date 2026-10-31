@@ -11,15 +11,23 @@ live **inside the Manipulation Lab** instead of a new repo. Changes from v1 are 
 |---|---|---|
 | Target GPU is a GTX 1080 Ti (11 GB, sm_61, fp32) | The dev box is an **RTX 3080 10 GB (sm_86)** — and per the user (31 Oct), **the 3080 is the only target; no Pascal support needed** | Keep the fp32-only, <10 M-param, <3 GB discipline anyway: it keeps the code simple to read, the runs deterministic, and leaves VRAM for the user's other lab jobs on the shared 10 GB. All budgets below are 3080 numbers |
 | Pin `torch==2.14.0+cu126` (last Pascal wheels) | Moot: 3080-only per the user. The `fvb-lab` image's torch 2.5.1+cu124 is the runtime | No pin work at all; fp32 only, no autocast (at <10 M params the 3080 gains nothing worth the added variance) |
-| MuJoCo 3.x + EGL offscreen must be set up | **mujoco 3.3.0 in the image; EGL rendering proven** — tasks 5/11/12 already render rollout.mp4 on this GPU | M0 starts from a working renderer |
+| MuJoCo 3.x + EGL offscreen must be set up | mujoco 3.3.0 in the image; the lab container renders via **osmesa (CPU)** — `MUJOCO_GL=osmesa` in the image, no `graphics` capability on the service — and that is what produced the existing rollout.mp4s. Measured: 2.75 ms/frame at 96×96 (363 fps) | **osmesa is the course renderer**: every budget holds (a 200-demo task is ≈ 3 min of rendering) and rendering never competes with training for the GPU. v1's `MUJOCO_GL=egl` convention is dropped |
 | "Frontend: open question — confirm the pc_robot app" | Confirmed: it is this repo's lab (FastAPI + static web, port 8430, 14 lessons) | §3: full integration, no new app, no SQLite, no WebSockets |
-| New repo `nano_force_vla/` | The repo already has `src/fvb` with `ft/` (force compensation, filters, frames), `scenes/builder.py` (plain-MuJoCo XML building), `policy/td3.py` (the exact TD3+BC used by lessons 11–13), `vla/lerobot_convert.py` | New code goes to **`src/nfv/`** in this repo and *reuses* those; the robosuite-based `fvb/envs` are NOT used (robosuite is not in the fvb-lab image — the plan's "no robosuite" rule is confirmed and kept) |
+| New repo `nano_force_vla/` | The repo already has `src/fvb` with `ft/` (force compensation, filters, frames), `scenes/builder.py` (plain-MuJoCo XML building), `policy/td3.py` (the exact TD3+BC used by lessons 11–13), `vla/lerobot_convert.py` | New code goes to **`src/nfv/`** in this repo and *reuses* those. The robosuite-based `fvb/envs` are NOT used — correction after review: robosuite 1.5.2 IS importable in the image, so this is a design choice on v1's own grounds (the gantry isolates contact physics, makes Δp exact, and plain MJCF is itself lesson material), not an environment constraint |
 | Prior-work numbers (gantry 50/50 vs 5/50; TA-VLA force vs zeroed) | Match `docs/FINDINGS.md` and the force-token / ta-vla lessons | Motivation section can cite the lessons directly |
-| JAX parity test as an optional extra at test time | jax/flax are not in the fvb-lab image | Parity by **fixture**: run the reference JAX `LIMoEBlock` once on host CPU (`uv run --with jax,flax,flaxformer`), dump input/weights/output to `tests/nfv/fixtures/limoe_parity.npz`; the repo test compares the PyTorch port against the fixture, no JAX at test time |
+| JAX parity test as an optional extra at test time | jax/flax are not in the fvb-lab image | Parity by **fixture**: run the reference JAX `LIMoEBlock` once on host CPU (`uv run --with jax,flax,flaxformer`), dump input/weights/output to `tests/nfv/fixtures/limoe_parity.npz`; the repo test compares the PyTorch port against the fixture, no JAX at test time. Correction: flaxformer is NOT on PyPI — the fixture generator imports the vendored copy inside the already-cloned `third_party/forcevla` via PYTHONPATH |
 | 15 Hz / 480×640, 8×A100 recipes | n/a here | Already replaced by the nano recipe in v1; unchanged |
 
 New requirement from the user (31 Oct): **ablations are first-class and the papers' claims are
 validated automatically by the course** — §6.
+
+Deliberate v1 compressions, now named (review round 2): the Franka-Panda/menagerie swap is
+deferred (stretch goal after M4; nothing in the policy changes except d_state); each lesson
+KEEPS v1's three exercises, one deliberately wrong (restored — they ride in "What to watch");
+the "where does force enter" chart runs ALL SEVEN `force_in` routes on T1 once M3's modules
+exist (M2 ships the five Table-3 routes); v1's browser-ladder gate returns as the final gate:
+a full lesson 15→18 ladder run from the browser without touching a terminal; the RL
+seed-bimodality risk row is restored in §9.
 
 ## 2. Goal (unchanged) + the teaching contract
 
@@ -48,7 +56,7 @@ existing lab mechanism:
 | Train panel, config form from a dataclass, live curves, ETA | TaskSpec params → generated form; charts from metrics.jsonl; existing pause/stop; the verbose job phases |
 | Evaluate, checkpoint picker, Wilson intervals, twin button | eval form; `ckpt` picker (ISO-stamped names); result.json carries Wilson CIs; the twin is an eval param `force_noise = off/zero/shuffle/gaussian` so one extra eval = the twin row |
 | Live rollout view, force traces, gate bars, subtask, controller mode | post-hoc per-episode **`fvrollout` viewer**: rollout.mp4 (the proven video path) + synchronized force/target traces, expert-gate bars, subtask string, per-axis controller mode, with a scrub slider + prev/next (the house `stepButtons`) |
-| Compare, 3 checkpoints lock-step on one seed, shared force axis | eval params: optional `ckpt_b`, `ckpt_c` (kind "ckpt", same task) — one eval job rolls all checkpoints on identical seeds/physics and the viewer renders side-by-side columns with one force axis |
+| Compare, 3 checkpoints lock-step on one seed, shared force axis | eval params: optional `ckpt_b`, `ckpt_c` (kind "ckpt") — one eval job rolls all checkpoints on identical seeds/physics; viewer renders side-by-side columns with one force axis. **New server work (small, lands with M1):** `start_eval` must resolve kind-"ckpt" eval params the way `start_run` already does for train params (path-safety included), allowing an empty value for optional ones, and the dropdown gains a "none" option |
 | RL panel: per-seed curves, residual magnitude | charts (one series per seed) + the rollout viewer's residual trace |
 | SQLite registry, WebSockets, JPEG streams | not needed: run dirs + status.json + metrics.jsonl + 400 ms polling already survive reloads |
 
@@ -143,6 +151,13 @@ Mechanics (pure house patterns):
   sequentially with fresh seeds (exactly how task 3 trains four encoding arms and task 14
   trains three heads), checkpointing each arm; the form's estimate shows the real cost
   (a full module suite ≈ 2–3 h on the 3080 — an explicit long run like task 11).
+- Suite arms are stored house-style in ONE checkpoint payload per suite run (the task_embed /
+  task_token pattern), labelled per arm, so a single eval sees them all.
+- **Cross-module claims** (M3's "peak force below M2", M4's "+10 pts over the frozen base",
+  the three-variant data-efficiency curve) take the other module's checkpoint through a
+  cross-task eval param of kind "ckpt" with `ckpt_task=<that lesson>` — the mechanism task 13
+  already uses for its flow-bc base — on the shared seeds; the claim declares which arm is
+  local and which is a foreign checkpoint.
 - The suite's evaluate rolls every arm on the shared held-out seeds and writes
   `result.claims`: per claim — both arms' metrics with Wilson CIs, the expected relation, and
   a verdict `CONFIRMED / NOT CONFIRMED / INCONCLUSIVE` (inconclusive when the CIs overlap the
@@ -183,16 +198,18 @@ this experiment*, Theory box with the papers, and the claims board wired into "W
 2. **M1 nanoVLA + lesson 16.** Gate: T0 ≥ 95 %; T1 in 30–70 % (else re-randomise T1);
    20 k steps < 20 min on the 3080; flow unit test (unimodal toy mean); claims board renders.
 3. **M2 nanoForceVLA + lesson 17.** Gate: parity fixture < 1e-5; T1 ≥ 80 % with `fvlmoe` and
-   twin ≥ 20 pts lower; noise drops T1; `prefix_moe` < `concat_after` (reported either way);
-   capacity-drop fraction logged.
+   twin ≥ 20 pts lower; force-to-noise drops T1 by ≥ 10 pts; `prefix_moe` < `concat_after`
+   (reported either way); capacity-drop fraction logged.
 4. **M3 nanoForceVLA2 + lesson 18.** Gate: T2 ≥ 75 % with force RMSE < 1 N while
    `head=position` < 20 %; T3 peak force ≥ 30 % below M2; gate weights tilt to the force
-   expert in contact (plotted); force-into-trunk collapse reproduced.
+   expert in contact (plotted); force-into-trunk ≤ half of fvlmoe's T1 rate (the collapse).
 5. **M4 runtime RL + lesson 19.** Gate: T3 median success +10 pts over frozen base (5 seeds),
-   peak force down, no T0/T1 regression, residual ≈ 0 in free space.
+   peak force down ≥ 20 %, T0/T1 regression bounded CI-aware (the 95 % CI of the difference
+   must not exclude zero by more than 10 pts — the §6 INCONCLUSIVE rule applies), residual
+   ≈ 0 in free space. Final gate: the full lesson 15→18 ladder re-run from the browser alone.
 
 Conventions: fp32 only; every run journaled by the lab itself (run dirs); no success rate
-without interval and twin; smoke tests before long runs; `MUJOCO_GL=egl`; tests CPU-only in
+without interval and twin; smoke tests before long runs; `MUJOCO_GL=osmesa` (as deployed; renders never touch the GPU); tests CPU-only in
 the image unless the GPU is verified idle.
 
 ## 9. Risks (updated)
@@ -206,7 +223,8 @@ the image unless the GPU is verified idle.
 | Claims suite too slow to be run | per-claim presets allow single rows; suite steps knob; estimates honest in the form |
 | ForceVLA reference inference bug (None prefix concat) | port follows `compute_loss` + cached prefix; documented in lesson 17 ("reading a codebase against its paper") |
 | ForceVLA2 ambiguities copied wrongly | every unspecified choice written in docstring + lesson; claims test behaviour, not prose |
-| Robosuite absent from the image | not used; plain MuJoCo only (validated) |
+| Position head "solves" T2 slowly instead of digging in | episode time limit counts as failure too |
+| RL seed bimodality hides the result | five seeds, per-seed curves, median reported, BC floor never below 1.0 |
 
 ## 10. Sources
 
