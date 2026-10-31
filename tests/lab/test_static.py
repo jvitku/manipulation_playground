@@ -99,3 +99,25 @@ def test_ui_reads_progress_message_and_chart_x_key(client):
     app = client.get("/static/app.js").text
     assert app.count("st.msg || st.message") >= 2  # run status bar + eval status
     assert "x_key" in client.get("/static/charts.js").text
+
+
+@pytest.mark.parametrize(
+    ("path", "ctype"),
+    [
+        ("vendor/highlight/highlight.min.js", "javascript"),
+        ("vendor/highlight/github.min.css", "css"),
+        ("vendor/highlight/github-dark.min.css", "css"),
+    ],
+)
+def test_highlight_assets(client, path, ctype):
+    r = client.get(f"/static/{path}")
+    assert r.status_code == 200 and ctype in r.headers["content-type"]
+
+
+def test_index_loads_highlight(client):
+    html = client.get("/").text
+    for s in ("vendor/highlight/highlight.min.js", "vendor/highlight/github.min.css"):
+        assert f"/static/{s}" in html
+    assert 'github-dark.min.css" media="(prefers-color-scheme: dark)"' in html
+    app = client.get("/static/app.js").text
+    assert "highlightElement" in app

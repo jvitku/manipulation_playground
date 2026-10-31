@@ -129,18 +129,19 @@ class ChunkPolicy:
 
     @torch.no_grad()
     def act(self, obs) -> np.ndarray:
+        # N = parallel episodes, H = chunk horizon, A = action dims
         if self.queue is None or self.k >= self.n_exec:
-            cond = self.ds.cond(self.make_cond(obs))
-            n = next(v for v in cond.values() if torch.is_tensor(v)).shape[0]
-            shape = (n, self.H, self.ds.t["x0"].shape[-1])
+            cond = self.ds.cond(self.make_cond(obs))  # dict of normalised [N, ...] tensors
+            n = next(v for v in cond.values() if torch.is_tensor(v)).shape[0]  # N
+            shape = (n, self.H, self.ds.t["x0"].shape[-1])  # [N, H, A]
             if hasattr(self.model, "cache"):
                 with self.model.cache(cond):
                     self.queue = self.gen.sample(self.model, shape, cond, self.steps, self.g)
             else:
                 self.queue = self.gen.sample(self.model, shape, cond, self.steps, self.g)
-            self.queue = self.queue.clamp(-1, 1).cpu().numpy()
+            self.queue = self.queue.clamp(-1, 1).cpu().numpy()  # chunks [N, H, A]
             self.k = 0
-        a = self.queue[:, self.k]
+        a = self.queue[:, self.k]  # [N, H, A] -> [N, A], action k of every chunk
         self.k += 1
         return a
 

@@ -5,9 +5,13 @@ import re
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from lab import run_job
 from lab.core.jobs import new_job_dir, read_status, send_control, start_job
 from lab.tasks import registry
+
+pytestmark = pytest.mark.usefixtures("isolated_registry")
 
 
 def write_config(job_dir, task, params=None):

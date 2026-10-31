@@ -31,7 +31,7 @@ def trained(tmp_path_factory):
 
 def test_task5_registered_and_estimate():
     spec = registry.get("ta-vla")
-    assert spec.order == 6 and spec.viewer == "tavla" and spec.lesson == "ta-vla.html"
+    assert spec.order == 10 and spec.viewer == "tavla" and spec.lesson == "ta-vla.html"
     p = registry.validate_params(spec, {}, which="train")
     assert p["torque_pos"] == "suffix" and p["d"] == 128 and p["demos"] == 800
     assert spec.estimate(p) > 0

@@ -58,29 +58,31 @@ class FlowMatching:
     def loss(self, model, x0: torch.Tensor, cond, mask: torch.Tensor | None = None):
         """Per-sample loss and the model's extra outputs. ``mask`` (B, H): 1 where the chunk
         holds a real action (0 for padding past the end of the episode, as in LeRobot)."""
-        e = torch.randn_like(x0)
-        t = self.sample_t(x0.shape[0], x0.device)
-        tt = t[:, None, None]
-        x_t = tt * e + (1 - tt) * x0
-        v, extra = model(x_t, t, cond)
-        err = (v - (e - x0)).pow(2).mean(-1)  # (B, H)
+        # B = batch, H = chunk horizon, A = action dims; x0 [B, H, A] is the expert chunk
+        e = torch.randn_like(x0)  # noise [B, H, A]
+        t = self.sample_t(x0.shape[0], x0.device)  # noise level per sample [B]
+        tt = t[:, None, None]  # [B] -> [B, 1, 1] for broadcasting
+        x_t = tt * e + (1 - tt) * x0  # interpolate on the line: [B, H, A]
+        v, extra = model(x_t, t, cond)  # predicted velocity [B, H, A]
+        err = (v - (e - x0)).pow(2).mean(-1)  # target e - x0: [B, H, A] -> [B, H]
         if mask is not None:
-            err = err * mask
-            return err.sum(1) / mask.sum(1).clamp_min(1), extra
-        return err.mean(1), extra
+            err = err * mask  # [B, H], padding zeroed
+            return err.sum(1) / mask.sum(1).clamp_min(1), extra  # [B, H] -> [B]
+        return err.mean(1), extra  # [B, H] -> [B]
 
     @torch.no_grad()
     def sample(self, model, shape, cond, steps: int = 10, generator=None, trace: bool = False):
-        x = torch.randn(shape, generator=generator, device=_dev(cond, model))
+        # B = batch, H = chunk horizon, A = action dims; shape = (B, H, A), steps = K
+        x = torch.randn(shape, generator=generator, device=_dev(cond, model))  # x at t=1 [B, H, A]
         xs = [x]
         dt = 1.0 / steps
         for i in range(steps):
-            t = torch.full((shape[0],), 1.0 - i * dt, device=x.device)
-            v, _ = model(x, t, cond)
-            x = x - dt * v
+            t = torch.full((shape[0],), 1.0 - i * dt, device=x.device)  # [B], t: 1 -> 1/K
+            v, _ = model(x, t, cond)  # velocity [B, H, A]
+            x = x - dt * v  # Euler step toward the data: [B, H, A]
             if trace:
                 xs.append(x)
-        return (x, torch.stack(xs)) if trace else x
+        return (x, torch.stack(xs)) if trace else x  # [B, H, A]; trace adds [K+1, B, H, A]
 
 
 class DDPM:
@@ -95,12 +97,13 @@ class DDPM:
         self.abar = abar[1:].float()  # abar_k for k = 0..T-1 (k = 0 is the least noisy)
 
     def loss(self, model, x0, cond, mask=None):
-        k = torch.randint(0, self.T, (x0.shape[0],), device=x0.device)
-        ab = self.abar.to(x0.device)[k][:, None, None]
-        e = torch.randn_like(x0)
-        x_k = ab.sqrt() * x0 + (1 - ab).sqrt() * e
-        eps, extra = model(x_k, (k.float() + 1) / self.T, cond)
-        err = (eps - e).pow(2).mean(-1)
+        # B = batch, H = chunk horizon, A = action dims; x0 [B, H, A] is the expert chunk
+        k = torch.randint(0, self.T, (x0.shape[0],), device=x0.device)  # timestep per sample [B]
+        ab = self.abar.to(x0.device)[k][:, None, None]  # [B] -> [B, 1, 1]
+        e = torch.randn_like(x0)  # noise [B, H, A]
+        x_k = ab.sqrt() * x0 + (1 - ab).sqrt() * e  # noised chunk [B, H, A]
+        eps, extra = model(x_k, (k.float() + 1) / self.T, cond)  # predicted noise [B, H, A]
+        err = (eps - e).pow(2).mean(-1)  # [B, H, A] -> [B, H]
         if mask is not None:
             err = err * mask
             return err.sum(1) / mask.sum(1).clamp_min(1), extra
@@ -141,12 +144,14 @@ class Regression:
     name = "mse"
 
     def loss(self, model, x0, cond, mask=None):
+        # B = batch, H = chunk horizon, A = action dims; x0 [B, H, A] is the expert chunk
+        # the net sees x_t = zeros [B, H, A] and t = zeros [B]; out [B, H, A] is the chunk itself
         out, extra = model(torch.zeros_like(x0), torch.zeros(x0.shape[0], device=x0.device), cond)
-        err = (out - x0).pow(2).mean(-1)
+        err = (out - x0).pow(2).mean(-1)  # [B, H, A] -> [B, H]
         if mask is not None:
-            err = err * mask
-            return err.sum(1) / mask.sum(1).clamp_min(1), extra
-        return err.mean(1), extra
+            err = err * mask  # [B, H], padding zeroed
+            return err.sum(1) / mask.sum(1).clamp_min(1), extra  # [B, H] -> [B]
+        return err.mean(1), extra  # [B, H] -> [B]
 
     @torch.no_grad()
     def sample(self, model, shape, cond, steps: int = 1, generator=None, trace: bool = False):

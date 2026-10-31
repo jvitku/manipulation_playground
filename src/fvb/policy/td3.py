@@ -37,7 +37,8 @@ class Actor(nn.Module):
         self.net = mlp(obs_dim, act_dim, h)
 
     def forward(self, o):
-        return torch.tanh(self.net(o))
+        # legend: B = batch, O = obs dims, A = action dims
+        return torch.tanh(self.net(o))  # [B, O] -> [B, A], squashed to [-1, 1]
 
 
 class Critic(nn.Module):
@@ -49,8 +50,9 @@ class Critic(nn.Module):
         self.q2 = mlp(obs_dim + act_dim, 1, h)
 
     def forward(self, o, a):
-        x = torch.cat([o, a], dim=-1)
-        return self.q1(x), self.q2(x)
+        # legend: B = batch, O = obs dims as built (obs + privileged), A = action dims
+        x = torch.cat([o, a], dim=-1)  # [B, O] + [B, A] -> [B, O+A]
+        return self.q1(x), self.q2(x)  # each: [B, O+A] -> [B, 1]
 
 
 class ReplayBuffer:
@@ -99,8 +101,9 @@ class TD3:
 
     @torch.no_grad()
     def act(self, o: np.ndarray) -> np.ndarray:
-        x = torch.as_tensor(o, dtype=torch.float32, device=self.device)[None]
-        return self.actor(x)[0].cpu().numpy()
+        # legend: O = obs dims, A = action dims (single observation: no batch dim)
+        x = torch.as_tensor(o, dtype=torch.float32, device=self.device)[None]  # [O] -> [1, O]
+        return self.actor(x)[0].cpu().numpy()  # [1, O] -> [1, A] -> [A]
 
     def update(
         self,
@@ -114,15 +117,16 @@ class TD3:
         loss is TD3+BC (Fujimoto & Gu 2021): -Q / mean|Q| + bc_weight * |pi(o_d) - a_d|^2 on a
         batch of demonstration transitions."""
         c = self.cfg
-        o, a, r, o2, d, p, p2 = buf.sample(c.batch, rng, self.device)
-        co, co2 = torch.cat([o, p], -1), torch.cat([o2, p2], -1)  # critic inputs
+        # legend: B = batch, O = obs dims, A = action dims, P = privileged dims (0 if none)
+        o, a, r, o2, d, p, p2 = buf.sample(c.batch, rng, self.device)  # o, o2 [B, O]; a [B, A]
+        co, co2 = torch.cat([o, p], -1), torch.cat([o2, p2], -1)  # critic inputs [B, O+P]
         with torch.no_grad():
             noise = (torch.randn_like(a) * c.target_noise).clamp(-c.noise_clip, c.noise_clip)
-            a2 = (self.actor_t(o2) + noise).clamp(-1.0, 1.0)
-            q1t, q2t = self.critic_t(co2, a2)
-            y = r + c.gamma * (1.0 - d) * torch.min(q1t, q2t)
-        q1, q2 = self.critic(co, a)
-        c_loss = ((q1 - y) ** 2).mean() + ((q2 - y) ** 2).mean()
+            a2 = (self.actor_t(o2) + noise).clamp(-1.0, 1.0)  # target action [B, O] -> [B, A]
+            q1t, q2t = self.critic_t(co2, a2)  # ([B, O+P], [B, A]) -> twin targets [B, 1]
+            y = r + c.gamma * (1.0 - d) * torch.min(q1t, q2t)  # min of twins; r, d, y [B, 1]
+        q1, q2 = self.critic(co, a)  # ([B, O+P], [B, A]) -> [B, 1] each
+        c_loss = ((q1 - y) ** 2).mean() + ((q2 - y) ** 2).mean()  # [B, 1] -> scalar
         self.c_opt.zero_grad(set_to_none=True)
         c_loss.backward()
         self.c_opt.step()
@@ -133,11 +137,11 @@ class TD3:
         }
         self.updates += 1
         if self.updates % c.policy_delay == 0:
-            q = self.critic(co, self.actor(o))[0]
-            a_loss = -q.mean()
+            q = self.critic(co, self.actor(o))[0]  # actor [B, O] -> [B, A]; q = q1 [B, 1]
+            a_loss = -q.mean()  # [B, 1] -> scalar
             if demo is not None and bc_weight > 0 and demo.n > 0:
-                od, ad, *_ = demo.sample(c.batch, rng, self.device)
-                bc = ((self.actor(od) - ad) ** 2).mean()
+                od, ad, *_ = demo.sample(c.batch, rng, self.device)  # demo od [B, O], ad [B, A]
+                bc = ((self.actor(od) - ad) ** 2).mean()  # [B, A] -> scalar BC loss
                 # floor 1.0: a near-zero |Q| early on would blow the Q term up into noise
                 a_loss = q_weight * a_loss / q.abs().mean().detach().clamp_min(1.0) + bc_weight * bc
                 out["bc_loss"] = bc.item()

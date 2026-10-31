@@ -97,12 +97,13 @@ def train_loop(
             completed = False
             break
         model.train()
-        idx = torch.randint(0, ds.n, (batch,), generator=g).to(dev)
-        cond, x0, mask, aux_t = ds.batch(idx)
-        per, extra = gen.loss(model, x0, cond, mask)
-        loss = per.mean()
+        # B = batch, H = chunk horizon, A = action dims, F = aux-target dims (future torques)
+        idx = torch.randint(0, ds.n, (batch,), generator=g).to(dev)  # [B] dataset indices
+        cond, x0, mask, aux_t = ds.batch(idx)  # x0 [B, H, A], mask [B, H], aux_t [B, F] or None
+        per, extra = gen.loss(model, x0, cond, mask)  # per-sample loss [B]
+        loss = per.mean()  # [B] -> scalar
         if aux_weight > 0 and "aux" in extra and aux_t is not None:
-            la = (extra["aux"] - aux_t).pow(2).mean()
+            la = (extra["aux"] - aux_t).pow(2).mean()  # [B, F] -> scalar
             loss = loss + aux_weight * la
             acc_aux += float(la)
         for pg in opt.param_groups:

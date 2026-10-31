@@ -1,3 +1,6 @@
+<h3>The question</h3>
+<p>What is a force reading worth to a policy that cannot see what it needs to know? The hole sits under a position estimate that is wrong by more than the chamfer catches in half the episodes, and nothing in the proprioceptive channels says where it really is &mdash; the information arrives only through contact. This experiment trains the same policy with and without the 9 force channels and lets the success-rate gap put a number on touch.</p>
+
 <h3>The task</h3>
 <p>This is the headline result of the repo's Stage&nbsp;1 (docs/FINDINGS.md, &ldquo;Stage 1&rdquo;), run here on the real
 simulator: a 3-axis <b>gantry</b> holds a square peg over a square hole with <b>0.5 mm clearance</b>. The hole is at a random
@@ -18,7 +21,11 @@ The 9 force numbers are the <b>force token</b>. <em>Demo action noise</em> pertu
 <h3>The method: ACT-lite</h3>
 <p>A small action-chunking transformer. The H observation tokens go through a linear embedding plus learned positions and a 3-layer
 transformer encoder; K <b>learned queries</b> cross-attend to that memory in a 2-layer decoder and a linear head reads out K actions
-(about 800&nbsp;k parameters; the <em>MLP</em> baseline flattens the window instead, 116&nbsp;k). It is trained by plain regression.
+(about 800&nbsp;k parameters; the <em>MLP</em> baseline flattens the window instead, 116&nbsp;k). In the wiring taxonomy
+that task&nbsp;8 later names &mdash; one operation, three wirings &mdash; the encoder is <b>self-attention</b> over the
+history (Q, K and V all from the same window of observation tokens: the window talks to itself) and the decoder is
+<b>cross-attention</b> (Q from the K learned queries, K and V from the encoder's memory: the queries read the history).
+It is trained by plain regression.
 Near the end of an episode there are fewer than K future actions, so those slots are masked:</p>
 <p>$$L = \frac{\sum_{b}\sum_{k} m_{b,k}\;\tfrac{1}{3}\left\lVert \hat a_{b,k} - a^{*}_{b,k}\right\rVert_1}{\sum_{b}\sum_{k} m_{b,k}}$$</p>
 <p class="ref">where \(m\) is the validity mask, \(\hat a\) the predicted chunk and \(a^*\) the expert chunk, both z-scored per channel.
@@ -26,6 +33,54 @@ Closed loop, the policy executes the <em>first</em> action of the chunk each ste
 <p><b>The zeroed twin.</b> <em>Feed the force channels</em> off zeroes the 9 force channels in training and evaluation: same
 network, same data, no touch. At evaluation, <em>Zero the force input</em> blinds a force-trained model after the fact (the raw channels are set
 to 0 before normalisation). Compare the two at equal settings: the difference is the value of the force token.</p>
+
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>The force token (9 channels in every observation).</b> The hole position is hidden; contact is the only channel
+through which it leaks. Putting the compensated F/T readings plus the between-ticks summary into the observation is the
+experiment's actual subject &mdash; everything else exists to measure what that information is worth.</p>
+<p><b>A history window (H&nbsp;=&nbsp;10), not one frame.</b> The informative event &mdash; the jam on the rim &mdash; is a
+transient that lasts a frame or two and can fall anywhere in the recent past; one frame routinely misses it.</p>
+<p><b>The zeroed twin.</b> The ablation control: identical network, data and training, only the 9 channels blanked. Whatever
+separates the two runs is the force token, not an architecture or tuning difference.</p>
+<p><b>A transformer (ACT-lite) &mdash; kept, but not required by the tokens.</b> The MLP baseline eats the same force
+channels and already reaches 45/50 (vs 5/50 blind): the finding is the input, not the network. Attention adds the last step
+(50/50) because it weights the jam frames by their <em>content</em> wherever they fall in the window, while the MLP's fixed
+per-slot weights must learn &ldquo;jam three steps ago&rdquo; and &ldquo;jam seven steps ago&rdquo; separately. And tokens
+are the interface the rest of the ladder scales on: image patches (task&nbsp;7), words (tasks&nbsp;3, 10) and a torque token
+(task&nbsp;10) join the same sequence without redesigning the net.</p>
+<p><b>The MLP baseline &mdash; kept for the same reason.</b> It is the proof that the claim above is honest.</p>
+<p><b>Action chunking (K&nbsp;=&nbsp;5 learned queries).</b> One parallel decode per window (the ACT recipe), and
+commitment between re-plans; closed loop only the first action runs, so reactivity to contact is kept.</p>
+<p><b>Masked L1, not L2.</b> L1 fits the conditional median &mdash; robust to the demo noise &mdash; and its failure mode
+under ambiguity (dithering between symmetric corrections) is exactly the behaviour the blind twin exhibits, which makes the
+comparison legible.</p>
+</details>
+<details class="theory"><summary>Theory &mdash; why a force history resolves a hidden hole</summary>
+<p>The task is partially observed: the one variable the action should depend on &mdash; the peg-to-hole offset &mdash; is never in
+the observation. It leaks out only through contact. When the peg lands on the rim instead of in the hole, the contact point is off
+the peg's axis, so the wrist senses a torque whose <em>sign</em> says on which side the hole lies. One frame of that cue is small
+and sits inside an impact transient (the 3 summary channels exist because a spike can fall entirely between two 20&nbsp;Hz
+control ticks); across a window of H frames the jam has a distinctive signature. That is why the force channels ride in <em>every</em> observation token rather than only the current one: the
+encoder's self-attention,</p>
+<p>$$\operatorname{Attn}(Q,K,V)=\operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V,$$</p>
+<p>weights the frames around the jam by their content, wherever they fall in the window. The MLP twin reads each window slot
+through fixed weights, so &ldquo;a jam, three steps ago&rdquo; and &ldquo;a jam, seven steps ago&rdquo; are separate patterns it
+must learn one by one &mdash; it works, just worse (45/50 vs 50/50).</p>
+<p>The loss says why the blind twin dithers instead of failing outright. L1 regression fits the conditional median,
+\(\hat a(o) \approx \operatorname{median}\, p(a^{*}\mid o)\), and without force a jam against a hole to the left and one to the
+right produce the same observation: the two expert corrections (&plusmn;0.5&nbsp;mm) are symmetric modes whose median sits
+uselessly between them. So the blind policy learns the unambiguous half of the recovery (retract) and not the ambiguous half
+(which way to shift); the force token's one sign bit is what makes the target unimodal. The chunk (K&nbsp;=&nbsp;5) plays the same
+trick in time: predicting the whole retract&ndash;shift&ndash;descend program at once commits to one recovery instead of
+re-deciding &mdash; and re-averaging &mdash; every step.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2509.07962" target="_blank" rel="noopener">Zhang et&nbsp;al., &ldquo;TA-VLA: Elucidating the Design Space of Torque-aware Vision-Language-Action Models&rdquo; (2025)</a> &mdash; the paper this stage's force-token recipe follows, scaled up to full VLAs.</li>
+<li><a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Vaswani et&nbsp;al., &ldquo;Attention Is All You Need&rdquo; (2017)</a> &mdash; the transformer and the attention equation above.</li>
+<li><a href="https://arxiv.org/abs/1810.10191" target="_blank" rel="noopener">Lee, Zhu et&nbsp;al., &ldquo;Making Sense of Vision and Touch&rdquo; (2019)</a> &mdash; learning a joint representation of vision and force for contact-rich insertion.</li>
+<li><a href="https://arxiv.org/abs/2303.04137" target="_blank" rel="noopener">Chi et&nbsp;al., &ldquo;Diffusion Policy&rdquo; (2023)</a> &mdash; the standard answer when the expert's actions are multimodal and regression starts averaging modes.</li>
+</ul>
+</details>
 
 <h3>The architecture</h3>
 <svg viewBox="0 0 780 310" role="img" aria-label="ACT-lite: observation window with highlighted force channels and a zeroed-twin switch, encoder, K learned queries, decoder, action chunk and masked L1 loss node" style="width:100%;max-width:780px;font-family:var(--mono);font-size:11px">
@@ -36,15 +91,15 @@ to 0 before normalisation). Compare the two at equal settings: the difference is
   </defs>
   <!-- observation window -->
   <text x="75" y="18" text-anchor="middle" fill="var(--muted)">window: H = 10 steps</text>
-  <rect x="10" y="26" width="130" height="30" rx="6" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="26" width="130" height="30" rx="6" fill="var(--chip)" stroke="var(--line)" data-i="posvel"/>
   <text x="75" y="45" text-anchor="middle" fill="var(--ink)">pos 3 &middot; vel 3</text>
-  <rect x="10" y="62" width="130" height="50" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+  <rect x="10" y="62" width="130" height="50" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" data-i="force"/>
   <text x="75" y="80" text-anchor="middle" fill="var(--ink)" font-weight="700">force token (9)</text>
   <text x="75" y="95" text-anchor="middle" fill="var(--muted)">F, T comp. 6 + hf 3</text>
-  <rect x="10" y="118" width="130" height="30" rx="6" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="10" y="118" width="130" height="30" rx="6" fill="var(--chip)" stroke="var(--line)" data-i="prev"/>
   <text x="75" y="137" text-anchor="middle" fill="var(--ink)">prev action 3</text>
   <!-- zeroed switch -->
-  <rect x="160" y="68" width="66" height="38" rx="6" fill="none" stroke="var(--accent)" stroke-dasharray="4 3"/>
+  <rect x="160" y="68" width="66" height="38" rx="6" fill="none" stroke="var(--accent)" stroke-dasharray="4 3" data-i="useforce"/>
   <text x="193" y="84" text-anchor="middle" fill="var(--accent)">use_force</text>
   <text x="193" y="98" text-anchor="middle" fill="var(--muted)">off &#8594; 0</text>
   <line x1="140" y1="87" x2="158" y2="87" stroke="var(--accent)" marker-end="url(#ftG)"/>
@@ -52,40 +107,62 @@ to 0 before normalisation). Compare the two at equal settings: the difference is
   <line x1="140" y1="41" x2="258" y2="84" stroke="var(--muted)" marker-end="url(#ftA)"/>
   <line x1="226" y1="87" x2="258" y2="90" stroke="var(--accent)" stroke-width="2" marker-end="url(#ftG)"/>
   <line x1="140" y1="133" x2="258" y2="98" stroke="var(--muted)" marker-end="url(#ftA)"/>
-  <rect x="260" y="64" width="84" height="46" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="260" y="64" width="84" height="46" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="embed"/>
   <text x="302" y="83" text-anchor="middle" fill="var(--ink)">embed + pos</text>
   <text x="302" y="98" text-anchor="middle" fill="var(--muted)">(B, H, 128)</text>
   <line x1="344" y1="87" x2="374" y2="87" stroke="var(--muted)" marker-end="url(#ftA)"/>
-  <rect x="376" y="58" width="108" height="58" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="376" y="58" width="108" height="58" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="enc"/>
   <text x="430" y="80" text-anchor="middle" fill="var(--ink)">encoder</text>
   <text x="430" y="95" text-anchor="middle" fill="var(--muted)">3 &times; self-attn</text>
   <text x="430" y="108" text-anchor="middle" fill="var(--muted)">history tokens</text>
   <!-- queries + decoder -->
-  <rect x="376" y="150" width="108" height="36" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="376" y="150" width="108" height="36" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="queries"/>
   <text x="430" y="166" text-anchor="middle" fill="var(--ink)">K = 5 learned</text>
   <text x="430" y="180" text-anchor="middle" fill="var(--muted)">queries</text>
   <line x1="484" y1="87" x2="520" y2="106" stroke="var(--muted)" marker-end="url(#ftA)"/>
   <line x1="484" y1="168" x2="520" y2="128" stroke="var(--muted)" marker-end="url(#ftA)"/>
-  <rect x="522" y="88" width="104" height="58" rx="9" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="522" y="88" width="104" height="58" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="dec"/>
   <text x="574" y="110" text-anchor="middle" fill="var(--ink)">decoder</text>
   <text x="574" y="125" text-anchor="middle" fill="var(--muted)">2 &times; cross-attn</text>
   <text x="574" y="138" text-anchor="middle" fill="var(--muted)">+ Linear(3)</text>
   <line x1="626" y1="117" x2="654" y2="117" stroke="var(--muted)" marker-end="url(#ftA)"/>
-  <rect x="656" y="98" width="112" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="656" y="98" width="112" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="chunk"/>
   <text x="712" y="114" text-anchor="middle" fill="var(--ink)">a&#770; chunk</text>
   <text x="712" y="128" text-anchor="middle" fill="var(--muted)">(B, K, 3) mm</text>
   <!-- expert target + loss -->
-  <rect x="656" y="206" width="112" height="38" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="656" y="206" width="112" height="38" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="target"/>
   <text x="712" y="222" text-anchor="middle" fill="var(--ink)">a* expert chunk</text>
-  <text x="712" y="236" text-anchor="middle" fill="var(--muted)">+ mask m (end of episode)</text>
+  <text x="712" y="236" text-anchor="middle" fill="var(--muted)">+ mask m (end)</text>
   <line x1="712" y1="136" x2="680" y2="164" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#ftL)"/>
   <line x1="712" y1="206" x2="720" y2="190" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#ftL)"/>
-  <rect x="652" y="164" width="118" height="28" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="652" y="164" width="118" height="28" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="loss"/>
   <text x="711" y="183" text-anchor="middle" fill="var(--loss)" font-weight="700">masked L1</text>
   <text x="380" y="286" text-anchor="middle" fill="var(--muted)">closed loop: read the last H observations &#8594; predict K actions &#8594; execute the first &#8594; step the simulator</text>
 </svg>
 <p class="ref">B = batch. The highlighted block is the 9 force channels (the force token); the dashed <code>use_force</code> switch is the zeroed
 twin. The loss node compares the chunk with the expert chunk, ignoring slots past the episode end.</p>
+
+<details class="code"><summary>ACT-lite: observation tokens in, learned queries cross-attend, actions out</summary><pre><code class="language-python" data-src="src/fvb/policy/models.py">def forward(self, x: torch.Tensor) -&gt; torch.Tensor:  # [B, H, O] -&gt; [B, K, A]
+    # legend: B = batch, H = history, K = chunk, O = obs dims, A = action dims, D = width
+    h = self.norm_in(self.embed(x) + self.pos)  # embed [B, H, O] -&gt; [B, H, D]; pos [1, H, D]
+    mem = self.encoder(h)  # encoder: [B, H, D] -&gt; [B, H, D]
+    q = self.queries.expand(x.shape[0], -1, -1)  # [1, K, D] -&gt; [B, K, D]
+    out = self.decoder(q, mem)  # cross-attend: [B, K, D] x [B, H, D] -&gt; [B, K, D]
+    return self.head(out)  # [B, K, D] -&gt; [B, K, A]</code></pre></details>
+<details class="code"><summary>Stage-1 training step: masked L1 on action windows</summary><pre><code class="language-python" data-src="lab/tasks/task4_force_token.py"># legend: B = batch, H = history, K = chunk, O = obs dims, A = action dims
+def masked_l1(pred, y, m):  # pred, y [B, K, A]; mask m [B, K]
+    return ((pred - y).abs().mean(-1) * m).sum() / m.sum()  # [B, K, A] -&gt; [B, K] -&gt; scalar
+# ...
+for i in range(spe):
+    idx = perm[i * BATCH : (i + 1) * BATCH]  # window indices [B]
+    loss = masked_l1(model(Xtr_t[idx]), Ytr_t[idx], Mtr_t[idx])  # [B, H, O] -&gt; [B, K, A]
+    opt.zero_grad(set_to_none=True)
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    opt.step()</code></pre></details>
+<details class="code"><summary>The zeroed-twin knob: the same checkpoint with the force channels blanked</summary><pre><code class="language-python" data-src="lab/tasks/task4_force_token.py">trained_with_force = bool(policy.use_force)
+zeroed = bool(P.get("force_zeroed", False)) or not trained_with_force
+policy.use_force = not zeroed  # TorchPolicy.act zeroes the force channels when False</code></pre></details>
 
 <h3>What to watch: validation L1 is health, closed-loop success is the score</h3>
 <p>The charts show collection progress, then per epoch the train and validation <b>masked L1</b> and the validation action error in mm. They
@@ -99,7 +176,7 @@ do not show success: that is only measured by <em>Evaluate</em>, which flies uns
 <tr><td>MLP + force</td><td>0.132</td><td>45/50</td></tr>
 <tr><td>MLP, force zeroed</td><td>0.158</td><td>5/50</td></tr>
 </table>
-<p class="ref">README.md quotes the same headline as &ldquo;50/50 vs 7/50&rdquo; (a different run of the pictured episodes); FINDINGS.md&rsquo; 5/50 is the evaluated table above.</p>
+<p class="ref">README.md quotes the same headline as &ldquo;50/50 vs 7/50&rdquo; (a different run of the pictured episodes); FINDINGS.md&rsquo;s 5/50 is the evaluated table above.</p>
 <p>The validation loss separates the variants only 2&times; (0.07 vs 0.15), because 90&nbsp;% of the steps are &ldquo;descend 2.5 mm&rdquo; and both fit them; the
 closed-loop gap is 10&times;. Without force the policy even learns the jam&rarr;retract reflex, but the same observation precedes
 &ldquo;shift +x&rdquo; and &ldquo;shift &minus;x&rdquo;, an L1 regression averages them, and it retracts about 20 times per episode and dithers
@@ -118,3 +195,5 @@ video; the grid is the force part of the window the net reads at that moment. A 
 <li><b>Demo action noise</b> (default 0 = Stage-1 replica; 0.5 = robustness experiment): see &ldquo;The data&rdquo;. Evaluation: <em>Hole offset sigma</em> (trained at 1.5; the repo reports that the force policy still reaches 50/50 at 3 mm),
 <em>Clearance</em>, <em>Zero the force input</em>, <em>Episodes to render</em> (the video concatenates them, each behind a short title card) and the eval seed.</li>
 </ul>
+
+<script type="application/json" class="blkinfo">{"posvel": {"t": "pos 3 · vel 3 — proprioception", "html": "<p><b>Purpose:</b> the peg's position relative to the episode start and its velocity — what the gantry knows without touch. The hole position is never in here.</p><p><b>Shape(s):</b> <code>6 of the 18 obs channels</code>, present in each of the H = 10 window steps; the full window the net reads is <code>(B, 10, 18)</code>.</p><p><b>Updated:</b> measured every 20 Hz control tick; the training windows are sliced once from the demos collected at run start.</p>"}, "force": {"t": "force token — the 9 force channels", "html": "<p><b>Purpose:</b> the only channels that leak the hidden variable: when the peg jams on the rim, the torque's sign says on which side the hole lies. They ride in <i>every</i> one of the H observation tokens, so self-attention can find the jam wherever it falls in the window.</p><p><b>Shape(s):</b> <code>9 of the 18 channels</code>: compensated force + torque (6) and a 3-number summary of the high-rate force between two control ticks (a spike can fall entirely between them).</p><p><b>Updated:</b> sensed every tick; z-scored with statistics computed from the training demos.</p>"}, "prev": {"t": "prev action — the last command", "html": "<p><b>Purpose:</b> the previously commanded step (dx, dy, dz). With demo action noise the executed motion differs from the clean label, and this channel is where the net sees that motion.</p><p><b>Shape(s):</b> <code>3 of the 18 channels</code> per window step.</p><p><b>Updated:</b> every control tick.</p>"}, "useforce": {"t": "use_force — the zeroed twin", "html": "<p><b>Purpose:</b> the ablation switch. Off = the 9 force channels are zeroed in training <i>and</i> evaluation: same architecture, same data, no touch. The separate eval knob <i>Zero the force input</i> instead blinds a force-trained checkpoint after the fact (raw channels set to 0 before normalisation).</p><p><b>Shape(s):</b> no parameters — a boolean recorded in the checkpoint's <code>meta</code>; evaluation rebuilds the model from that meta only, never from form values.</p><p><b>Updated:</b> fixed for the whole run.</p>"}, "embed": {"t": "embed + pos — tokens for the encoder", "html": "<p><b>Purpose:</b> one linear map turns each 18-number observation into a d-dim token; a learned position vector per window slot tells the encoder <i>when</i>; LayerNorm on top.</p><p><b>Shape(s):</b> <code>Linear(18 → 128)</code> + learned <code>pos (1, 10, 128)</code>; out <code>(B, 10, 128)</code>.</p><p><b>Updated:</b> every optimizer step (AdamW, lr 3e-4 with cosine decay, batch 256).</p>"}, "enc": {"t": "encoder — self-attention over the history", "html": "<p><b>Purpose:</b> lets every window step look at every other: the frames around a jam are weighted by their content, wherever they sit — the thing the MLP baseline's fixed per-slot weights cannot do.</p><p><b>Shape(s):</b> 3 × <code>TransformerEncoderLayer(d=128, 4 heads, ff 256, pre-norm, dropout 0.1)</code>; memory out <code>(B, 10, 128)</code>.</p><p><b>Updated:</b> every optimizer step; nothing in this model is frozen.</p>"}, "queries": {"t": "K = 5 learned queries", "html": "<p><b>Purpose:</b> one trainable vector per chunk slot — a standing question, \"what should action k be?\". They replace autoregression: all K actions are decoded in one parallel pass (the ACT recipe, minus the CVAE — the expert here is deterministic).</p><p><b>Shape(s):</b> <code>nn.Parameter (1, 5, 128)</code>, init N(0, 0.02), expanded to <code>(B, 5, 128)</code>.</p><p><b>Updated:</b> trained with the rest; at inference the same 5 vectors are reused for every window.</p>"}, "dec": {"t": "decoder — queries read the memory", "html": "<p><b>Purpose:</b> each query cross-attends to the encoded history (and self-attends to the other queries); a linear head turns each query's output into one action.</p><p><b>Shape(s):</b> 2 × <code>TransformerDecoderLayer(d=128, 4 heads, ff 256, pre-norm)</code> + <code>Linear(128 → 3)</code>; out <code>(B, 5, 3)</code>.</p><p><b>Updated:</b> every optimizer step.</p>"}, "chunk": {"t": "â — the predicted action chunk", "html": "<p><b>Purpose:</b> K = 5 future steps, predicted at once. Closed loop only the <i>first</i> is executed; then the window shifts one step and the net runs again.</p><p><b>Shape(s):</b> <code>(B, 5, 3)</code>, z-scored (dx, dy, dz); de-normalised to mm for execution.</p><p><b>Updated:</b> recomputed every 20 Hz control tick at inference.</p>"}, "target": {"t": "a* — the expert chunk + mask", "html": "<p><b>Purpose:</b> the K = 5 expert actions that followed the window in the demo — always the <i>clean</i> expert action, even when demo noise perturbed what was executed. The mask m marks slots past the episode end.</p><p><b>Shape(s):</b> <code>(B, 5, 3)</code> z-scored + mask <code>(B, 5)</code>.</p><p><b>Updated:</b> sliced once at run start when the windows are built.</p>"}, "loss": {"t": "masked L1", "html": "<p><b>Purpose:</b> mean absolute error over the valid chunk slots, <code>Σ m·|â − a*| / Σ m</code>. L1 fits the conditional <i>median</i> — which is exactly why the blind twin learns the retract but averages the ±0.5 mm shifts into dithering.</p><p><b>Shape(s):</b> scalar, averaged over B, K and the 3 action dims.</p><p><b>Updated:</b> backpropagated every optimizer step; gradient clipped at norm 1.0.</p>"}}</script>

@@ -59,8 +59,9 @@ FALLBACK_EVAL_S = 8.0  # one 200-scene closed-loop evaluation at sample_steps=8
 
 
 def _obs_tensor(raw: dict, dev, use_force: bool) -> torch.Tensor:
-    """env obs dict (state 2 + torque 20) -> (n, 22); torque zeroed when `use_force` is false."""
-    tq = raw["torque"] if use_force else np.zeros_like(raw["torque"])
+    """env obs dict (state 2 + torque 20) -> [n, 22]; torque zeroed when `use_force` is false."""
+    # n = episodes, O = obs dims; concat state [n, 2] + torque [n, 20] -> [n, O] with O = 22
+    tq = raw["torque"] if use_force else np.zeros_like(raw["torque"])  # [n, 20]
     return torch.as_tensor(np.concatenate([raw["state"], tq], 1), dtype=torch.float32, device=dev)
 
 
@@ -70,6 +71,8 @@ def _rollout(model, ds_like, n, seed, n_exec, K, use_force, est_sigma=0.03, sens
     env = c2d.t3_scenes(n, seed, est_sigma)
     env.noise = sensor_noise
     dev = ds_like.device
+    # n = episodes, O = obs dims (22), H = chunk horizon, K = sampling steps, 2 = action dims
+    # make_cond maps env obs -> {"obs": [n, O]}; the policy samples action chunks [n, H, 2]
     pol = ChunkPolicy(
         model, make_gen(), ds_like, lambda o: {"obs": _obs_tensor(o, dev, use_force)}, n_exec, K,
         seed=seed,
@@ -80,8 +83,8 @@ def _rollout(model, ds_like, n, seed, n_exec, K, use_force, est_sigma=0.03, sens
     act = [[] for _ in range(record)]
     while not env.done.all():
         live = ~env.done.copy()
-        a = pol.act(c2d.t3_obs(env))
-        env.step(a)
+        a = pol.act(c2d.t3_obs(env))  # obs [n, O] -> the next action [n, 2]
+        env.step(a)  # apply [n, 2]
         for i in range(record):
             if live[i]:
                 act[i].append(np.asarray(a[i], float).tolist())

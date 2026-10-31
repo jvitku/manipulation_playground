@@ -1,0 +1,207 @@
+<h3>The question</h3>
+<p>Task 7 (vit-mnist) made tokens out of an image and let a summary token (CLS) collect whatever it needed; the question it
+answered was fixed ("which digit is this?"). Task 8 (cross-attn) showed a decoder asking questions of a separate memory.
+A robot policy needs both at once: it looks at a scene (image tokens) and is <em>told</em> what to do (a command token), and
+the command decides where in the scene to look. This is a vision-language-action model (VLA) in miniature, with the action
+replaced by the simplest grounded answer there is: <b>where is the digit I was asked about &mdash; left, right, or not on
+the picture at all?</b></p>
+<p>In the ladder's wiring terms &mdash; one operation, three wirings &mdash; this is pure <b>cross-attention</b> used as
+an <em>interface</em>: Q comes from a command token that never came from the image, K and V from the 32 patch tokens,
+which first talked to each other through <b>self-attention</b> so a patch knows it belongs to a 4 before anybody asks for
+4s. Compare where the queries come from across the ladder: in task 8 they are the string being written, one per output
+character; here the query is a command picked at run time; in task 5 (force-token) they are K learned constants, one per
+action slot. Three sources of Q &mdash; one operation underneath.</p>
+
+<h3>The task</h3>
+<p>Each sample is a 28&times;56 canvas: two MNIST digits of <em>different</em> classes side by side, and a query, a class from
+0 to 9 ("find the 4"). The answer is <b>left</b> (0), <b>right</b> (1) or <b>absent</b> (2). A third of the samples are
+absent: the query is then drawn from the eight classes that are not on the canvas. Chance is therefore 33%, loss
+\(\ln 3 \approx 1.10\). Canvases are built fresh at every training step from the <code>train_n</code> digits (default
+10&thinsp;000 of the 60&thinsp;000), so the model never sees the same pair twice, but the individual digits repeat. The
+validation numbers come from a fixed set of 2000 canvases built from the test digits, and
+<b>absent accuracy</b> is measured on its absent cases only. The loss is the cross-entropy of the three-way answer:</p>
+<p>$$\mathcal{L} = -\log p_\theta(\text{answer}\mid\text{canvas},\ \text{query})$$</p>
+
+<h3>The method</h3>
+<p>The canvas is cut into 7&times;7 patches, a 4&times;8 grid of 32 tokens. As in task 7 each patch is flattened,
+linearly embedded and given a learned position vector, and <code>depth</code> self-attention blocks (<code>minitf.Block</code>)
+let the patches talk: a patch that is part of a "4" has to know it belongs to a 4 before anybody can ask for 4s. The query
+is a different kind of token. It is a <em>learned embedding of the class</em> (ten rows, one per digit), and it does not go through the blocks at all. It
+reads the patches through <b>one</b> cross-attention layer (<code>minitf.MHA</code>, the same module as in task 8, with the
+query token as \(x_q\) and the 32 patch tokens as \(x_{kv}\)):</p>
+<p>$$\text{out}=\operatorname{softmax}\!\Big(\frac{(e_q W_Q)(X W_K)^{\top}}{\sqrt{d_k}}\Big)\,(X W_V)\,W_O,\qquad
+\text{logits}=W_h\,\operatorname{LN}(e_q+\text{out})$$</p>
+<p class="ref">\(e_q\) is the query embedding, \(X\) the 32 patch tokens after the blocks and a LayerNorm. A head's attention row has
+exactly 32 weights and sums to 1: there is no CLS slot and the query is not among the keys. For the right answer the query
+has to <em>find the matching patches</em> (its \(W_Q e_q\) must score high against the keys of patches that look like that digit) and
+the values it brings back must carry <em>where those patches are</em> (the position vectors travel in \(X\)), or nothing at all if none
+matched. Nothing in the loss says "look at the digit": the model learns where to look because that is the only way to lower
+the loss.</p>
+
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>The query skips the blocks.</b> The command reads the scene through exactly one cross-attention call
+(<code>(heads, 1, 32)</code>), and \(e_q\) never rides through the encoder &mdash; so the interface stays pure: the
+scene representation cannot be pre-mixed with the question, and the drawn attention row <em>is</em> the whole read.</p>
+<p><b>Two digits per canvas, different classes.</b> With two digits present, "what is on the canvas" does not determine
+the answer &mdash; only the command does &mdash; so the model is forced into content-based routing rather than plain
+classification.</p>
+<p><b>Left / right / absent.</b> Left vs right forces position to ride in the values (a weighted average carries no
+patch index); absent &mdash; a third of the samples &mdash; forces "I found nothing" to be expressible, the sibling of
+DETR's no-object class, and gets its own accuracy curve.</p>
+<p><b>Fresh canvases from a fixed digit pool.</b> Pairs never repeat but the <code>train_n</code> digits do, so the
+knob cleanly shows the price of a small set (92.3% at 2000 digits against 96.9% at 10&thinsp;000).</p>
+<p><b>The evaluation noise knob.</b> Gaussian pixel noise the training never saw probes what the learned read relies
+on: absent holds up best (82.7% at std 0.5) while left / right collapse first.</p>
+</details>
+
+<details class="theory"><summary>Theory &mdash; learned queries are content-based routing</summary>
+<p>Lesson 6 built the lookup with a query that came from the data; lesson 7's CLS token asked one fixed, learned question
+("what digit is this?"). This task sits exactly between: ten learned question vectors, and the <em>command picks which one
+is asked</em>. That step &mdash; a query selected at run time rather than wired in &mdash; is the pattern several well-known
+architectures are built from. DETR's object queries are a hundred learned vectors that cross-attend into image features
+(after an encoder has contextualised them, as the blocks do here), each emitting one detection; DETR too needs an explicit
+"no object" answer, the sibling of <b>absent</b>. The Perceiver turns the economics of the same read into its whole design:
+\(M\) latent queries reading \(N\) inputs cost \(O(MN)\) instead of self-attention's \(O(N^2)\), so a small learned array
+can read tens of thousands of input elements once, cheaply &mdash; here \(M{=}1\), \(N{=}32\), and the ViT CLS readout is
+the fixed-question case of the same thing.</p>
+<p>The shared mechanism is <b>content-based routing</b>: no output slot has a wired path to a region of the input. Where to
+read is computed per example, by dotting the slot's question against every key &mdash; which is why one checkpoint serves
+ten different commands with one encoder, and why a VLA can be told at inference time what to attend to. One detail decides
+whether routing can also answer <em>where</em>. The head hands the readout only the mixture</p>
+<p>$$\text{out}=\sum_{i=1}^{32}\alpha_i\,v_i,$$</p>
+<p>never the weights \(\alpha_i\) themselves &mdash; a weighted average has no patch index in it. So finding the right
+patches is useless unless position rides along in the values; attention <em>locates</em>, but the values must
+<em>report</em> the location. That is the deeper reason the learned position vectors must survive into \(X\): take them
+away and the model could still say "present", but left against right would be undecidable from the returned vector.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2005.12872" target="_blank" rel="noopener">Carion et al., "End-to-End Object Detection with Transformers" (DETR, 2020)</a> &mdash; learned object queries as command tokens, "no object" included.</li>
+<li><a href="https://arxiv.org/abs/2103.03206" target="_blank" rel="noopener">Jaegle et al., "Perceiver: General Perception with Iterative Attention" (2021)</a> &mdash; cross-attention from a small latent array as a read-out bottleneck over huge inputs.</li>
+<li><a href="https://arxiv.org/abs/2010.11929" target="_blank" rel="noopener">Dosovitskiy et al., "An Image is Worth 16x16 Words" (ViT, 2020)</a> &mdash; the CLS readout this lesson's query generalises.</li>
+</ul>
+</details>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 760 300" role="img" aria-label="Canvas cut into 4 by 8 patches, patch tokens through self-attention blocks, a query token embedded from the class cross-attends over the patch tokens, the readout goes through a linear head to left, right or absent, and the loss sits on that answer" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="fdA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--muted)"/>
+    </marker>
+    <marker id="fdL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--loss)"/>
+    </marker>
+  </defs>
+  <!-- canvas cut into a 4x8 grid -->
+  <rect x="10" y="40" width="128" height="64" fill="var(--chip)" stroke="var(--line)" data-i="canvas"/>
+  <path d="M26 40V104M42 40V104M58 40V104M74 40V104M90 40V104M106 40V104M122 40V104M10 56H138M10 72H138M10 88H138" stroke="var(--accent)" stroke-width="1"/>
+  <text x="74" y="30" text-anchor="middle" fill="var(--ink)">canvas: two digits</text>
+  <text x="74" y="120" text-anchor="middle" fill="var(--muted)">28 x 56, 4 x 8 patches</text>
+  <line x1="140" y1="72" x2="170" y2="72" stroke="var(--muted)" marker-end="url(#fdA)"/>
+  <rect x="172" y="44" width="110" height="56" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="embed"/>
+  <text x="227" y="64" text-anchor="middle" fill="var(--ink)">W_E + position</text>
+  <text x="227" y="80" text-anchor="middle" fill="var(--muted)">(32, 49) &rarr;</text>
+  <text x="227" y="93" text-anchor="middle" fill="var(--muted)">(32, d_model)</text>
+  <line x1="282" y1="72" x2="310" y2="72" stroke="var(--muted)" marker-end="url(#fdA)"/>
+  <rect x="312" y="44" width="116" height="56" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="blocks"/>
+  <text x="370" y="64" text-anchor="middle" fill="var(--ink)">Block x depth</text>
+  <text x="370" y="80" text-anchor="middle" fill="var(--muted)">self-attn + MLP</text>
+  <text x="370" y="93" text-anchor="middle" fill="var(--muted)">patch tokens X</text>
+  <!-- query token -->
+  <text x="60" y="176" text-anchor="middle" fill="var(--ink)">query: "find the 4"</text>
+  <rect x="10" y="190" width="100" height="40" rx="8" fill="var(--bad-soft)" stroke="var(--loss)" data-i="query"/>
+  <text x="60" y="207" text-anchor="middle" fill="var(--ink)">embedding of</text>
+  <text x="60" y="221" text-anchor="middle" fill="var(--ink)">class 0..9 = e_q</text>
+  <line x1="112" y1="210" x2="470" y2="210" stroke="var(--muted)" marker-end="url(#fdA)"/>
+  <text x="290" y="203" text-anchor="middle" fill="var(--muted)">Q comes from here</text>
+  <!-- cross attention -->
+  <line x1="428" y1="72" x2="500" y2="72" stroke="var(--muted)"/>
+  <line x1="500" y1="72" x2="500" y2="186" stroke="var(--muted)" marker-end="url(#fdA)"/>
+  <text x="512" y="130" fill="var(--muted)">K, V from X</text>
+  <rect x="472" y="188" width="150" height="46" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" data-i="crossattn"/>
+  <text x="547" y="207" text-anchor="middle" fill="var(--ink)">cross-attention (MHA)</text>
+  <text x="547" y="222" text-anchor="middle" fill="var(--muted)">attn (heads, 1, 32)</text>
+  <!-- readout -->
+  <line x1="624" y1="211" x2="650" y2="211" stroke="var(--muted)" marker-end="url(#fdA)"/>
+  <rect x="652" y="170" width="98" height="82" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="readout"/>
+  <text x="701" y="192" text-anchor="middle" fill="var(--ink)">LN(e_q + out)</text>
+  <text x="701" y="208" text-anchor="middle" fill="var(--ink)">&rarr; linear</text>
+  <text x="701" y="228" text-anchor="middle" fill="var(--muted)">left / right /</text>
+  <text x="701" y="242" text-anchor="middle" fill="var(--muted)">absent</text>
+  <line x1="701" y1="252" x2="701" y2="270" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#fdL)"/>
+  <rect x="610" y="270" width="180" height="26" rx="13" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="loss"/>
+  <text x="700" y="287" text-anchor="middle" fill="var(--loss)" font-weight="700">L = CE(answer)</text>
+  <text x="330" y="280" text-anchor="middle" fill="var(--muted)">the loss sits on the query's readout only; it shapes the patch tokens and the query together</text>
+</svg>
+<p class="ref">Shapes are for the defaults (2 blocks, 2 heads, d_model 64, 122&thinsp;947 parameters). The query row of the
+attention is what the app draws: one 4&times;8 map per head over the canvas.</p>
+
+<details class="code"><summary>Encoder: patches to tokens</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py"># legend: B = batch, N = 32 patch tokens (4 x 8 grid), D = d_model, H = heads
+# ...
+x = self.embed(patchify(imgs, PATCH)) + self.pos  # [B, N, 7*7] -&gt; [B, N, D]
+for blk in self.blocks:
+    x, _ = blk(x)  # self-attention keeps [B, N, D]
+return self.ln_kv(x)  # [B, N, D]</code></pre></details>
+<details class="code"><summary>The command attends over the patches</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py"># legend: B = batch, N = 32 patch tokens (4 x 8 grid), D = d_model, H = heads
+# ...
+qt = self.query(q)[:, None]  # class ids [B] -&gt; query token [B, 1, D]
+out, attn = self.readout(qt, tokens)  # out [B, 1, D], attn [B, H, 1, N]
+return self.head(self.norm(qt + out)[:, 0]), attn  # [B, D] -&gt; logits [B, 3]</code></pre></details>
+<details class="code"><summary>Training step</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py"># legend: B = BATCH canvases per step
+# ...
+cv, q, t, _ = make_canvases(pool_x, None, BATCH, rng, pools=pool_pools)  # cv [B, 28, 56]
+logits, _ = model(norm(cv).to(dev), torch.as_tensor(q).to(dev))  # q [B] -&gt; logits [B, 3]
+loss = F.cross_entropy(logits, torch.as_tensor(t).to(dev))  # vs truth t [B]
+opt.zero_grad(set_to_none=True)
+loss.backward()
+opt.step()
+sched.step()</code></pre></details>
+<details class="code"><summary>Inference: predict and score</summary><pre><code class="language-python" data-src="lab/tasks/task_finddigit.py"># legend: n = all canvases, b = chunk of &lt;= 500, H = heads, N = 32 patches
+# ...
+    x = norm(canvas[i : i + 500]).to(dev)  # [b, 28, 56]
+    logits, a = model(x, torch.as_tensor(query[i : i + 500]).to(dev))  # [b, 3], [b, H, 1, N]
+    probs.append(logits.softmax(-1).cpu())  # [b, 3]
+    attns.append(a[:, :, 0].cpu())  # [b, H, 1, N] -&gt; [b, H, N]
+# ...
+pred = predict(model, canvas, query, dev)[0].argmax(-1).numpy()  # probs [n, 3] -&gt; pred [n]</code></pre></details>
+
+<h3>What to watch</h3>
+<p>While the run trains, the <b>live attention</b> panel under the charts shows a fixed probe canvas (the first two test digits of
+different classes) with the query set to the <em>right</em> digit. Each head gets one picture, tinted orange where the
+query attends (about 60 snapshots, each scaled to its own maximum). Early on the weights are spread evenly; later each head
+should pile onto the right half. After training, <b>evaluate</b> a checkpoint: the viewer steps through canvases (it cycles
+left, right, absent so every case shows up), shows the query, the truth, the prediction and its confidence, the attention of the
+head you pick, and, with the vector-grid toggle, the query vector next to the keys of the patches it attends to most.</p>
+<p>Measured in this app (defaults: 2 blocks, 2 heads, d_model 64, 10&thinsp;000 digits, 3000 steps, batch 128, lr 1e-3, GPU,
+122&thinsp;947 parameters; one run, seed 0):</p>
+<ul>
+<li>Validation accuracy on the 2000 held-out canvases: <b>46.5%</b> at step 200, 89.6% at 800, 94.3% at 1400, 95.6% at 2000
+and <b>96.9%</b> final; <b>absent accuracy</b> 61.3%, 84.8%, 92.5%, 95.9% and <b>98.3%</b> on the same steps. The training loss goes
+from 1.26 (first logged step) to 0.020. 5000 steps instead of 3000 changed nothing useful (96.5% / 99.4% absent); the run takes
+about 64 s on a quiet GPU and up to 170 s when the box is busy.</li>
+<li>On 5000 fresh canvases the same checkpoint scores <b>95.7%</b> overall: 95.4% when the answer is left, 95.6% right, 96.3%
+absent. By query digit it ranges from 94.5% (query 2) to 98.1% (query 0). Its mean confidence is 98.2% when it is right and
+81.8% when it is wrong.</li>
+<li>Where the query looks: on canvases where the digit is present, head 0 puts <b>80%</b> of its attention weight on the
+half that holds the digit (left 80.3%, right 80.9%) and head 1 73% (73.6%, 72.3%). When the digit is absent the weight is
+split evenly (50% and 51% in the left half): with nothing to find, the query reads everywhere. Averages of what a head does,
+not proof of how the answer is computed.</li>
+<li>Other settings (one run each, same 2000 canvases): 1 block, 2 heads (72&thinsp;963 parameters) reaches <b>95.7%</b> (absent 95.6%); 2 blocks with 4 heads <b>96.7%</b> (absent 97.8%); seed 1 of the defaults <b>97.4%</b> (98.1%); learning rate 2e-3 <b>97.8%</b> (98.8%); 30&thinsp;000 training digits <b>97.3%</b> (97.2%). With only 2000 training digits it ends at <b>92.3%</b> (absent 98.0%) with a training loss of 0.001: it memorises its digits, the same price of a small set as in task 7. The differences between the first ones are about the size of the seed-to-seed spread (96.9% against 97.4%), so read them as &ldquo;all fine&rdquo;, not as a ranking.</li>
+<li>Noise the model never saw (Gaussian, std as a fraction of full scale, evaluation knob <b>noise</b>; same checkpoint, 5000
+canvases): 95.7% at 0, 94.9% at 0.1, 89.8% at 0.2, 80.8% at 0.3 and 62.3% at 0.5, where the absent answer holds up best
+(82.7%) and left / right fall to 48% / 55%. Clean digits only were used in training.</li>
+</ul>
+
+<h3>Knobs</h3>
+<ul>
+<li><b>Transformer blocks</b> and <b>heads</b>: depth is how much the patches get to talk before the query reads them; heads split
+the query's attention into parallel lookups (and each is a separate picture in the live panel).</li>
+<li><b>Model width d_model</b>, <b>learning rate</b>, <b>steps</b>, <b>seed</b>: the usual capacity and optimisation dials.</li>
+<li><b>Training digits</b>: how many distinct MNIST digits the canvases are built from; the canvases are new at every step, the digits are not.</li>
+<li>Evaluation: <b>query digit</b> pins the question ("always ask for 7"; the examples then cycle left / right / absent for that digit),
+<b>pixel noise</b> corrupts the canvases, <b>canvases to show</b> sets how many examples the viewer gets.</li>
+</ul>
+<p class="ref">Previous: task 8 (cross-attn) used cross-attention from a decoder into a source sentence. Next: task 10 (ta-vla)
+builds the same idea at robot scale: camera patches, words and state are the prefix, and the action expert reads them with
+attention. Here the question is a digit class and the answer three words; there it is a language command and the answer an
+action.</p>
+<script type="application/json" class="blkinfo">{"canvas": {"t": "canvas — the scene", "html": "<p><b>Purpose:</b> the input: two MNIST digits of distinct classes side by side; in a third of the samples the queried class is on neither half (answer <i>absent</i>).</p><p><b>Shape:</b> <code>(28, 56)</code> pixels &rarr; patchify gives <code>(32, 49)</code>: a 4&times;8 grid of 7&times;7 patches.</p><p><b>Updated:</b> built fresh every training step (batch 128) from the <code>train_n</code> training digits — the pairs never repeat, the digits do; no parameters.</p>"}, "embed": {"t": "W_E + positions", "html": "<p><b>Purpose:</b> one linear layer embedding each flattened patch, plus a learned position vector per grid cell. The positions must survive into the tokens: attention can <i>find</i> the digit, but only the position riding in the values can report left vs right.</p><p><b>Shapes:</b> W_E <code>(49, d_model)</code> and pos <code>(32, d_model)</code> &rarr; tokens <code>(32, d_model)</code>; d_model default 64.</p><p><b>Updated:</b> every optimizer step (AdamW, weight decay 0.05).</p>"}, "blocks": {"t": "Block &times; depth — the patch encoder", "html": "<p><b>Purpose:</b> <code>depth</code> self-attention + MLP rounds (as in task 7) that let the patches talk — a patch must already &ldquo;know&rdquo; it belongs to a 4 before anybody can ask for 4s. A final LayerNorm yields the tokens X the query reads.</p><p><b>Shapes:</b> <code>(32, d_model)</code> in and out; self-attention weights <code>(heads, 32, 32)</code> per block.</p><p><b>Updated:</b> every step. The whole default model (2 blocks, 2 heads, d_model 64) is 122&thinsp;947 parameters.</p>"}, "query": {"t": "e_q — the command token", "html": "<p><b>Purpose:</b> the command: a learned embedding table with one row per digit class, and the asked class selects which row is used at run time — content-based routing instead of a wired path. It does not go through the blocks at all.</p><p><b>Shape:</b> table <code>(10, d_model)</code> &rarr; e_q <code>(1, d_model)</code>.</p><p><b>Updated:</b> a class&rsquo;s row gets gradient on the steps where that class is queried; over a run all ten rows train.</p>"}, "crossattn": {"t": "cross-attention — the query reads the patches", "html": "<p><b>Purpose:</b> ONE <code>minitf.MHA</code> call with Q from e_q and K, V from the 32 patch tokens — the same module as task 8. The query is not among the keys, so each head&rsquo;s row has exactly 32 weights summing to 1 (no CLS slot).</p><p><b>Shapes:</b> attention <code>(heads, 1, 32)</code>; output <code>(1, d_model)</code>; W_Q, W_K, W_V, W_O each <code>(d_model, d_model)</code>.</p><p><b>Updated:</b> the projections train every step; the weights are recomputed per forward — the app draws them as a 4&times;8 map per head.</p>"}, "readout": {"t": "readout — three answers", "html": "<p><b>Purpose:</b> <code>LN(e_q + out)</code> then a linear map to the 3-way answer. The residual keeps the asked class in the readout even when the attention returns a near-uniform blend (the absent case).</p><p><b>Shape:</b> head <code>(d_model, 3)</code> &rarr; logits <code>(3,)</code>: left / right / absent.</p><p><b>Updated:</b> every optimizer step.</p><p><b>Detail:</b> inference is softmax + argmax of these logits, once per canvas.</p>"}, "loss": {"t": "L — cross-entropy on the answer", "html": "<p><b>Purpose:</b> compares the 3-way prediction with the truth. Chance is 33%, loss ln 3 &asymp; 1.10. Nothing in it says &ldquo;look at the digit&rdquo; — attending there is just the only way to lower it.</p><p><b>Shape:</b> scalar, averaged over the batch of 128.</p><p><b>Updated:</b> backpropagated every step; it shapes the patch tokens and the query embeddings jointly — everything trains from scratch through this one number.</p>"}}</script>

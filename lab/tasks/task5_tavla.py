@@ -222,7 +222,7 @@ def estimate(params: dict) -> float:
 
 SPEC = TaskSpec(
     id="ta-vla",
-    order=6,
+    order=10,
     title="TA-VLA mini",
     subtitle="A two-stream transformer with a torque token: image + words + state in, actions out.",
     params=[

@@ -1,4 +1,4 @@
-"""Task 6 - "RL from scratch: TD3" (id `td3`): the repo's Stage-1 RL experiment in the lab.
+"""Task 11 - "RL from scratch: TD3" (id `td3`): the repo's Stage-1 RL experiment in the lab.
 
 Wraps, by import, `scripts/18_train_td3.py`'s default (`--task arm`, no demos) run: `ArmRLEnv` on a
 Panda `ArmWorld` with its privileged reward (depth progress + potential shaping toward the true
@@ -132,7 +132,7 @@ def train(ctx) -> None:
 
 
 def _run(ctx, hooks) -> None:
-    """Build env + agent and run the loop. `hooks` (task 7) adds demos and a BC term: an object
+    """Build env + agent and run the loop. `hooks` (task 12) adds demos and a BC term: an object
     with `prepare(ctx, env, buf, rng) -> bool` (False = stopped), `update(agent, buf, rng, t) ->
     dict` (replaces `agent.update(buf, rng)`) and `meta() -> dict` (merged into the ckpt meta)."""
     import torch
@@ -202,11 +202,13 @@ def _train_loop(ctx, P: dict, env, p, rp, hooks=None) -> None:
                 _save(ctx, agent, {**meta, "t": t - 1}, t - 1, "last")
             ctx.set_status(state="stopped")
             return
+        # legend: O = obs dims, A = action dims (single env here: no batch dim)
         if t <= start_steps:
-            a = rng.uniform(-1, 1, env.act_dim).astype(np.float32)
+            a = rng.uniform(-1, 1, env.act_dim).astype(np.float32)  # random action [A]
         else:
+            # actor: o [O] -> [A]; + exploration noise [A]; clipped to [-1, 1]
             a = np.clip(agent.act(o) + rng.normal(0, expl, env.act_dim), -1, 1).astype(np.float32)
-        o2, r, term, trunc, info = env.step(a)
+        o2, r, term, trunc, info = env.step(a)  # a [A] -> next obs o2 [O]
         buf.add(o, a, r, o2, term)  # truncation (timeout) still bootstraps
         o = o2
         ep_ret += r
@@ -421,7 +423,7 @@ def estimate(params: dict) -> float:
 
 SPEC = TaskSpec(
     id="td3",
-    order=7,
+    order=11,
     title="RL from scratch: TD3",
     subtitle="Learn the hidden-hole insertion from reward alone: twin critics, a delayed actor, "
     "and a seed lottery.",

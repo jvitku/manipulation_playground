@@ -13,5 +13,10 @@ from lab.tasks import (
     task6_td3,  # noqa: F401
     task7_td3bc,  # noqa: F401
     task8_residual,  # noqa: F401
+    task_attention,  # noqa: F401
+    task_crossattn,  # noqa: F401
     task_embed,  # noqa: F401
+    task_finddigit,  # noqa: F401
+    task_token,  # noqa: F401
+    task_vit,  # noqa: F401
 )

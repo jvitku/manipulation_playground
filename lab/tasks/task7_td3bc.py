@@ -1,7 +1,7 @@
-"""Task 7 - "TD3+BC" (id `td3-bc`): the recipe that makes RL reliable (PLAN §12, R1b/R4).
+"""Task 12 - "TD3+BC" (id `td3-bc`): the recipe that makes RL reliable (PLAN §12, R1b/R4).
 
-Extends task 6 through its seams (`task6_td3._run` / `_train_loop` hooks); nothing of the loop is
-copied. Evaluation, the video viewer, checkpoint contract (`TD3Policy`) and the metrics of task 6
+Extends task 11 through its seams (`task6_td3._run` / `_train_loop` hooks); nothing of the loop is
+copied. Evaluation, the video viewer, checkpoint contract (`TD3Policy`) and the metrics of task 11
 are reused unchanged. What is added is the repo's R4 recipe, as `scripts/18_train_td3.py
 --demos 100 --bc-weight 2.5 --bc-final 1.0 --bc-decay-steps 100000` ran it (journal R1b/R3b/R4,
 docs/FINDINGS.md "R1-R4 (TD3)"):
@@ -16,7 +16,7 @@ docs/FINDINGS.md "R1-R4 (TD3)"):
     (script 18's formula): 2.5 -> 1.0, and never 0 (R1, which decayed to 0, collapsed).
     The script decays over 100k of a 150k run; the lab default is 66k of 100k (same ratio).
 
-Metrics: task 6's, plus `demos_collected` (step 0, per episode) and in the loss rows `bc_loss`
+Metrics: task 11's, plus `demos_collected` (step 0, per episode) and in the loss rows `bc_loss`
 (imitation error on a demo batch) and `bc_weight` (lambda, window mean). Checkpoint meta gains
 `bc` = {n_demos, bc_weight_start, bc_weight_floor, bc_decay_steps, demo_stats}.
 """
@@ -92,6 +92,7 @@ class BCHooks:
     def prepare(self, ctx, env, buf, rng) -> bool:
         from fvb.policy.td3 import ReplayBuffer
 
+        # legend: O = obs dims, A = action dims; buffer rows hold o [O], a [A] transitions
         self.demo_buf = ReplayBuffer(env.obs_dim, env.act_dim, max(1, self.n_demos) * 250)
         stats = collect_demos(ctx, env, self.n_demos, [buf, self.demo_buf])
         if stats is None:
@@ -174,7 +175,7 @@ def _params() -> list[Param]:
 
 SPEC = TaskSpec(
     id="td3-bc",
-    order=8,
+    order=12,
     title="TD3+BC: the recipe that makes RL reliable",
     subtitle="Put 100 expert demonstrations in the replay buffer and keep an imitation term in the "
     "actor loss: the repo's R1-R4 search, 5 of 10 seeds instead of 0.",

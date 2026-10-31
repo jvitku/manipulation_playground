@@ -1,6 +1,7 @@
 /* Result viewers. Contract for real viewers (added by later tasks):
  *   LabViewers.register(name, fn)  where fn(resultObj, container, ctx) renders into container.
  *   ctx = {task, evalId, vecgrids (bool: per-task vector-grid toggle; see vecgrid.js), fileUrl(name) -> "/api/evals/<task>/<eval>/file/<name>"}.
+ *   LabViewers.get(name) -> the registered fn (live panels: spec.live, called as fn(metricsRow, container, ctx) per new row).
  *   LabViewers.render(viewerName, resultObj, container, ctx) dispatches by spec.viewer;
  *   unknown/unregistered names fall back to pretty-printed JSON. */
 (function () {
@@ -49,6 +50,22 @@
   function chip(label, value) {
     return h("span", { class: "chip", style: "background:var(--chip);border-radius:999px;padding:2px 10px;font:12px var(--mono);margin-right:8px;display:inline-block" },
       document.createTextNode(label + " "), h("b", { text: value }));
+  }
+  // stepButtons(slider, fire): [prev, next] buttons for a manual stepper slider. Each click
+  //   nudges slider.value by one step (clamped to [min, max]) and calls fire(), the same
+  //   handler the slider's own "input" event runs.
+  function stepButtons(slider, fire) {
+    const mk = (text, d) => {
+      const b = h("button", { type: "button", text });
+      b.addEventListener("click", () => {
+        const v = Number(slider.value) + d;
+        if (v < Number(slider.min) || v > Number(slider.max)) return;
+        slider.value = String(v);
+        fire();
+      });
+      return b;
+    };
+    return [mk("prev", -1), mk("next", 1)];
   }
 
   // ---- t1scatter: observation c vs sampled a_x ------------------------------------------
@@ -683,7 +700,776 @@
     draw();
   }
 
-  window.LabViewers = { register: (name, fn) => { registry[name] = fn; }, render, jsonFallback };
+  // ---- attention task: live heatmaps (training) and the inference stepper (evaluation) ------
+  // Drawing helpers shared by attnlive, vitattn, fdlive and finddigit. paint(canvas, img, vals, grid): the
+  // digit image (any size, 28x28 or find-digit's 28x56) in grey with the attention weights (vals,
+  // grid[0]*grid[1] numbers, scaled to their own max) laid over it as translucent cells; vals null =
+  // image only.
+  function paintOverlay(cv, img, vals, grid) {
+    const n = img.length, m = img[0].length, Sx = cv.width / m, Sy = cv.height / n, ctx2 = cv.getContext("2d");
+    for (let y = 0; y < n; y++) for (let x = 0; x < m; x++) {
+      const v = img[y][x];
+      ctx2.fillStyle = `rgb(${v},${v},${v})`;
+      ctx2.fillRect(x * Sx, y * Sy, Sx, Sy);
+    }
+    if (!vals) return;
+    const [gh, gw] = grid, mx = Math.max(1e-9, ...vals), cw = cv.width / gw, ch = cv.height / gh;
+    vals.forEach((a, i) => {
+      ctx2.fillStyle = `rgba(255,90,20,${(0.8 * a / mx).toFixed(3)})`;
+      ctx2.fillRect((i % gw) * cw, Math.floor(i / gw) * ch, cw, ch);
+    });
+    ctx2.strokeStyle = "rgba(255,255,255,0.25)";
+    for (let i = 1; i < gw; i++) { ctx2.beginPath(); ctx2.moveTo(i * cw, 0); ctx2.lineTo(i * cw, cv.height); ctx2.stroke(); }
+    for (let i = 1; i < gh; i++) { ctx2.beginPath(); ctx2.moveTo(0, i * ch); ctx2.lineTo(cv.width, i * ch); ctx2.stroke(); }
+  }
+  function overlayCanvas(size, height) {
+    const cv = document.createElement("canvas"), hh = height || size;
+    cv.width = size; cv.height = hh;
+    cv.style.cssText = `width:${size}px;height:${hh}px;image-rendering:pixelated;border:1px solid var(--line);border-radius:4px`;
+    return cv;
+  }
+
+  // attnlive(row, container, ctx): row.attn = [H][Tq][Tk] weights in 0..1 (one heatmap per head,
+  //   vecgrid palette, vmax 1); row.qkv = {labels, heads: [{q, k, v}]} -> Q/K/V grids when
+  //   ctx.vecgrids. When the row also has row.img ([28][28] uint8) and row.grid ([gh, gw]) and each
+  //   map's first query row has 1 + gh*gw weights (CLS first), every map is drawn instead as the
+  //   CLS row reshaped to the patch grid over the digit (row.names: per-map titles).
+  //   The DOM is cached on container._live (tagged with this viewer's name) and updated in place.
+  function attnlive(row, container, ctx) {
+    const A = row && row.attn;
+    if (!Array.isArray(A) || !Array.isArray(A[0]) || !Array.isArray(A[0][0]) || !window.LabVecGrid) {
+      container._live = null;
+      return jsonFallback(row, container);
+    }
+    const grid = Array.isArray(row.grid) && row.grid.length === 2 ? row.grid : null;
+    const overlay = !!(grid && Array.isArray(row.img) && A[0][0].length === 1 + grid[0] * grid[1]);
+    const qkv = row.qkv && Array.isArray(row.qkv.heads) ? row.qkv : null;
+    const useQkv = !!(qkv && ctx && ctx.vecgrids);
+    const labels = qkv && qkv.labels;
+    const key = [A.length, A[0].length, A[0][0].length, useQkv ? qkv.heads.length : -1, overlay ? "img" : "grid"].join("x");
+    let st = container._live;
+    if (!st || st.viewer !== "attnlive" || st.key !== key) {
+      const title = h("h3", { text: "" });
+      const attnBox = h("div", overlay ? { class: "vecgrids", style: "display:flex;flex-wrap:wrap;gap:10px" } : { class: "vecgrids" });
+      const qkvBox = h("div", { class: "vecgrids" });
+      const note = h("p", { class: "note", text: overlay
+        ? "Each picture is where the CLS token looks (one head of one block) over the probe digit; orange = more attention weight, scaled per picture."
+        : "Each head's row is the query token's attention over the tokens (columns, left to right as in the probe); bright = more weight. Hover a cell for the token." });
+      container.replaceChildren(title, attnBox, note, qkvBox);
+      const lab = labels && labels.length === A[0][0].length ? labels : null;
+      st = container._live = { viewer: "attnlive", key, title, attn: [], qkv: [] };
+      A.forEach((m, i) => {
+        const name = (row.names && row.names[i]) || `head ${i}`;
+        if (overlay) {
+          const cv = overlayCanvas(112);
+          attnBox.append(h("div", {}, h("div", { class: "vg-title", text: name }), cv));
+          st.attn.push({ update: (mm) => paintOverlay(cv, st.row.img, mm[0].slice(1), st.row.grid) });
+        } else {
+          st.attn.push(window.LabVecGrid.render(attnBox, m, { title: name, vmax: 1, labels: lab, cell: 22 }));
+        }
+      });
+      if (useQkv) {
+        qkv.heads.forEach((hd, i) => {
+          st.qkv.push(["q", "k", "v"].map((n) => window.LabVecGrid.render(qkvBox, hd[n],
+            { title: `head ${i} ${n.toUpperCase()}`, labels: undefined, cell: 12 })));
+        });
+      }
+    }
+    st.row = row;
+    st.title.textContent = `live attention - probe example` + (row.step != null ? `, step ${row.step}` : "");
+    A.forEach((m, i) => st.attn[i] && st.attn[i].update(m, 1));
+    if (useQkv) qkv.heads.forEach((hd, i) => st.qkv[i] && ["q", "k", "v"].forEach((n, j) => st.qkv[i][j].update(hd[n])));
+  }
+
+  // vitattn(result, container, ctx): pick a digit, a block and a head; the CLS attention over the
+  //   patch grid is laid over the digit (see task_vit.py for the schema).
+  function vitattn(result, container, ctx) {
+    const ex = result && result.examples, grid = result && result.grid;
+    if (!Array.isArray(ex) || !ex.length || !Array.isArray(grid) || !Array.isArray(ex[0].attn)) return jsonFallback(result, container);
+    const sel = (opts, label) => {
+      const s2 = h("select", {});
+      opts.forEach((t, i) => s2.append(h("option", { value: String(i), text: t })));
+      return [h("label", { style: "margin-right:12px" }, document.createTextNode(label + " "), s2), s2];
+    };
+    const [exL, exS] = sel(ex.map((e, i) => `#${i}: label ${e.label}, pred ${e.pred}${e.pred === e.label ? "" : " (wrong)"}`), "digit");
+    const [lyL, lyS] = sel(Array.from({ length: result.depth }, (_, i) => `block ${i}`), "block");
+    const [hdL, hdS] = sel(Array.from({ length: result.heads }, (_, i) => `head ${i}`), "head");
+    const big = overlayCanvas(280), plain = overlayCanvas(280), info = h("p", { class: "note", text: "" });
+    const vg = h("div", { class: "vecgrids" });
+    const row = h("div", { style: "display:flex;gap:16px;flex-wrap:wrap;margin:8px 0" },
+      h("div", {}, h("div", { class: "vg-title", text: "digit" }), plain),
+      h("div", {}, h("div", { class: "vg-title", text: "CLS attention over the patch grid" }), big));
+    container.replaceChildren(
+      h("div", { style: "margin-bottom:6px" }, chip("test accuracy", pct(result.acc)), chip("patch", `${result.patch}px`),
+        chip("grid", `${grid[0]}x${grid[1]}`), chip("blocks", String(result.depth)), chip("heads", String(result.heads))),
+      h("div", { style: "margin:6px 0" }, exL, lyL, hdL), row, info, vg);
+    function draw() {
+      const e = ex[Number(exS.value)], l = Number(lyS.value), hh = Number(hdS.value);
+      const m = e.attn[l][hh].flat();
+      paintOverlay(plain, e.pixels, null, grid);
+      paintOverlay(big, e.pixels, m, grid);
+      info.textContent = `predicted ${e.pred} with confidence ${pct(e.conf)} (label ${e.label}). ` +
+        `This head puts ${pct(e.cls_self[l][hh])} of its weight on the CLS token itself and ${pct(m.reduce((a, b) => a + b, 0))} on the patches; ` +
+        `the strongest patch gets ${pct(Math.max(...m))}.`;
+      vg.replaceChildren();
+      if (ctx && ctx.vecgrids && window.LabVecGrid && e.vec) {
+        window.LabVecGrid.render(vg, e.vec.cls, { title: `CLS token (1 x ${e.vec.cls[0].length})`, cell: 10 });
+        window.LabVecGrid.render(vg, e.vec.patches, { title: `patch embeddings (${e.vec.patches.length} x ${e.vec.patches[0].length}), row = patch in reading order`, cell: 10 });
+      }
+    }
+    [exS, lyS, hdS].forEach((x) => x.addEventListener("change", draw));
+    draw();
+  }
+
+  // fdlive(row, container, ctx): the find-digit live panel. row.attn = [H][1][gh*gw] (the query token's
+  //   cross-attention row of every head over the patches, no CLS slot), row.img ([28][56] uint8),
+  //   row.grid ([gh, gw]), row.query (digit class), row.names. One overlay canvas per head, painted in
+  //   place; anything else falls back to JSON. DOM cached on container._live tagged "fdlive".
+  function fdlive(row, container, ctx) {
+    const A = row && row.attn, grid = row && Array.isArray(row.grid) && row.grid.length === 2 ? row.grid : null;
+    if (!Array.isArray(A) || !Array.isArray(A[0]) || !Array.isArray(A[0][0]) || !grid || !Array.isArray(row.img)
+      || A[0][0].length !== grid[0] * grid[1]) {
+      container._live = null;
+      return jsonFallback(row, container);
+    }
+    const key = [A.length, grid[0], grid[1], row.img.length, row.img[0].length].join("x");
+    let st = container._live;
+    if (!st || st.viewer !== "fdlive" || st.key !== key) {
+      const title = h("h3", { text: "" });
+      const box = h("div", { class: "vecgrids", style: "display:flex;flex-wrap:wrap;gap:10px" });
+      const note = h("p", { class: "note", text: "Each picture is where the query token looks (one head) over the probe canvas; orange = more attention weight, scaled per picture. The query asks for one digit class; a trained head moves to the half that holds it." });
+      container.replaceChildren(title, box, note);
+      st = container._live = { viewer: "fdlive", key, title, cvs: [] };
+      A.forEach((m, i) => {
+        const cv = overlayCanvas(224, 112);
+        box.append(h("div", {}, h("div", { class: "vg-title", text: (row.names && row.names[i]) || `head ${i}` }), cv));
+        st.cvs.push(cv);
+      });
+    }
+    st.title.textContent = `live attention - probe canvas, query digit ${row.query}` + (row.step != null ? `, step ${row.step}` : "");
+    A.forEach((m, i) => st.cvs[i] && paintOverlay(st.cvs[i], row.img, m[0], grid));
+  }
+
+  // finddigit(result, container, ctx): pick a canvas and a head; the query's attention over the patch grid is laid
+  //   over the canvas next to the plain canvas, with verdict chips (see task_finddigit.py for the schema).
+  function finddigit(result, container, ctx) {
+    const ex = result && result.examples, grid = result && result.grid;
+    const ok = Array.isArray(ex) && ex.length && Array.isArray(grid) && grid.length === 2 &&
+      ex.every((e) => Array.isArray(e.pixels) && Array.isArray(e.attn) && Array.isArray(e.attn[0]) && num(e.query) != null);
+    if (!ok) return jsonFallback(result, container);
+    const ANS = ["left", "right", "absent"];
+    const sel = (opts, label) => {
+      const s2 = h("select", {});
+      opts.forEach((t, i) => s2.append(h("option", { value: String(i), text: t })));
+      return [h("label", { style: "margin-right:12px" }, document.createTextNode(label + " "), s2), s2];
+    };
+    const [exL, exS] = sel(ex.map((e, i) => `#${i}: find ${e.query} -> ${ANS[e.pred]}${e.pred === e.truth ? "" : " (wrong)"}`), "canvas");
+    const [hdL, hdS] = sel(ex[0].attn.map((_, i) => `head ${i}`), "head");
+    const plain = overlayCanvas(336, 168), big = overlayCanvas(336, 168), info = h("p", { class: "note", text: "" });
+    const chips = h("div", { style: "margin:6px 0" });
+    const pics = h("div", { style: "display:flex;gap:16px;flex-wrap:wrap;margin:8px 0" },
+      h("div", {}, h("div", { class: "vg-title", text: "canvas" }), plain),
+      h("div", {}, h("div", { class: "vg-title", text: "where the query looks" }), big));
+    const vg = h("div", { class: "vecgrids" });
+    container.replaceChildren(
+      h("div", { style: "margin-bottom:6px" }, chip("accuracy", pct(result.acc)), chip("absent cases", pct(result.absent_acc)),
+        chip("noise", String(result.noise)), chip("heads", String(result.heads)), chip("blocks", String(result.depth))),
+      h("div", { style: "margin:6px 0" }, exL, hdL), chips, pics, info, vg);
+    function draw() {
+      const e = ex[Number(exS.value)], hh = Number(hdS.value), m = e.attn[hh].flat();
+      paintOverlay(plain, e.pixels, null, grid);
+      paintOverlay(big, e.pixels, m, grid);
+      const right = e.pred === e.truth;
+      chips.replaceChildren(chip("query", String(e.query)), chip("truth", ANS[e.truth]), chip("predicted", ANS[e.pred]),
+        chip("confidence", pct(e.conf)), chip(right ? "correct" : "wrong", right ? "yes" : "no"));
+      const half = (c0, c1) => { let t = 0; m.forEach((v, i) => { const c = i % grid[1]; if (c >= c0 && c < c1) t += v; }); return t; };
+      const hw = grid[1] / 2, L = half(0, hw), R = half(hw, grid[1]);
+      info.textContent = `Digits on the canvas: ${e.classes ? e.classes.join(" and ") : "?"}. This head puts ${pct(L)} of its weight on the left half and ${pct(R)} on the right; ` +
+        `the strongest patch gets ${pct(Math.max(...m))}.`;
+      vg.replaceChildren();
+      if (ctx && ctx.vecgrids && window.LabVecGrid && e.vec) {
+        window.LabVecGrid.render(vg, e.vec.query, { title: `query token (1 x ${e.vec.query[0].length})`, cell: 10 });
+        window.LabVecGrid.render(vg, e.vec.keys, { title: `K of the ${e.vec.keys.length} most attended patches (${e.vec.patches.join(", ")})`, cell: 10 });
+      }
+    }
+    [exS, hdS].forEach((x) => x.addEventListener("change", draw));
+    draw();
+  }
+
+  // attnstep(result, container, ctx): the stage slider over result.stages (see task_attention.py)
+  function attnstep(result, container, ctx) {
+    const stages = result && result.stages, probe = result && result.probe;
+    if (!Array.isArray(stages) || !stages.length || !probe) return jsonFallback(result, container);
+    const toks = probe.tokens.map((t) => t.label), T = toks.length;
+    const TEXT = {
+      embed: "Each pair token is its key embedding plus its value embedding; the query token is the key to look up plus a learned '?'.",
+      qkv: "Three linear maps of the tokens: the query token asks (Q), every token advertises (K) and carries (V).",
+      scores: "Score of token j for this query: q . k_j / sqrt(d_k) - how well the key matches the question.",
+      softmax: "Softmax turns the scores into weights that sum to 1 per head.",
+      mixture: "Weighted sum of the V vectors per head, concatenated, then mixed by the output projection.",
+      readout: "A linear readout of the mixed vector gives a score for each of the possible values.",
+    };
+    const NAME = { embed: "1 embed", qkv: "2 Q / K / V", scores: "3 scores", softmax: "4 softmax", mixture: "5 mixture", readout: "6 readout" };
+    const useVg = !!(ctx && ctx.vecgrids && window.LabVecGrid);
+    const slider = h("input", { type: "range", min: "0", max: String(stages.length - 1), value: "0", step: "1", style: "width:260px" });
+    const [prevB, nextB] = stepButtons(slider, () => show(Number(slider.value)));
+    const name = h("b", { text: "" });
+    const body = h("div", { class: "vecgrids" });
+    const tstrip = h("div", { style: "margin:6px 0" });
+    toks.forEach((t, i) => tstrip.append(chip(i === T - 1 ? "query" : `token ${i}`, t)));
+    const ok = probe.pred === probe.target;
+    container.replaceChildren(
+      h("div", { style: "margin-bottom:6px" }, chip("accuracy", pct(result.acc)), chip("pairs", String(result.n_pairs)),
+        chip("heads", String(result.heads)), chip("d_k", String(result.d_k))),
+      tstrip,
+      h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0" }, prevB, slider, nextB, name),
+      h("p", { class: "note", text: "" }), body);
+    const note = container.querySelector("p.note");
+    const grid = (title, vals, opts) => { if (useVg) window.LabVecGrid.render(body, vals, Object.assign({ title }, opts || {})); };
+    function bars(title, vals, vmax) { // one row per token: label, value, bar - works without vector grids
+      const box = h("div", { class: "vecgrid" }, h("div", { class: "vg-title", text: title }));
+      vals.forEach((v, i) => {
+        const w = Math.max(0, Math.min(1, v / vmax)) * 100;
+        box.append(h("div", { style: "display:flex;gap:6px;align-items:center;font:11px var(--mono)" },
+          h("span", { style: "width:70px", text: toks[i] }),
+          h("span", { style: `display:inline-block;height:8px;width:${w * 1.2}px;background:var(--accent)` }),
+          h("span", { style: "color:var(--muted)", text: v.toFixed(3) })));
+      });
+      body.append(box);
+    }
+    function show(i) {
+      const sg = stages[i];
+      name.textContent = NAME[sg.name] || sg.name;
+      note.textContent = TEXT[sg.name] || "";
+      body.replaceChildren();
+      if (sg.name === "embed") {
+        grid(`tokens x d_model (${T} x ${sg.tokens[0].length})`, sg.tokens, { cell: 10, labels: undefined });
+      } else if (sg.name === "qkv") {
+        sg.q.forEach((q, hh) => {
+          grid(`head ${hh} Q (1 x ${q[0].length})`, q, { cell: 12 });
+          grid(`head ${hh} K (${T} x ${q[0].length})`, sg.k[hh], { cell: 12 });
+          grid(`head ${hh} V (${T} x ${q[0].length})`, sg.v[hh], { cell: 12 });
+        });
+      } else if (sg.name === "scores") {
+        const vm = Math.max(1e-6, ...sg.pre.flat().map(Math.abs));
+        sg.pre.forEach((r, hh) => { grid(`head ${hh} scores`, [r], { cell: 22, labels: toks, vmax: vm }); bars(`head ${hh} score`, r, vm); });
+      } else if (sg.name === "softmax") {
+        sg.attn.forEach((r, hh) => { grid(`head ${hh} attention`, [r], { cell: 22, labels: toks, vmax: 1 }); bars(`head ${hh} weight`, r, 1); });
+      } else if (sg.name === "mixture") {
+        sg.per_head.forEach((r, hh) => grid(`head ${hh} sum(attn * V)`, [r], { cell: 12 }));
+        grid(`concat (1 x ${sg.concat.length})`, [sg.concat], { cell: 8 });
+        grid("after output projection", [sg.projected], { cell: 8 });
+      } else if (sg.name === "readout") {
+        grid("value probabilities", [sg.probs], { cell: 18, vmax: 1 });
+        body.append(h("p", { text: `predicted v${sg.pred}, stored value v${sg.target} - ${ok ? "correct" : "wrong"}` }));
+      } else {
+        body.append(h("pre", { class: "json", text: JSON.stringify(sg, null, 2) }));
+      }
+      if (!useVg && ["embed", "qkv", "mixture"].includes(sg.name)) {
+        body.append(h("p", { class: "note", text: "Turn on 'vector grids' to see the vectors of this stage." }));
+      }
+    }
+    slider.addEventListener("input", () => show(Number(slider.value)));
+    show(0);
+  }
+
+  // Pure RoPE helpers, also exercised by the node smoke test. ropeThetas: the per-pair angular
+  // frequencies theta_i = base^(-2i/d_k) (d_k = per-head dim, floor(d_k/2) rotation pairs).
+  // ropeRotate: rotate v (length >= 2*pairs) by position m - each pair (v[2i], v[2i+1]) turns by
+  // the angle m*theta_i. ropeDot: dot(R(m)q, R(n)k) - depends only on the offset n - m, the
+  // property the playground plots.
+  function ropeThetas(dk, base) {
+    const out = [];
+    for (let i = 0; i < Math.floor(dk / 2); i++) out.push(Math.pow(base, -2 * i / dk));
+    return out;
+  }
+  function ropeRotate(v, m, thetas) {
+    const out = v.slice();
+    thetas.forEach((t, i) => {
+      const c = Math.cos(m * t), sn = Math.sin(m * t), a = v[2 * i], b = v[2 * i + 1];
+      out[2 * i] = a * c - b * sn;
+      out[2 * i + 1] = a * sn + b * c;
+    });
+    return out;
+  }
+  function ropeDot(q, k, m, n, thetas) {
+    const rq = ropeRotate(q, m, thetas), rk = ropeRotate(k, n, thetas);
+    let acc = 0;
+    for (let i = 0; i < Math.min(rq.length, rk.length); i++) acc += rq[i] * rk[i];
+    return acc;
+  }
+  // ropeSeededVec(dim, seed): deterministic pseudo-random vector in [-1, 1]^dim (mulberry32),
+  // so the playground's q and k are the same on every render.
+  function ropeSeededVec(dim, seed) {
+    let a = seed >>> 0;
+    const out = [];
+    for (let i = 0; i < dim; i++) {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      out.push((((t ^ (t >>> 14)) >>> 0) / 4294967296) * 2 - 1);
+    }
+    return out;
+  }
+
+  // ropeCard(rope): the hands-on "RoPE playground" card xattn appends when the result was trained
+  // with pos = "rope". Self-contained: everything is computed client-side from rope.d_k and
+  // rope.base; SEQ = 12 matches the date task's padded sequence length. Returns null (no card)
+  // when d_k/base are missing or unusable, so old results are untouched.
+  function ropeCard(rope) {
+    const dk = num(rope && rope.d_k), base = num(rope && rope.base);
+    if (dk == null || dk < 2 || base == null || base <= 0) return null;
+    const SEQ = 12;
+    const thetas = ropeThetas(dk, base);
+    const nPairs = Math.min(thetas.length, 8);
+    const fmtTheta = (t) => (t >= 0.01 ? t.toFixed(3) : t.toExponential(1));
+    const body = h("div", {});
+
+    // a. the multi-hand clock: one dial per frequency pair, hand at angle m * theta_i
+    body.append(h("h4", { text: "a. One clock hand per pair: angle = m · θ_i" }));
+    const mS = h("input", { type: "range", min: "0", max: String(SEQ - 1), value: "0", step: "1", style: "width:220px" });
+    const [prevB, nextB] = stepButtons(mS, () => drawDials());
+    const mLbl = h("b", { text: "" });
+    const D = 64, C = D / 2, RH = C - 8; // dial size, centre, hand length
+    const hands = [];
+    const dialRow = h("div", { style: "display:flex;gap:12px;flex-wrap:wrap;margin:8px 0" });
+    for (let i = 0; i < nPairs; i++) {
+      const svg = s("svg", { viewBox: `0 0 ${D} ${D}`, style: `width:${D}px;height:${D}px`, role: "img", "aria-label": `rotation pair ${i}` });
+      svg.append(s("circle", { cx: C, cy: C, r: C - 5, fill: "none", stroke: "var(--line)" }));
+      svg.append(s("line", { x1: C + RH, y1: C, x2: C + RH + 3, y2: C, stroke: "var(--muted)" })); // the angle-0 mark
+      const hand = s("line", { x1: C, y1: C, x2: C + RH, y2: C, stroke: "var(--accent)", "stroke-width": 2, "stroke-linecap": "round" });
+      svg.append(hand, s("circle", { cx: C, cy: C, r: 2, fill: "var(--accent)" }));
+      hands.push(hand);
+      dialRow.append(h("div", { style: "display:flex;flex-direction:column;align-items:center;gap:2px" }, svg,
+        h("span", { style: "font:10px var(--mono);color:var(--muted)", text: `θ${i} = ${fmtTheta(thetas[i])}` })));
+    }
+    function drawDials() {
+      const m = Number(mS.value);
+      mLbl.textContent = `m = ${m}`;
+      hands.forEach((hd, i) => {
+        const a = m * thetas[i];
+        hd.setAttribute("x2", C + RH * Math.cos(a));
+        hd.setAttribute("y2", C - RH * Math.sin(a));
+      });
+    }
+    mS.addEventListener("input", drawDials);
+    body.append(h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0" },
+      h("span", { text: "position m" }), prevB, mS, nextB, mLbl), dialRow,
+      h("p", { class: "note", text: `Each dial is one of the ${thetas.length} rotation pairs of a d_k = ${dk} head${thetas.length > nPairs ? ` (first ${nPairs} shown)` : ""}: `
+        + "pair i of the vector turns by m·θ_i, θ_i = base^(−2i/d_k). Slide m: low-i hands spin fast, high-i hands barely move - together the hands ARE the position, like a multi-hand clock." }));
+
+    // b. relative-offset demo: dot(R(m)q, R(n)k) over n - m, from two different absolute m
+    body.append(h("h4", { text: "b. The score depends only on the offset n − m" }));
+    const q = ropeSeededVec(dk, 20261031), k = ropeSeededVec(dk, 7);
+    const offs = [];
+    for (let o = -(SEQ - 1); o <= SEQ - 1; o++) offs.push(o);
+    const sA = offs.map((o) => ropeDot(q, k, 0, o, thetas));
+    const sB = offs.map((o) => ropeDot(q, k, 5, 5 + o, thetas));
+    const W = 440, H = 180, L = 36, R = 10, T = 12, B = 28;
+    const vmax = Math.max(1e-9, ...sA.map(Math.abs), ...sB.map(Math.abs));
+    const bw = (W - L - R) / offs.length;
+    const X = (i) => L + (i + 0.5) * bw;
+    const Y = (v) => T + (1 - (v / vmax + 1) / 2) * (H - T - B);
+    const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;max-width:520px;height:auto;font:10px var(--mono)", role: "img", "aria-label": "RoPE dot product vs relative offset" });
+    svg.append(s("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "none", stroke: "var(--line)" }));
+    svg.append(s("line", { x1: L, x2: W - R, y1: Y(0), y2: Y(0), stroke: "var(--line)" }));
+    for (const v of [-vmax, 0, vmax]) svg.append(s("text", { x: L - 4, y: Y(v) + 3, "text-anchor": "end", fill: "var(--muted)" }, v.toFixed(1)));
+    offs.forEach((o, i) => {
+      if (o % 4 === 0 || Math.abs(o) === SEQ - 1) svg.append(s("text", { x: X(i), y: H - B + 13, "text-anchor": "middle", fill: "var(--muted)" }, String(o)));
+      const bar = s("rect", { x: X(i) - bw * 0.36, y: Math.min(Y(0), Y(sA[i])), width: bw * 0.72, height: Math.max(1, Math.abs(Y(sA[i]) - Y(0))), fill: "var(--accent)", "fill-opacity": 0.55 });
+      bar.append(s("title", {}, `offset ${o}: (m=0, n=${o}) -> ${sA[i].toFixed(4)}; (m=5, n=${5 + o}) -> ${sB[i].toFixed(4)}`));
+      svg.append(bar);
+      svg.append(s("circle", { cx: X(i), cy: Y(sB[i]), r: 2.5, fill: "none", stroke: "var(--ink)", "stroke-width": 1.5 }));
+    });
+    svg.append(s("text", { x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle", fill: "var(--muted)" }, "offset n − m"));
+    body.append(svg, h("p", { class: "note", text:
+      "One fixed random q and k, rotated and dotted two ways: bars = (m=0, n=offset), rings = (m=5, n=5+offset). "
+      + "They coincide exactly: the score depends only on the offset, which is the whole point of rotating instead of adding position vectors." }));
+    body.append(h("p", { class: "note", text:
+      "Note the cross-attention read above has no RoPE in either mode: decoder and source are two streams with no shared position axis, so only the self-attentions carry position." }));
+    drawDials();
+    return h("div", { class: "chart", style: "min-width:0;margin-top:14px" }, h("h3", { text: "RoPE playground" }), body);
+  }
+
+  // xattn(result, container, ctx): the cross-attention alignment of one translated date (see
+  //   task_crossattn.py): output chars (rows) x source chars (columns), a head picker, and a decode
+  //   stepper that outlines the row used at step t and shows what the decoder had generated so far.
+  function xattn(result, container, ctx) {
+    const ex = result && result.examples;
+    const ok = Array.isArray(ex) && ex.length && ex.every((e) => Array.isArray(e.cross_attn) && Array.isArray(e.src_labels) && Array.isArray(e.out_labels) && Array.isArray(e.in_labels));
+    if (!ok) return jsonFallback(result, container);
+    const sel = (opts, label) => {
+      const s2 = h("select", {});
+      opts.forEach((t, i) => s2.append(h("option", { value: String(i), text: t })));
+      return [h("label", { style: "margin-right:12px" }, document.createTextNode(label + " "), s2), s2];
+    };
+    const [exL, exS] = sel(ex.map((e, i) => `#${i}: ${e.source.trim()} -> ${e.decoded}${e.correct ? "" : " (wrong)"}`), "date");
+    const [hdL, hdS] = sel(Array.from({ length: ex[0].cross_attn.length }, (_, i) => `head ${i}`), "head");
+    const slider = h("input", { type: "range", min: "0", max: "0", value: "0", step: "1", style: "width:220px" });
+    const [prevB, nextB] = stepButtons(slider, () => draw());
+    const stepLbl = h("b", { text: "" }), info = h("p", { class: "note", text: "" });
+    const board = h("div", { style: "display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;margin:8px 0" });
+    const vg = h("div", { class: "vecgrids" });
+    // matrix(title, m, rowLabels, colLabels, hi): table of cells shaded with the vecgrid palette (weight 0..1);
+    //   hi = index of the row to outline. Hover a cell for its weight.
+    function matrix(title, m, rl, cl, hi) {
+      const cell = "width:22px;height:22px;text-align:center;font:11px var(--mono);padding:0;";
+      const t = h("table", { style: "border-collapse:collapse" });
+      t.append(h("tr", {}, h("th", { style: cell }), ...cl.map((c) => h("th", { style: cell + "color:var(--muted);font-weight:400", text: c }))));
+      m.forEach((r, i) => {
+        const hl = i === hi;
+        t.append(h("tr", {}, h("th", { style: cell + "color:" + (hl ? "var(--ink)" : "var(--muted)") + ";font-weight:" + (hl ? "700" : "400"), text: rl[i] }),
+          ...r.map((v, j) => {
+            const p = Math.max(0, Math.min(1, v)) * 100;
+            return h("td", { title: `${rl[i]} -> ${cl[j]}: ${v.toFixed(3)}`, style: cell + `background:color-mix(in srgb, var(--vec-pos, #2a4) ${p.toFixed(1)}%, var(--vec-zero, #101114));` +
+              (hl ? "border-top:2px solid var(--accent);border-bottom:2px solid var(--accent);" : "") });
+          })));
+      });
+      return h("div", {}, h("div", { class: "vg-title", text: title }), t);
+    }
+    const head = h("div", { style: "margin-bottom:6px" }, chip("held-out exact-match", pct(result.exact)), chip("checked on", `${result.n_eval} dates`),
+      chip("heads", String(result.heads)), chip("d_model", String(result.d_model)));
+    if (typeof result.pos === "string" && result.pos) head.append(chip("pos", result.pos));
+    container.replaceChildren(
+      head,
+      h("div", { style: "margin:6px 0" }, exL, hdL),
+      h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0" }, h("span", { text: "decode step" }), prevB, slider, nextB, stepLbl),
+      board, info, vg);
+    const rbox = result.pos === "rope" ? ropeCard(result.rope) : null;
+    if (rbox) container.append(rbox);
+    function draw() {
+      const e = ex[Number(exS.value)], hh = Number(hdS.value), L = e.out_labels.length;
+      slider.max = String(L - 1);
+      const t = Math.min(Number(slider.value), L - 1);
+      slider.value = String(t);
+      const row = e.cross_attn[hh][t], j = row.indexOf(Math.max(...row));
+      stepLbl.textContent = `step ${t}: reads ${e.in_labels[t]} -> emits ${e.out_labels[t]}`;
+      board.replaceChildren(
+        matrix(`cross-attention, head ${hh}: output char (rows) x source char (columns)`, e.cross_attn[hh], e.out_labels, e.src_labels, t),
+        matrix("decoder self-attention (causal)", e.dec_attn[hh], e.in_labels, e.in_labels, t),
+        matrix("encoder self-attention", e.enc_attn[hh], e.src_labels, e.src_labels, -1));
+      const so_far = e.out_labels.slice(0, t).join("");
+      info.textContent = `source "${e.source}", target "${e.target}", decoded "${e.decoded}" (${e.correct ? "correct" : "wrong"}). ` +
+        `Generated so far: "${so_far}". To emit ${e.out_labels[t]} this head puts ${pct(row[j])} of its weight on source char ${e.src_labels[j]} (column ${j}) ` +
+        `and ${pct(row.reduce((a, b) => a + b, 0) - row[j])} on the rest.`;
+      vg.replaceChildren();
+      if (ctx && ctx.vecgrids && window.LabVecGrid && e.vec && e.vec.q && e.vec.q[hh]) {
+        const dk = e.vec.q[hh][0].length;
+        window.LabVecGrid.render(vg, e.vec.q[hh], { title: `head ${hh} Q: one row per output char (${L} x ${dk}), rows ${e.out_labels.join(" ")}`, cell: 12 });
+        window.LabVecGrid.render(vg, e.vec.k[hh], { title: `head ${hh} K: one row per source char (${e.vec.k[hh].length} x ${dk}), rows ${e.src_labels.join(" ")}`, cell: 12 });
+        window.LabVecGrid.render(vg, e.vec.v[hh], { title: `head ${hh} V: one row per source char (${e.vec.v[hh].length} x ${dk}), rows ${e.src_labels.join(" ")}`, cell: 12 });
+      }
+    }
+    [exS, hdS].forEach((x) => x.addEventListener("change", () => { slider.value = "0"; draw(); }));
+    slider.addEventListener("input", draw);
+    draw();
+  }
+
+  // ---- tokens: action-interface heads (cont / bins / ar) + the tokenization playground ------
+  // result.json from the tokenize task: three heads trained on the diagonal two-mode toy problem
+  // (obs c in [-0.4, 0.4]; the expert modes are (c-g, 0.5-h) and (c+g, 0.5+h)). Schema: n_bins,
+  // bin_edges/bin_centers, heads.{cont,bins,ar} (outcome stats + probe distributions),
+  // probe_samples, embedding.table, expert_example, text_demo. Every field is optional - the
+  // viewer renders whatever a (possibly partial) result holds.
+
+  // Pure helpers, also exercised by the node smoke test: a string to char ids (null = not in the
+  // vocab), and a value to its bin index on the edges ruler (clamped to the outer bins).
+  function tokCharIds(text, vocab) {
+    const ids = [];
+    for (const ch of Array.from(String(text))) {
+      const i = vocab.indexOf(ch);
+      ids.push(i >= 0 ? i : null);
+    }
+    return ids;
+  }
+  function tokBinIndex(v, edges) {
+    if (!Array.isArray(edges) || edges.length < 2 || typeof v !== "number" || !isFinite(v)) return null;
+    let i = 0;
+    while (i < edges.length - 2 && v >= edges[i + 1]) i++;
+    return i;
+  }
+
+  function tokens(result, container, ctx) {
+    const r = result || {};
+    const heads = r.heads || {};
+    const edges = Array.isArray(r.bin_edges) && r.bin_edges.length >= 2 && r.bin_edges.every((v) => num(v) != null) ? r.bin_edges : null;
+    const centers = Array.isArray(r.bin_centers) ? r.bin_centers : [];
+    const nBins = num(r.n_bins) || (edges ? edges.length - 1 : 0);
+    const HEADS = [["cont", "continuous regression", "--chart1"], ["bins", "per-dim bins", "--chart2"], ["ar", "autoregressive tokens", "--chart3"]];
+    const card = (title) => h("div", { class: "chart", style: "min-width:0" }, h("h3", { text: title }), h("div"));
+    const note = (text) => h("p", { class: "note", text });
+
+    const stats = h("div", { style: "margin-bottom:6px" });
+    if (num(r.n_bins) != null) stats.append(chip("bins per dim", String(r.n_bins)));
+    if (num(r.d_model) != null) stats.append(chip("d_model", String(r.d_model)));
+    if (num(r.temperature) != null) stats.append(chip("temperature", String(r.temperature)));
+
+    // 1. outcome table: one row per head
+    const tbl = h("table", { class: "out" });
+    tbl.append(h("tr", {}, ...["head", "collision", "valid x-z pairing", "mode error", "left fraction"].map((t) => h("th", { text: t }))));
+    for (const [k, name] of HEADS) {
+      const hd = heads[k] || {};
+      const col = num(hd.collision), pv = num(hd.pair_valid);
+      const cc = (val, cls) => h("td", {}, h("span", { class: "chip" + (cls ? " " + cls : ""), text: val }));
+      tbl.append(h("tr", {},
+        h("td", { text: `${k} - ${name}` }),
+        cc(pct(hd.collision), col == null ? "" : col <= 0.05 ? "good" : "bad"),
+        cc(pct(hd.pair_valid), pv == null ? "" : pv >= 0.95 ? "good" : "bad"),
+        h("td", { text: num(hd.mode_err) == null ? "n/a" : hd.mode_err.toFixed(3) }),
+        h("td", { text: pct(hd.left_frac) })));
+    }
+
+    // 2. scatter of probe_samples per head at the probe obstacle position
+    function scatter(box) {
+      const samp = r.probe_samples || {};
+      const sets = HEADS.map(([k, name, col]) => ({ k, name, col,
+        pts: (Array.isArray(samp[k]) ? samp[k] : []).filter((p) => Array.isArray(p) && num(p[0]) != null && num(p[1]) != null) }));
+      const exm = r.expert_example && Array.isArray(r.expert_example.a) && num(r.expert_example.a[0]) != null && num(r.expert_example.a[1]) != null ? r.expert_example : null;
+      // the expert action and its mirror in the other mode: ax -> 2c - ax, az -> 1 - az
+      const marks = exm ? [exm.a, [2 * (num(exm.c) || 0) - exm.a[0], 1 - exm.a[1]]] : [];
+      const xs = [], zs = [];
+      for (const st of sets) for (const p of st.pts) { xs.push(p[0]); zs.push(p[1]); }
+      for (const m of marks) { xs.push(m[0]); zs.push(m[1]); }
+      if (!xs.length) { box.append(note("No probe samples in this result.")); return; }
+      const pad = (lo, hi) => { const d = Math.max(0.2, (hi - lo) * 0.15); return [lo - d, hi + d]; };
+      const [x0, x1] = pad(Math.min(...xs), Math.max(...xs)), [z0, z1] = pad(Math.min(...zs), Math.max(...zs));
+      const W = 400, H = 360, L = 44, R = 10, T = 10, B = 32;
+      const X = (v) => L + ((v - x0) / (x1 - x0)) * (W - L - R);
+      const Y = (v) => T + (1 - (v - z0) / (z1 - z0)) * (H - T - B);
+      const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;max-width:440px;height:auto;font:10px var(--mono)", role: "img", "aria-label": "Sampled actions per head at one obstacle position" });
+      svg.append(s("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "none", stroke: "var(--line)" }));
+      for (const v of [x0, (x0 + x1) / 2, x1]) svg.append(s("text", { x: X(v), y: H - B + 13, "text-anchor": "middle", fill: "var(--muted)" }, v.toFixed(2)));
+      for (const v of [z0, (z0 + z1) / 2, z1]) svg.append(s("text", { x: L - 5, y: Y(v) + 3, "text-anchor": "end", fill: "var(--muted)" }, v.toFixed(2)));
+      svg.append(s("text", { x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle", fill: "var(--muted)" }, "sampled a_x"));
+      svg.append(s("text", { x: 11, y: (T + H - B) / 2, "text-anchor": "middle", fill: "var(--muted)", transform: `rotate(-90 11 ${(T + H - B) / 2})` }, "sampled a_z"));
+      for (const st of sets) for (const p of st.pts) {
+        const d = s("circle", { cx: X(p[0]), cy: Y(p[1]), r: 3, fill: `var(${st.col})`, "fill-opacity": 0.6 });
+        d.append(s("title", {}, `${st.k}: a = (${p[0].toFixed(3)}, ${p[1].toFixed(3)})`));
+        svg.append(d);
+      }
+      marks.forEach((m, i) => {
+        const x = X(m[0]), y = Y(m[1]);
+        for (const [a1, b1, a2, b2] of [[-6, -6, 6, 6], [-6, 6, 6, -6]]) {
+          svg.append(s("line", { x1: x + a1, y1: y + b1, x2: x + a2, y2: y + b2, stroke: "var(--ink)", "stroke-width": 2 }));
+        }
+        svg.append(s("text", { x: x + 9, y: y - 7, fill: "var(--ink)" }, i === 0 ? "expert mode" : "mirrored mode"));
+      });
+      const leg = h("div", { style: "font:11px var(--mono);color:var(--muted);display:flex;gap:14px;flex-wrap:wrap;margin-top:4px" });
+      for (const [k, name, col] of HEADS) {
+        leg.append(h("span", {}, h("span", { style: `display:inline-block;width:10px;height:10px;border-radius:2px;background:var(${col});margin-right:5px;vertical-align:-1px` }),
+          document.createTextNode(`${k} (${name})`)));
+      }
+      box.append(svg, leg, h("div", { class: "leg", style: "font-size:11px;color:var(--muted)", text:
+        "x marks = the two expert modes. cont collapses between them, bins fills all four corners (x and z sampled independently), ar keeps only the two valid corners." }));
+    }
+
+    // small builders for the playground: bin-edges ruler, one-hot row, probability bars
+    function ruler(eds) {
+      const W = 340, H = 36, L = 8, R = 8;
+      const e0 = eds[0], e1 = eds[eds.length - 1];
+      const X = (v) => L + ((v - e0) / (e1 - e0)) * (W - L - R);
+      const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;max-width:340px;height:auto;font:9px var(--mono)" });
+      const hi = s("rect", { y: 9, height: 14, width: 0, fill: "var(--accent-soft, var(--chip))", stroke: "var(--accent)", rx: 2 });
+      svg.append(hi, s("line", { x1: X(e0), x2: X(e1), y1: 16, y2: 16, stroke: "var(--line)", "stroke-width": 1.5 }));
+      eds.forEach((v, i) => {
+        svg.append(s("line", { x1: X(v), x2: X(v), y1: 10, y2: 22, stroke: "var(--muted)" }));
+        if (i === 0 || i === eds.length - 1 || eds.length <= 9) svg.append(s("text", { x: X(v), y: 33, "text-anchor": "middle", fill: "var(--muted)" }, v.toFixed(1)));
+      });
+      return { el: svg, set(i) {
+        if (i == null) { hi.setAttribute("width", 0); return; }
+        hi.setAttribute("x", X(eds[i]));
+        hi.setAttribute("width", Math.max(1, X(eds[i + 1]) - X(eds[i])));
+      } };
+    }
+    function onehotRow(n, label) {
+      const row = h("div", { style: "display:flex;gap:2px;align-items:center;margin:2px 0" },
+        h("span", { style: "font:10px var(--mono);color:var(--muted);width:56px", text: label }));
+      const cells = [];
+      for (let i = 0; i < n; i++) {
+        const c = h("span", { title: `index ${i}`, style: "display:inline-block;width:12px;height:12px;border-radius:2px;background:var(--chip)" });
+        cells.push(c);
+        row.append(c);
+      }
+      return { el: row, set(i) { cells.forEach((c, j) => { c.style.background = j === i ? "var(--accent)" : "var(--chip)"; }); } };
+    }
+    function probBars(title, probs, color) {
+      const n = probs.length, W = 340, H = 110, L = 8, R = 8, T = 8, B = 16;
+      const mx = Math.max(1e-9, ...probs.map((p) => num(p) || 0));
+      const bw = (W - L - R) / n;
+      const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;max-width:340px;height:auto;font:9px var(--mono)", role: "img", "aria-label": title });
+      svg.append(s("line", { x1: L, x2: W - R, y1: H - B, y2: H - B, stroke: "var(--line)" }));
+      probs.forEach((p, i) => {
+        const v = num(p) || 0, bh = (v / mx) * (H - T - B);
+        const bar = s("rect", { x: L + i * bw + 1, y: H - B - bh, width: Math.max(1, bw - 2), height: Math.max(0, bh), fill: color });
+        bar.append(s("title", {}, `token ${i}${num(centers[i]) != null ? ` (center ${centers[i].toFixed(2)})` : ""}: ${v.toFixed(3)}`));
+        svg.append(bar);
+      });
+      [0, n - 1].forEach((i) => svg.append(s("text", { x: L + (i + 0.5) * bw, y: H - 4, "text-anchor": "middle", fill: "var(--muted)" },
+        num(centers[i]) != null ? centers[i].toFixed(1) : String(i))));
+      return h("div", { style: "margin:4px 0" }, h("div", { class: "vg-title", text: title }), svg);
+    }
+
+    // 3. the playground body (sub-sections a-e, stacked like the embeddings viewer)
+    const body = h("div", {});
+
+    // a. text: string -> char ids -> one-hot
+    const td = r.text_demo || {};
+    const vocab = typeof td.vocab === "string" && td.vocab.length ? td.vocab : null;
+    let drawText = null;
+    body.append(h("h4", { text: "a. Text: string -> token ids -> one-hot" }));
+    if (!vocab) {
+      body.append(note("No text demo in this result."));
+    } else {
+      const inp = h("input", { type: "text", value: typeof td.sample === "string" ? td.sample : "", maxlength: "40",
+        style: "font:13px var(--mono);padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);width:100%;max-width:340px" });
+      const cellsRow = h("div", { style: "display:flex;gap:4px;flex-wrap:wrap;margin:8px 0" });
+      const oh = h("canvas", { style: "display:block;border:1px solid var(--line);border-radius:4px" });
+      drawText = () => {
+        const chars = Array.from(inp.value).slice(0, 40);
+        const ids = tokCharIds(chars.join(""), vocab);
+        cellsRow.replaceChildren();
+        chars.forEach((ch, i) => {
+          cellsRow.append(h("div", { style: "display:flex;flex-direction:column;align-items:center;gap:2px" },
+            h("span", { style: "min-width:18px;text-align:center;background:var(--chip);border-radius:4px;padding:2px 4px;font:13px var(--mono)", text: ch === " " ? "␣" : ch }),
+            h("span", { style: `font:10px var(--mono);color:${ids[i] == null ? "var(--bad)" : "var(--muted)"}`, text: ids[i] == null ? "?" : String(ids[i]) })));
+        });
+        const cw = Math.max(3, Math.min(8, Math.floor(560 / vocab.length)));
+        oh.width = vocab.length * cw;
+        oh.height = Math.max(1, chars.length) * cw;
+        oh.style.width = oh.width + "px";
+        oh.style.height = oh.height + "px";
+        const g = oh.getContext("2d");
+        g.fillStyle = css("--panel", "#fff");
+        g.fillRect(0, 0, oh.width, oh.height);
+        chars.forEach((ch, ri) => {
+          for (let j = 0; j < vocab.length; j++) {
+            g.fillStyle = ids[ri] === j ? css("--accent", "#d8490b") : ids[ri] == null ? css("--bad-soft", "#fbe9e7") : css("--chip", "#eceef2");
+            g.fillRect(j * cw, ri * cw, cw - 1, cw - 1);
+          }
+        });
+      };
+      inp.addEventListener("input", drawText);
+      body.append(inp, cellsRow,
+        h("div", { style: "font:10px var(--mono);color:var(--muted);margin-bottom:2px", text: `one-hot, one row per character (${vocab.length} columns = the vocab)` }), oh,
+        note("Each character's id is its position in the vocab; the one-hot row is that id as a vector. A trained text model multiplies the one-hot by an embedding table exactly like the action-token table below (e)."));
+    }
+
+    // b + c share the two action sliders
+    const exa = r.expert_example && Array.isArray(r.expert_example.a) ? r.expert_example.a : null;
+    const clamp = (v, d) => (num(v) == null ? d : Math.max(-1, Math.min(1, v)));
+    const dxS = h("input", { type: "range", min: "-1", max: "1", step: "0.01", value: String(clamp(exa && exa[0], 0.5)), style: "flex:1;min-width:140px;max-width:280px" });
+    const dzS = h("input", { type: "range", min: "-1", max: "1", step: "0.01", value: String(clamp(exa && exa[1], 0.75)), style: "flex:1;min-width:140px;max-width:280px" });
+    const vxCell = h("b", { text: "" }), vzCell = h("b", { text: "" });
+    const valChip = (label, cell) => h("span", { class: "chip", style: "font:12px var(--mono);margin-right:8px" }, document.createTextNode(label + " "), cell);
+    body.append(h("h4", { text: "b. Continuous: the floats go in raw" }),
+      h("div", { style: "display:flex;gap:10px;align-items:center;margin:4px 0;max-width:420px" }, h("span", { style: "font:11px var(--mono);color:var(--muted);width:20px", text: "dx" }), dxS),
+      h("div", { style: "display:flex;gap:10px;align-items:center;margin:4px 0;max-width:420px" }, h("span", { style: "font:11px var(--mono);color:var(--muted);width:20px", text: "dz" }), dzS),
+      h("div", { style: "margin:6px 0" }, valChip("a_x", vxCell), valChip("a_z", vzCell)),
+      note("No tokens here: the two floats go straight into the network - this is what task 1's regression head eats."));
+
+    // c. bins: the same sliders through the bin_edges ruler -> token ids -> one-hot
+    body.append(h("h4", { text: "c. Bins: one token per dimension" }));
+    const dims = [{ name: "dx", slider: dxS }, { name: "dz", slider: dzS }];
+    if (!edges || !nBins) {
+      body.append(note("No bin edges in this result."));
+    } else {
+      for (const d of dims) {
+        d.rul = ruler(edges);
+        d.hot = onehotRow(nBins, "one-hot");
+        d.id = h("b", { text: "" });
+        body.append(h("div", { style: "margin:8px 0" },
+          h("div", { style: "font:12px var(--mono);margin-bottom:2px" }, document.createTextNode(`${d.name}: `), d.id),
+          d.rul.el, d.hot.el));
+      }
+    }
+    const bprobe = heads.bins && heads.bins.probe ? heads.bins.probe : null;
+    const pc = bprobe && num(bprobe.c) != null ? bprobe.c : 0;
+    if (bprobe && Array.isArray(bprobe.px) && Array.isArray(bprobe.pz)) {
+      body.append(h("div", { style: "display:flex;gap:18px;flex-wrap:wrap" },
+        probBars(`P(token_x | c=${pc})`, bprobe.px, "var(--chart2)"),
+        probBars(`P(token_z | c=${pc})`, bprobe.pz, "var(--chart2)")));
+      body.append(note("The trained bins head at the probe observation: both marginals are bimodal, but x and z are sampled independently - half the draws pair a left x with a right z. That independence is the flaw this task is about."));
+    } else {
+      body.append(note("No trained bins-head probe distributions in this result."));
+    }
+
+    // d. ar: pick token_x, watch P(token_z | c, token_x) flip
+    body.append(h("h4", { text: "d. Autoregressive: token_z is conditioned on token_x" }));
+    const aprobe = heads.ar && heads.ar.probe ? heads.ar.probe : null;
+    const pzg = aprobe && aprobe.pz_given && Array.isArray(aprobe.pz_given.left) && Array.isArray(aprobe.pz_given.right) ? aprobe.pz_given : null;
+    if (!pzg) {
+      body.append(note("No trained ar-head probe distributions in this result."));
+    } else {
+      const apc = num(aprobe.c) != null ? aprobe.c : 0;
+      const tokL = num(aprobe.tok_left), tokR = num(aprobe.tok_right);
+      const bL = h("button", { type: "button", text: `token_x = left mode${tokL == null ? "" : ` (id ${tokL})`}` });
+      const bR = h("button", { type: "button", text: `token_x = right mode${tokR == null ? "" : ` (id ${tokR})`}` });
+      const arBox = h("div", {});
+      function drawAr(side) {
+        [[bL, "left"], [bR, "right"]].forEach(([b2, sd]) => { b2.style.borderColor = sd === side ? "var(--accent)" : "var(--line)"; b2.style.color = sd === side ? "var(--accent)" : "var(--ink)"; });
+        arBox.replaceChildren(probBars(`P(token_z | c=${apc}, token_x = ${side})`, pzg[side], "var(--chart3)"));
+      }
+      bL.addEventListener("click", () => drawAr("left"));
+      bR.addEventListener("click", () => drawAr("right"));
+      body.append(h("div", { style: "display:flex;gap:10px;margin:6px 0;flex-wrap:wrap" }, bL, bR), arBox,
+        note("The ar head samples token_x first, then feeds it back in: the z distribution collapses onto the mode that matches the chosen x, so only valid pairs come out."));
+      drawAr("left");
+    }
+
+    // e. token embeddings: ids are lookups into a table of vectors
+    body.append(h("h4", { text: "e. Token embeddings: ids are lookups" }));
+    const emb = r.embedding;
+    const vg = window.LabVecGrid && window.LabVecGrid.panel(ctx);
+    if (!(emb && Array.isArray(emb.table) && emb.table.length && Array.isArray(emb.table[0]))) {
+      body.append(note("No embedding table in this result."));
+    } else if (!vg) {
+      body.append(note("Turn on 'vector grids' to see the embedding table."));
+    } else {
+      const tok = r.expert_example && Array.isArray(r.expert_example.tok) ? r.expert_example.tok : [];
+      const CELL = 12;
+      const labs = h("div", { style: "display:flex;flex-direction:column;padding-top:1px" });
+      emb.table.forEach((_, i) => {
+        const mk = [];
+        if (tok[0] === i) mk.push("x");
+        if (tok[1] === i) mk.push("z");
+        labs.append(h("div", { style: `height:${CELL}px;line-height:${CELL}px;font:10px var(--mono);text-align:right;padding-right:6px;color:${mk.length ? "var(--accent)" : "var(--muted)"}`,
+          text: `${mk.length ? "expert " + mk.join("+") + " ▸ " : ""}${num(centers[i]) != null ? centers[i].toFixed(2) : String(i)}` }));
+      });
+      const gridBox = h("div", {});
+      window.LabVecGrid.render(gridBox, emb.table, { cell: CELL });
+      body.append(h("div", { class: "vg-title", text: `embedding table (${emb.table.length} tokens x ${num(emb.d) || emb.table[0].length} dims), row labels = bin centers` }),
+        h("div", { style: "display:flex;align-items:flex-start" }, labs, gridBox),
+        note("A token id is an index into this table: row i IS token i's vector, that row is all the network sees. The marked rows are the two tokens of the expert example above."));
+    }
+
+    // assemble: two cards on top, the playground card below
+    const a = card("Outcomes per head"), b = card("Samples at one obstacle position");
+    a.lastChild.append(tbl);
+    scatter(b.lastChild);
+    const grid = h("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px" }, a, b);
+    const play = h("div", { class: "chart", style: "min-width:0;margin-top:14px" }, h("h3", { text: "Hands-on: tokenization playground" }), body);
+    container.replaceChildren(stats, grid, play);
+
+    function updatePlay() {
+      const vx = Number(dxS.value), vz = Number(dzS.value);
+      vxCell.textContent = vx.toFixed(2);
+      vzCell.textContent = vz.toFixed(2);
+      if (edges) {
+        for (const d of dims) {
+          if (!d.rul) continue;
+          const i = tokBinIndex(Number(d.slider.value), edges);
+          d.id.textContent = i == null ? "n/a" : `token ${i}${num(centers[i]) != null ? ` (center ${centers[i].toFixed(2)})` : ""}`;
+          d.rul.set(i);
+          d.hot.set(i);
+        }
+      }
+    }
+    [dxS, dzS].forEach((x) => x.addEventListener("input", updatePlay));
+    updatePlay();
+    if (drawText) drawText();
+  }
+
+  window.LabViewers = { register: (name, fn) => { registry[name] = fn; }, get: (name) => registry[name], render, jsonFallback };
   window.LabViewers.register("t1scatter", t1scatter);
   window.LabViewers.register("traj2d", traj2d);
   window.LabViewers.register("t1", t1);
@@ -694,4 +1480,11 @@
   window.LabViewers.register("embeddings", embeddings);
   window.LabViewers.register("tavla", tavla);
   window.LabViewers.register("video", video);
+  window.LabViewers.register("attnlive", attnlive);
+  window.LabViewers.register("attnstep", attnstep);
+  window.LabViewers.register("vitattn", vitattn);
+  window.LabViewers.register("xattn", xattn);
+  window.LabViewers.register("fdlive", fdlive);
+  window.LabViewers.register("finddigit", finddigit);
+  window.LabViewers.register("tokens", tokens);
 })();

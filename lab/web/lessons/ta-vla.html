@@ -1,12 +1,56 @@
 <h3>The question</h3>
 <p>Can a transformer policy that already sees an image, a sentence and the robot state do better when it also <em>feels</em>?
-<b>TA-VLA</b> (Zhang et&nbsp;al., arXiv&nbsp;2509.07962) answers by turning the recent force/torque history into <b>one extra token</b>
+<b>TA-VLA</b> (<a href="https://arxiv.org/abs/2509.07962" target="_blank" rel="noopener">Zhang et&nbsp;al., arXiv&nbsp;2509.07962</a>) answers by turning the recent force/torque history into <b>one extra token</b>
 and trains the policy to predict the forces its own action chunk will cause. This task is the miniature of that recipe:
-<code>TAVLAMini</code> (<code>src/fvb/ta_tutorial/nets.py</code>), a four-layer, two-stream transformer in the layout of pi0 and SmolVLA,
+<code>TAVLAMini</code> (<code>src/fvb/ta_tutorial/nets.py</code>), a four-layer, two-stream transformer in the layout of <a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener" title="pi0: A Vision-Language-Action Flow Model for General Robot Control">pi0</a> and <a href="https://arxiv.org/abs/2506.01844" target="_blank" rel="noopener" title="SmolVLA: A Vision-Language-Action Model for Affordable and Efficient Robotics">SmolVLA</a>,
 trained from scratch on the contact scene of the earlier tasks &mdash; two holes, four commands (<em>insert into the red hole</em>,
 <em>insert into the blue hole</em>, <em>press gently</em> 2&nbsp;N, <em>press firmly</em> 6&nbsp;N). Everything is in the picture:
 the policy has to <b>read the hole positions from a 32&times;32 image</b>, read the command from words, and feel the surface through
 the torque token.</p>
+
+<details class="theory"><summary>Motivation &mdash; why each technique is in this experiment</summary>
+<p><b>Two streams.</b> The prefix (image, words, state) and the suffix (torque token + noisy actions) get separate
+weights so the two halves can be sized independently &mdash; and so a pretrained VLM can stand in as the prefix, as in
+pi0 and SmolVLA; the mini keeps the layout at trainable-from-scratch size.</p>
+<p><b>The block mask and the KV cache.</b> Prefix queries never see the suffix, so the prefix keys and values cannot
+depend on the noisy actions or on \(t\): encoded once per observation, reused for all K denoising steps &mdash; the
+design reason the two-stream layout pays at inference, and worth seeing in the mini where it is four lines of code.</p>
+<p><b>The torque token.</b> Force enters as a token because a token is the unit attention can select or ignore, per
+layer and head. Measured here: press gently (2&nbsp;N) succeeds 98% with the token against 31% zeroed &mdash; a policy
+that cannot feel cannot tell 2&nbsp;N from 6&nbsp;N.</p>
+<p><b>The auxiliary force loss.</b> Predicting the forces the chunk <em>will cause</em> pushes the expert toward a small
+forward model of contact; at this scale the measured effect is small (&minus;2 points in T3, +0.4 in T4), which is
+exactly why it is a knob (<i>w</i>) and not a default claim.</p>
+<p><b>The zeroed twin.</b> Same parameters, zeros in: the cleanest control for "what did force buy?", kept from task 5.</p>
+</details>
+
+<details class="theory"><summary>Theory &mdash; two streams, one mask, and force as a token</summary>
+<p>The two-stream layout is an inference-cost design. A VLA splits the work into understanding the observation (the prefix: image,
+words, state &mdash; the expensive part, a pretrained VLM in pi0 and SmolVLA) and writing the action chunk (the suffix &mdash;
+small, but run once per denoising step). The block mask is what makes the split pay: prefix queries never attend to the suffix, so
+the prefix's keys and values cannot depend on the noisy actions or on the noise level \(t\) &mdash; they are computed once per
+observation and cached, and each of the K denoising steps is one cheap pass of the expert, attending to</p>
+<p>$$\operatorname{Attn}\big(Q_s,\;[K_p; K_s],\;[V_p; V_s]\big),$$</p>
+<p>the cached prefix keys and values concatenated with the suffix's own. Separate weights per stream let the two halves be sized
+independently and a pretrained VLM be reused as the prefix.</p>
+<p>Force enters as a <em>token</em> rather than numbers appended to the state for the same reason words and image patches do: a
+token is the unit attention can select or ignore, so every layer and head decides how much the torque history matters right now,
+instead of it competing inside one state vector. In the suffix (TA-VLA's choice) the token sits beside the
+actions being denoised and is re-read at every denoising step; in the prefix it is folded into the cache with the rest of the
+observation. The auxiliary loss \(L = L_\text{action} + w\,L_\text{torque}\) pushes further: predicting the forces the chunk
+<em>will cause</em> makes the expert's representation a small forward model of contact, not just a decoder of it &mdash; aimed
+exactly at commands whose success is defined in newtons, though the measured effect at this scale is small (below). The action
+head itself is flow matching: sampling integrates \(x \leftarrow x - \tfrac{1}{K}\, v_\theta(x, t, o)\) from noise to a chunk,
+which keeps multimodal demonstrations from being averaged.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2509.07962" target="_blank" rel="noopener">Zhang et&nbsp;al., &ldquo;TA-VLA: Elucidating the Design Space of Torque-aware Vision-Language-Action Models&rdquo; (2025)</a> &mdash; the recipe this task miniaturises: token placement, the auxiliary loss, and their ablations.</li>
+<li><a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener">Black et&nbsp;al., &ldquo;&pi;0: A Vision-Language-Action Flow Model for General Robot Control&rdquo; (2024)</a> &mdash; the prefix/suffix flow-matching layout with a separate action expert.</li>
+<li><a href="https://arxiv.org/abs/2506.01844" target="_blank" rel="noopener">Shukor et&nbsp;al., &ldquo;SmolVLA: A Vision-Language-Action Model for Affordable and Efficient Robotics&rdquo; (2025)</a> &mdash; the small two-stream VLA whose layout this mini copies, KV cache included.</li>
+<li><a href="https://arxiv.org/abs/2406.09246" target="_blank" rel="noopener">Kim et&nbsp;al., &ldquo;OpenVLA: An Open-Source Vision-Language-Action Model&rdquo; (2024)</a> &mdash; the contrasting design: actions as discrete tokens from the VLM itself, no separate expert.</li>
+<li><a href="https://huggingface.co/blog/smolvla" target="_blank" rel="noopener">Hugging Face, &ldquo;SmolVLA&rdquo; blog (2025)</a> &mdash; a readable walk-through of the architecture and training recipe.</li>
+</ul>
+</details>
 
 <h3>The architecture</h3>
 <svg viewBox="0 0 800 440" role="img" aria-label="TAVLAMini: prefix stream with image patches, language and state tokens; action-expert stream with the torque token and noisy action tokens; block attention mask; cached prefix keys and values; flow loss and auxiliary future-torque loss summed into one total" style="width:100%;max-width:800px;font-family:var(--mono);font-size:11px">
@@ -18,7 +62,7 @@ the torque token.</p>
   </defs>
 
   <!-- PREFIX stream -->
-  <rect x="6" y="22" width="392" height="62" rx="9" fill="none" stroke="var(--muted)" stroke-width="1.5"/>
+  <rect x="6" y="22" width="392" height="62" rx="9" fill="none" stroke="var(--muted)" stroke-width="1.5" data-i="prefix"/>
   <text x="12" y="17" fill="var(--ink)" font-weight="700">prefix &#8594; &ldquo;VLM&rdquo; weights (the observation)</text>
   <rect x="12" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="28" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="44" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="60" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="76" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="92" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="108" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="124" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="140" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="156" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="172" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="188" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="204" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="220" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="236" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="252" y="36" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--muted)"/><rect x="278" y="36" width="13" height="18" rx="2" fill="var(--warn-soft)" stroke="var(--warn)"/><rect x="294" y="36" width="13" height="18" rx="2" fill="var(--warn-soft)" stroke="var(--warn)"/><rect x="310" y="36" width="13" height="18" rx="2" fill="var(--warn-soft)" stroke="var(--warn)"/><rect x="326" y="36" width="13" height="18" rx="2" fill="var(--warn-soft)" stroke="var(--warn)"/><rect x="342" y="36" width="13" height="18" rx="2" fill="var(--warn-soft)" stroke="var(--warn)"/><rect x="368" y="36" width="13" height="18" rx="2" fill="var(--good-soft)" stroke="var(--good)"/>
   <text x="140" y="70" text-anchor="middle" fill="var(--muted)">16 image patches (CNN)</text>
@@ -27,44 +71,44 @@ the torque token.</p>
 
   <!-- KV cache -->
   <line x1="200" y1="84" x2="200" y2="98" stroke="var(--muted)" marker-end="url(#taA)"/>
-  <rect x="14" y="99" width="372" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="14" y="99" width="372" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" data-i="kvcache"/>
   <text x="200" y="112" text-anchor="middle" fill="var(--ink)">prefix keys / values, every layer: cached</text>
   <text x="200" y="124" text-anchor="middle" fill="var(--muted)">once per observation; reused for all K steps</text>
   <line x1="200" y1="129" x2="200" y2="144" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#taG)"/>
 
   <!-- SUFFIX stream -->
-  <rect x="6" y="136" width="392" height="62" rx="9" fill="none" stroke="var(--chart1)" stroke-width="1.5"/>
-  <rect x="12" y="146" width="13" height="18" rx="2" stroke-width="2.4" fill="var(--accent-soft)" stroke="var(--accent)"/><rect x="38" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="54" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="70" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="86" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="102" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="118" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="134" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="150" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/>
+  <rect x="6" y="136" width="392" height="62" rx="9" fill="none" stroke="var(--chart1)" stroke-width="1.5" data-i="suffix"/>
+  <rect x="12" y="146" width="13" height="18" rx="2" stroke-width="2.4" fill="var(--accent-soft)" stroke="var(--accent)" data-i="torque"/><rect x="38" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="54" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="70" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="86" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="102" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="118" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="134" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/><rect x="150" y="146" width="13" height="18" rx="2" fill="var(--chip)" stroke="var(--chart1)"/>
   <text x="12" y="190" fill="var(--accent)" font-weight="700">torque</text>
   <text x="76" y="190" fill="var(--muted)">8 noisy action tokens (+ time t)</text>
   <text x="322" y="157" fill="var(--ink)" font-weight="700">suffix:</text>
-  <text x="322" y="170" fill="var(--chart1)" font-weight="700">action expert</text>
+  <text x="308" y="170" fill="var(--chart1)" font-weight="700">action expert</text>
   <text x="322" y="183" fill="var(--muted)">own weights</text>
 
   <!-- losses: flow -->
   <line x1="120" y1="198" x2="120" y2="214" stroke="var(--muted)" marker-end="url(#taA)"/>
-  <rect x="30" y="215" width="180" height="30" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="30" y="215" width="180" height="30" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="vhat"/>
   <text x="120" y="234" text-anchor="middle" fill="var(--ink)">action_out &#8594; &#118;&#770; (8 &times; 2)</text>
-  <rect x="30" y="262" width="180" height="30" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="30" y="262" width="180" height="30" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="target"/>
   <text x="120" y="281" text-anchor="middle" fill="var(--ink)">target u = e &minus; x&#8320;</text>
   <line x1="210" y1="230" x2="258" y2="244" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#taL)"/>
   <line x1="210" y1="277" x2="262" y2="262" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#taL)"/>
-  <rect x="252" y="236" width="104" height="34" rx="17" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2"/>
+  <rect x="252" y="236" width="104" height="34" rx="17" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="l_action"/>
   <text x="304" y="252" text-anchor="middle" fill="var(--loss)" font-weight="700">L_action</text>
   <text x="304" y="264" text-anchor="middle" fill="var(--loss)">flow, masked</text>
 
   <!-- losses: aux -->
   <path d="M388 198 V340 H236" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#taG)"/>
   <text x="394" y="300" fill="var(--accent)" transform="rotate(90 394 300)" font-size="10">mean of the 8 outputs</text>
-  <rect x="30" y="322" width="206" height="36" rx="7" fill="var(--accent-soft)" stroke="var(--accent)"/>
+  <rect x="30" y="322" width="206" height="36" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" data-i="aux_head"/>
   <text x="133" y="338" text-anchor="middle" fill="var(--ink)">aux_head: Linear(d &#8594; 16)</text>
   <text x="133" y="351" text-anchor="middle" fill="var(--muted)">&#375; = next 8 force readings</text>
-  <rect x="30" y="378" width="206" height="36" rx="7" fill="var(--chip)" stroke="var(--line)"/>
+  <rect x="30" y="378" width="206" height="36" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="aux_target"/>
   <text x="133" y="394" text-anchor="middle" fill="var(--ink)">measured future force</text>
   <text x="133" y="407" text-anchor="middle" fill="var(--muted)">8 &times; (Fx, Fz), z-scored</text>
   <line x1="236" y1="346" x2="282" y2="358" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#taL)"/>
   <line x1="236" y1="396" x2="290" y2="380" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#taL)"/>
-  <rect x="270" y="350" width="104" height="34" rx="17" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" stroke-dasharray="5 3"/>
+  <rect x="270" y="350" width="104" height="34" rx="17" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" stroke-dasharray="5 3" data-i="l_torque"/>
   <text x="322" y="366" text-anchor="middle" fill="var(--loss)" font-weight="700">L_torque</text>
   <text x="322" y="378" text-anchor="middle" fill="var(--loss)">MSE</text>
 
@@ -73,7 +117,7 @@ the torque token.</p>
   <path d="M374 367 H450" fill="none" stroke="var(--loss)" stroke-width="1.6"/>
   <text x="412" y="361" text-anchor="middle" fill="var(--loss)">&times; w</text>
   <path d="M450 367 H600 V344" fill="none" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#taL)"/>
-  <rect x="470" y="314" width="260" height="30" rx="15" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2.4"/>
+  <rect x="470" y="314" width="260" height="30" rx="15" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2.4" data-i="total"/>
   <text x="600" y="333" text-anchor="middle" fill="var(--loss)" font-weight="700">L = L_action + w &middot; L_torque</text>
 
   <!-- MASK matrix -->
@@ -84,16 +128,16 @@ the torque token.</p>
   <text x="523" y="104" text-anchor="end" fill="var(--muted)">prefix</text>
   <text x="523" y="196" text-anchor="end" fill="var(--muted)">suffix</text>
   <text x="523" y="148" text-anchor="end" fill="var(--muted)">queries</text>
-  <rect x="530" y="48" width="136" height="104" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
+  <rect x="530" y="48" width="136" height="104" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5" data-i="mask_pp"/>
   <text x="598" y="104" text-anchor="middle" fill="var(--good)" font-weight="700">sees</text>
-  <rect x="666" y="48" width="90" height="104" fill="url(#taHatch)" stroke="var(--line)" stroke-width="1.5"/>
+  <rect x="666" y="48" width="90" height="104" fill="url(#taHatch)" stroke="var(--line)" stroke-width="1.5" data-i="mask_ps"/>
   <text x="711" y="96" text-anchor="middle" fill="var(--bad)" font-weight="700">blocked</text>
   <text x="711" y="110" text-anchor="middle" fill="var(--muted)">prefix never</text>
   <text x="711" y="123" text-anchor="middle" fill="var(--muted)">sees actions</text>
-  <rect x="530" y="152" width="136" height="104" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
+  <rect x="530" y="152" width="136" height="104" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5" data-i="mask_sp"/>
   <text x="598" y="206" text-anchor="middle" fill="var(--good)" font-weight="700">sees</text>
   <text x="598" y="220" text-anchor="middle" fill="var(--muted)">the observation</text>
-  <rect x="666" y="152" width="90" height="104" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+  <rect x="666" y="152" width="90" height="104" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5" data-i="mask_ss"/>
   <rect x="666" y="152" width="90" height="8" fill="var(--accent)" opacity="0.55"/>
   <rect x="666" y="152" width="8" height="104" fill="var(--accent)" opacity="0.55"/>
   <text x="718" y="206" text-anchor="middle" fill="var(--accent)" font-weight="700">sees</text>
@@ -107,12 +151,57 @@ weights. In every layer each stream computes its own queries, keys and values, b
 (right): prefix queries see only the prefix; suffix queries see the whole prefix <em>and</em> the whole suffix. Orange is the torque
 token; dashed is the auxiliary branch, present only when the weight <i>w</i> is above zero.</p>
 
+<details class="code"><summary>Prefix and suffix blocks: the action tokens attend to the prefix and to themselves</summary><pre><code class="language-python" data-src="src/fvb/ta_tutorial/nets.py">def prefix(self, xp):
+    # B = batch, P = prefix tokens, D = width, h = heads, dh = D/h; xp [B, P, D]
+    q, k, v = self.vlm.qkv_heads(xp)  # each [B, h, P, dh]
+    # out [B, P, D]; (k, v) is this layer's KV-cache entry, each [B, h, P, dh]
+    return self.vlm.finish(xp, F.scaled_dot_product_attention(q, k, v)), (k, v)
+
+def suffix(self, xs, kv_prefix):
+    # B = batch, S = suffix tokens, P = prefix tokens, D = width, h = heads, dh = D/h
+    q, k, v = self.expert.qkv_heads(xs)  # xs [B, S, D] -&gt; each [B, h, S, dh]
+    kp, vp = kv_prefix  # cached prefix keys/values, each [B, h, P, dh]
+    # the suffix attends to the prefix AND to itself (bidirectionally within the chunk)
+    # keys/values cat along tokens: [B, h, P + S, dh]; attn out [B, h, S, dh]
+    attn = F.scaled_dot_product_attention(q, torch.cat([kp, k], 2), torch.cat([vp, v], 2))
+    return self.expert.finish(xs, attn)  # [B, h, S, dh] -&gt; [B, S, D]</code></pre></details>
+<details class="code"><summary>The torque token joins the suffix next to the noisy action tokens</summary><pre><code class="language-python" data-src="src/fvb/ta_tutorial/nets.py">def torque_token(self, cond):
+    # B = batch, D = width, Tq = flattened torque-history dims; cond["torque"] [B, Tq]
+    tq = cond["torque"]  # [B, Tq]
+    if self.zero_torque:
+        tq = torch.zeros_like(tq)  # the zeroed twin: same parameters, no signal
+    return self.torque_mlp(tq)[:, None, :]  # [B, Tq] -&gt; [B, D] -&gt; one token [B, 1, D]
+# ...
+def forward(self, x_t, t, cond):
+    # B = batch, H = chunk horizon, A = action dims, D = width, S = suffix tokens, F = aux dims
+    kvs = self._kv if self._kv is not None else self.encode_prefix(cond)  # prefix kv per layer
+    a = self.action_in(x_t)  # [B, H, A] -&gt; [B, H, D]
+    te = time_embedding(t, self.d)[:, None, :].expand(-1, self.horizon, -1)  # [B] -&gt; [B, H, D]
+    s = self.action_time(torch.cat([a, te], dim=-1)) + self.act_pos  # [B, H, 2*D] -&gt; [B, H, D]
+    if self.torque_pos == "suffix":
+        # prepend the torque token: [B, H, D] -&gt; [B, S, D] with S = 1 + H (else S = H)
+        s = torch.cat([self.torque_token(cond).expand(s.shape[0], -1, -1), s], dim=1)
+    for blk, kv in zip(self.blocks, kvs, strict=True):
+        s = blk.suffix(s, kv)  # [B, S, D] -&gt; [B, S, D]
+    h = self.ln_out(s[:, -self.horizon :])  # the action tokens: [B, S, D] -&gt; [B, H, D]
+    # aux head: h.mean(1) [B, H, D] -&gt; [B, D] -&gt; future-torque prediction [B, F]
+    extra = {"aux": self.aux_head(h.mean(1))} if self.aux_head is not None else {}
+    return self.action_out(h), extra  # velocity [B, H, D] -&gt; [B, H, A]</code></pre></details>
+
 <h3>Why the block mask matters: the KV cache</h3>
 <p>Because the prefix never looks at the noisy actions, its keys and values do not depend on the denoising step. At run time the
 policy encodes the prefix <b>once per observation</b> (<code>with model.cache(cond): ...</code>), stores the keys and values of
 every layer, and reuses them for all <i>K</i> flow-matching steps; only the cheap suffix is recomputed <i>K</i> times. Each
 denoising step is one pass of the action expert over 9 tokens that attend to the cached prefix. (The image is rendered from the
 5-number scene state inside the prefix encoder, so the training set stores numbers, not pixels, and the camera is simulated.)</p>
+<p><b>The ladder's punchline: self vs cross is a mask pattern, not machinery.</b> Tasks 6&ndash;9 wired one operation
+three ways: a lone query reading a set of stored pairs (task 6), a sequence talking to itself (<b>self-attention</b>,
+task 7), one stream reading another (<b>cross-attention</b>, named in task 8, used as an interface in task 9 and by
+task 5's learned queries). TAVLAMini retires the distinction: it has no separate cross-attention module, just one
+softmax over \([K_p; K_s]\) with a block mask. Inside that one softmax the prefix quadrant is self-attention (the
+observation talks to itself) and the suffix-reads-prefix quadrant is cross-attention (the action expert reads the
+observation) &mdash; the same operation, told apart only by who is allowed to see whom. One operation, three wirings,
+and a mask can express every one of them.</p>
 
 <h3>Two losses</h3>
 <p>The action tokens are trained exactly like the earlier flow tasks. With \(x_t = t\,e + (1-t)\,x_0\) a noisy chunk,
@@ -124,6 +213,20 @@ forces the chunk will cause:
 $$L = L_\text{action} + w\;L_\text{torque},\qquad L_\text{torque} = \lVert \hat F_{i+1:i+8} - F_{i+1:i+8} \rVert^2 / 16.$$
 The weight is the <b>Aux weight</b> knob (0 removes the head; 0.1 in the repository's experiments). The aux-MSE chart shows
 \(L_\text{torque}\) itself, not the weighted term.</p>
+
+<details class="code"><summary>Training step with the auxiliary future-force loss</summary><pre><code class="language-python" data-src="lab/core/loop.py"># B = batch, H = chunk horizon, A = action dims, F = aux-target dims (future torques)
+cond, x0, mask, aux_t = ds.batch(idx)  # x0 [B, H, A], mask [B, H], aux_t [B, F] or None
+per, extra = gen.loss(model, x0, cond, mask)  # per-sample loss [B]
+loss = per.mean()  # [B] -&gt; scalar
+if aux_weight &gt; 0 and "aux" in extra and aux_t is not None:
+    la = (extra["aux"] - aux_t).pow(2).mean()  # [B, F] -&gt; scalar
+    loss = loss + aux_weight * la
+    acc_aux += float(la)
+# ...
+opt.zero_grad(set_to_none=True)
+loss.backward()
+torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+opt.step()</code></pre></details>
 
 <h3>Where does the torque token go?</h3>
 <ul>
@@ -142,7 +245,7 @@ gap there.</p>
 <li><b>T3, peg search with unknown surface</b> (400 demos, 3 seeds): torque token zeroed / prefix / suffix / suffix + aux =
 <b>61.3 / 85.5 / 86.7 / 84.3&nbsp;%</b>. Force is the difference between guessing and knowing when the peg has touched down; without it
 the failures are mostly force aborts.</li>
-<li><b>T4, this task's world</b> (four commands, 400 episodes, 2 seeds): zeroed / prefix / suffix / suffix + aux =
+<li><b>T4, this task's world</b> (four commands, 1&nbsp;600 demos, 2 seeds, 400 evaluation episodes each): zeroed / prefix / suffix / suffix + aux =
 <b>62.9 / 91.3 / 91.4 / 91.8&nbsp;%</b>. The sharpest row is <b>press gently (2&nbsp;N): 98&nbsp;% with the token against 31&nbsp;% zeroed</b>;
 the insertion commands are equal (96&ndash;97&nbsp;%). A policy that cannot feel cannot tell 2&nbsp;N from 6&nbsp;N.</li>
 <li><b>Position and aux at this scale</b>: prefix &asymp; suffix within seed noise, and the auxiliary loss did not help
@@ -158,7 +261,7 @@ they were harmful in a large model with few demonstrations. Measure the zeroed t
 
 <h3>Running it</h3>
 <ul>
-<li>The default (800 demos, 15&nbsp;000 steps, width 128, about four minutes on a GPU) reaches roughly 95&nbsp;% on the two presses but only around 50&ndash;60&nbsp;% on the insertions: localising a 1.2&nbsp;cm hole from a 32&times;32 image (one pixel is 1&nbsp;cm) is the hard part and wants data. The tutorial's reference runs used 1&nbsp;600 demos and 30&nbsp;000 steps and reached 93&nbsp;% overall; raise <i>Demonstrations</i> and <i>Training steps</i> to approach that, or use width 64 and fewer steps for a quick look. A
+<li>The default (800 demos, 15&nbsp;000 steps, width 128, about four minutes on a GPU) reaches roughly 95&nbsp;% on the two presses but only around 50&ndash;60&nbsp;% on the insertions: localising a 1.2&nbsp;cm hole from a 32&times;32 image (one pixel is 1&nbsp;cm) is the hard part and wants data. The tutorial's reference runs used 1&nbsp;600 demos and 30&nbsp;000 steps and reached 91&nbsp;% overall; raise <i>Demonstrations</i> and <i>Training steps</i> to approach that, or use width 64 and fewer steps for a quick look. A
 closed-loop evaluation on 200 fixed scenes runs every <i>Eval every</i> steps and feeds the <b>success per command</b> chart: watch
 <em>press gently</em> and <em>press firmly</em> separately from the two insertions.</li>
 <li>Train two runs that differ in one knob: position <i>suffix</i> vs <i>prefix</i>, or <i>Zero the torque input</i> on/off, or
@@ -170,3 +273,5 @@ the viewer's &ldquo;force input&rdquo; chip reports. A checkpoint trained with z
 <li>The viewer lists outcomes per command, then replays rollouts in the side view with the red and blue holes (a box marks the
 commanded hole) and the force window; the policy has no hole-position input other than the image.</li>
 </ul>
+
+<script type="application/json" class="blkinfo">{"prefix": {"t": "prefix — the observation tokens", "html": "<p><b>Purpose:</b> everything the policy observes, as tokens: 16 image-patch tokens (a 3-conv, stride-2 CNN maps the 32×32 render to 4×4×d), 5 word-embedding tokens (the command; vocab 10) and 1 state token (peg x, z through <code>Linear(2 → d)</code>). All of it runs through the \"VLM\" stream's weights in each of the 4 layers.</p><p><b>Shape(s):</b> 22 tokens × <code>d = 128</code> (23 with <code>torque_pos='prefix'</code>); image <code>(B, 3, 32, 32)</code>, rendered on the fly from the 5-number scene state; lang <code>(B, 5)</code> token ids.</p><p><b>Updated:</b> trained from scratch every optimizer step — nothing is frozen in this mini (a real pi0 / SmolVLA reuses a pretrained VLM here).</p>"}, "kvcache": {"t": "prefix KV cache", "html": "<p><b>Purpose:</b> the payoff of the block mask: the prefix keys/values never depend on the noisy actions or on the noise level t, so they are computed <i>once per observation</i> and reused for all K denoising steps — only the 9-token suffix is recomputed K times.</p><p><b>Shape(s):</b> one (keys, values) pair per layer, each <code>(B, 4 heads, 22 tokens, 32)</code>, × 4 layers; held in <code>model._kv</code> inside <code>with model.cache(cond): ...</code>.</p><p><b>Updated:</b> inference-only bookkeeping: rebuilt for each new observation (the policy re-plans every n_exec = 4 env steps) and cleared when the context exits. During training the prefix is simply re-encoded on every forward — the numbers are identical either way.</p>"}, "suffix": {"t": "suffix — the action expert", "html": "<p><b>Purpose:</b> the stream that writes the chunk: the torque token plus 8 noisy action tokens (x_t through <code>Linear(2 → d)</code>, concatenated with the sinusoidal embedding of t, through a 2-layer MLP, plus learned positions). In every layer it attends to <code>[cached prefix K/V ; its own K/V]</code> with its own \"action expert\" weights.</p><p><b>Shape(s):</b> 9 tokens × <code>d = 128</code>; the outputs are read from the last 8 (the action tokens).</p><p><b>Updated:</b> trained every optimizer step; at inference one cheap pass per denoising step (K = 8 by default). Validation and evaluation use an EMA copy of the weights (0.999).</p>"}, "torque": {"t": "torque token", "html": "<p><b>Purpose:</b> TA-VLA's force input as <i>one token</i>: the last 10 frames of (Fx, Fz), flattened and z-scored, through a small MLP. As a token, every layer and head can attend to it or ignore it — it does not compete inside the state vector.</p><p><b>Shape(s):</b> input <code>(B, 20)</code> → <code>Linear(20 → d), SiLU, Linear(d → d)</code> → <code>(B, 1, d)</code>; prepended to the action tokens (suffix placement) or appended to the observation (prefix placement).</p><p><b>Updated:</b> the MLP trains with everything else. In the suffix the token is rebuilt at every denoising step; in the prefix it is baked into the cache.</p><p><b>Detail:</b> <code>zero_torque</code> feeds zeros through the identical parameters — the blind twin, same parameter count.</p>"}, "vhat": {"t": "action_out — v̂", "html": "<p><b>Purpose:</b> a linear read-out of the 8 action tokens' final states (after LayerNorm): the predicted flow velocity for each chunk position.</p><p><b>Shape(s):</b> <code>Linear(d → 2)</code>; out <code>(B, 8, 2)</code>.</p><p><b>Updated:</b> trained every step; at inference the same output drives the Euler integration <code>x ← x − (1/K)·v̂</code>.</p>"}, "target": {"t": "u = e − x₀ — target velocity", "html": "<p><b>Purpose:</b> the constant velocity of the straight noise→data line, exactly as in the flow lesson — the regression target for v̂.</p><p><b>Shape(s):</b> <code>(B, 8, 2)</code>; one subtraction, no parameters.</p><p><b>Updated:</b> recomputed every training step from fresh draws of e and t; does not exist at inference.</p>"}, "l_action": {"t": "L_action — masked flow loss", "html": "<p><b>Purpose:</b> MSE between predicted and target velocity over the real (non-padded) chunk positions: <code>Σ m‖v̂ − u‖² / Σ m</code>.</p><p><b>Shape(s):</b> scalar; m masks chunk slots past the episode end.</p><p><b>Updated:</b> every optimizer step; always on, whatever the aux weight.</p>"}, "aux_head": {"t": "aux_head — predict the future force", "html": "<p><b>Purpose:</b> TA-VLA's auxiliary objective: a linear map from the <i>mean</i> of the 8 action-token outputs to the next 8 force readings the demonstration actually produced — so the expert's representation has to be a small forward model of the contact the chunk will cause, not just a decoder of the observation.</p><p><b>Shape(s):</b> <code>Linear(d → 16)</code>, 16 = 8 future steps × (Fx, Fz); only constructed when the aux weight w &gt; 0.</p><p><b>Updated:</b> trained every step through L_torque; its output is ignored at inference — it never steers the rollout.</p>"}, "aux_target": {"t": "measured future force — the aux label", "html": "<p><b>Purpose:</b> the ground truth for the aux head: the (Fx, Fz) the demonstration sensed over the next 8 steps, z-scored with dataset statistics.</p><p><b>Shape(s):</b> <code>(B, 16)</code>; positions past the episode end are clamped to the last frame when the dataset is built.</p><p><b>Updated:</b> fixed once the demonstrations are collected.</p>"}, "l_torque": {"t": "L_torque — aux MSE", "html": "<p><b>Purpose:</b> plain MSE on the future-force prediction, <code>‖ŷ − y‖² / 16</code>. Dashed because the whole branch exists only when w &gt; 0.</p><p><b>Shape(s):</b> scalar.</p><p><b>Updated:</b> every optimizer step; the aux chart plots this unweighted value, not w·L_torque.</p>"}, "total": {"t": "L = L_action + w·L_torque", "html": "<p><b>Purpose:</b> the single trained objective. w is the <i>Aux weight</i> knob (0.1 in the repository's experiments; 0 removes the aux head entirely).</p><p><b>Shape(s):</b> scalar.</p><p><b>Updated:</b> backpropagated every optimizer step (AdamW, linear warm-up + cosine LR, gradient clip 1.0); an EMA copy (0.999) of the weights is what validation and evaluation use.</p>"}, "mask_pp": {"t": "prefix → prefix: sees", "html": "<p><b>Purpose:</b> prefix queries attend to all prefix keys — plain bidirectional self-attention over the observation: image patches, words and state all see each other.</p><p><b>Shape(s):</b> <code>22 × 22</code> attention per head, in every layer (23 × 23 with the torque token in the prefix).</p><p><b>Updated:</b> this is the quadrant whose keys/values get cached — it involves no suffix input at all.</p>"}, "mask_ps": {"t": "prefix → suffix: blocked", "html": "<p><b>Purpose:</b> the one forbidden quadrant, and the one that buys the cache: prefix queries never see suffix keys, so the observation encoding cannot depend on the noisy actions or on t.</p><p><b>Shape(s):</b> <code>22 × 9</code>, identically zero.</p><p><b>Updated:</b> enforced structurally, not by a mask tensor: <code>encode_prefix</code> runs attention over the prefix tokens only, so these logits are never even computed.</p>"}, "mask_sp": {"t": "suffix → prefix: sees", "html": "<p><b>Purpose:</b> suffix queries read the whole observation — this is where the action tokens see the image, the command and the state (and, in the prefix variant, the torque token).</p><p><b>Shape(s):</b> <code>9 × 22</code> per head and layer; at inference the keys/values on the prefix side come from the cache.</p><p><b>Updated:</b> the query side is recomputed each denoising step; the key/value side is frozen per observation.</p>"}, "mask_ss": {"t": "suffix → suffix: sees", "html": "<p><b>Purpose:</b> the suffix attends to itself bidirectionally: each action token sees the torque token and every other action token — no causal mask inside the chunk, all 8 actions are denoised jointly.</p><p><b>Shape(s):</b> <code>9 × 9</code>; the orange stripe is the torque token's row and column (suffix placement).</p><p><b>Updated:</b> recomputed at every denoising step from the current x_t.</p><p><b>Detail:</b> implemented as one <code>scaled_dot_product_attention</code> over <code>cat([prefix K/V, suffix K/V])</code> — the \"block mask\" is just which keys each pass is handed; no boolean mask tensor exists.</p>"}}</script>

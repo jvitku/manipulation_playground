@@ -59,6 +59,16 @@ def test_all_specs_sorted():
     assert ids == ["zz_a", "zz_b"]
 
 
+def test_ladder_orders_unique_and_expected():
+    import lab.tasks  # noqa: F401  (registers every built-in task)
+
+    orders = [s.order for s in registry.all_specs()]
+    assert len(orders) == len(set(orders)), "ladder orders must be unique"
+    expected = {"ta-vla": 10, "td3": 11, "td3-bc": 12, "residual-rl": 13}
+    for task_id, order in expected.items():
+        assert registry.get(task_id).order == order, task_id
+
+
 def test_which_selects_key_space():
     spec = _spec()
     spec.eval_params = [Param("episodes", "Episodes", "int", 5, min=1, max=50)]
