@@ -10,8 +10,10 @@ class Param:
 
     kind "ckpt": a checkpoint of another task, picked from a dropdown the frontend fills from
     `ckpt_task`'s checkpoints (GET /api/tasks/<ckpt_task>). The form sends the checkpoint id
-    "<run_id>/<file>"; on a training start the server checks that the id exists under that
-    task's runs (422 otherwise) and replaces it with the absolute file path in the run's config.
+    "<run_id>/<file>"; on a run or eval start the server checks that the id exists under that
+    task's runs and replaces it with the absolute file path in the job's config. A ckpt Param
+    whose `default` is None is optional: the dropdown gets a "none" option and an empty value
+    passes through as ""; any other default (e.g. "") makes an empty value a 422.
     """
 
     name: str

@@ -95,6 +95,30 @@ def _resolve_ckpt(task_id: str, ckpt_id: str) -> Path:
     return ckpt
 
 
+def _resolve_ckpt_params(params: dict, param_specs, missing_status: int) -> None:
+    """Resolve kind-"ckpt" params in `params` in place: checkpoint id -> absolute file path.
+
+    A ckpt Param that declares no default (default None) is optional: an empty value passes
+    through as "". An empty value on any other ckpt param is a 422. A non-empty id that
+    `_resolve_ckpt` refuses (unsafe / missing / foreign) is reported with `missing_status`
+    (422 on run starts, as before; 404 on evals, like the eval's own `ckpt`).
+    """
+    for p in param_specs:
+        if p.kind != "ckpt":
+            continue
+        if not params.get(p.name):
+            if p.default is None:  # optional: the form's "none"
+                params[p.name] = ""
+                continue
+            raise HTTPException(422, f"param {p.name!r}: pick a {p.ckpt_task} checkpoint")
+        try:
+            params[p.name] = str(_resolve_ckpt(p.ckpt_task, params[p.name]))
+        except HTTPException:
+            raise HTTPException(
+                missing_status, f"param {p.name!r}: no such {p.ckpt_task} checkpoint"
+            ) from None
+
+
 def _newest_state(task_id: str) -> str | None:
     for d in _job_dirs("runs", task_id)[:1]:
         return jobs.read_status(d).get("state")
@@ -240,17 +264,8 @@ def create_app() -> FastAPI:
             params = registry.validate_params(s, body.get("params") or {}, which="train")
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
-        for p in s.params:  # kind "ckpt": a checkpoint of another task, id -> absolute path
-            if p.kind != "ckpt":
-                continue
-            if not params.get(p.name):
-                raise HTTPException(422, f"param {p.name!r}: pick a {p.ckpt_task} checkpoint")
-            try:
-                params[p.name] = str(_resolve_ckpt(p.ckpt_task, params[p.name]))
-            except HTTPException:
-                raise HTTPException(
-                    422, f"param {p.name!r}: no such {p.ckpt_task} checkpoint"
-                ) from None
+        # kind "ckpt": a checkpoint of another task, id -> absolute path
+        _resolve_ckpt_params(params, s.params, missing_status=422)
         d = _start("train", "runs", s.id, {"task": s.id, "params": params})
         return {"run_id": d.name}
 
@@ -287,6 +302,8 @@ def create_app() -> FastAPI:
             params = registry.validate_params(s, body.get("params") or {}, which="eval")
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
+        # kind "ckpt" eval params (e.g. compare checkpoints): id -> absolute path
+        _resolve_ckpt_params(params, s.eval_params, missing_status=404)
         params["ckpt"] = str(ckpt.resolve())
         d = _start("eval", "evals", s.id, {"task": s.id, "params": params})
         return {"eval_id": d.name}
