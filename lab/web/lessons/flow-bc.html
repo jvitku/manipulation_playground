@@ -19,6 +19,7 @@ kept for training; the run's status line says how many survived. Each observatio
 noisy (sensor noise 0.05 N by default).</p>
 
 <h3>The method</h3>
+<p><b>BC</b> in the task's name is <b>behaviour cloning</b>: supervised imitation &mdash; fit the policy to the expert's (observation, action) pairs exactly as collected, with no reward signal and no trial and error (reward-driven learning enters the ladder at task&nbsp;11). Task&nbsp;1 was behaviour cloning with a regression head; <em>Flow-BC</em> is the same cloning with the flow-matching head of task&nbsp;2, so the cloned distribution can keep several expert strategies instead of averaging them.</p>
 <p>The same flow-matching recipe as the previous task: the expert chunk is noised along a straight line,</p>
 <p>$$x_t = t\,e + (1 - t)\,x_0$$</p>
 <p>and the net regresses the velocity,</p>
