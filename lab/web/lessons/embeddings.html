@@ -5,7 +5,7 @@ demonstrations and the same closed-loop test scenes, changing only how the comma
 directly comparable. The commands are the four of the contact scene: <em>insert into the red hole</em>, <em>insert into the
 blue hole</em>, <em>press gently</em> (2&nbsp;N) and <em>press firmly</em> (6&nbsp;N). There is no camera: the network sees the
 peg position, the perceived positions of the two holes (on by default &mdash; see the knobs below), the last 10 force readings,
-and the command.</p>
+and the command. Commands are one thing a policy must encode; sequence <em>positions</em> are the other &mdash; task&nbsp;8 (cross-attn) carries that half, with a learned-table vs RoPE knob and its own playground.</p>
 
 <h3>The four encodings</h3>
 <ul>

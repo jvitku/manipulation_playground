@@ -6,15 +6,19 @@ uniform choice), the target is always ISO ("2026-10-23"). Dates span 1970-01-01 
 of the day number puts ~10% of the days in the held-out set, so `exact` (held-out exact-match) is
 measured on days the model has never seen, in any of the three formats.
 
-Model: char embedding + learned positions -> ONE encoder `minitf.Block` (self-attention + MLP)
-= the memory; decoder: char embedding + learned positions -> ONE `minitf.CrossBlock` (causal
+Model: char embedding + positions -> ONE encoder `minitf.Block` (self-attention + MLP)
+= the memory; decoder: char embedding + positions -> ONE `minitf.CrossBlock` (causal
 self-attention, cross-attention into the memory, MLP) -> final LayerNorm -> linear head over the
-vocabulary. Q of the cross-attention comes from the decoder, K and V from the encoder. Training is
+vocabulary. Q of the cross-attention comes from the decoder, K and V from the encoder. The `pos`
+param picks the position information: "learned" (default) adds a trained position table per side;
+"rope" drops both tables and rotates Q and K by position (RoPE) in the two self-attentions — the
+cross-attention read stays position-free in both modes. Training is
 teacher forcing: the decoder reads BOS + the target and predicts the target + EOS, cross-entropy
 ignoring PAD. Inference (`greedy_decode`) starts from BOS alone and feeds back its own argmax until
 EOS. d_model = any multiple of heads.
 
-Checkpoint (`last.pt`): {"meta": {"d_model", "heads", "steps"}, "state": state_dict}.
+Checkpoint (`last.pt`): {"meta": {"d_model", "heads", "steps", "pos"}, "state": state_dict};
+a checkpoint without "pos" (from before the knob) evaluates as "learned".
 
 Metrics rows: `loss` every step block; about 20 rows carry `exact` (held-out exact-match, greedy
 decode of EXACT_N held-out examples); about SNAPSHOTS (60) rows carry
@@ -25,6 +29,8 @@ decode of EXACT_N held-out examples); about SNAPSHOTS (60) rows carry
 
 result.json written by `evaluate` (viewer `xattn`):
     {"d_model", "heads", "exact", "n_eval", "seed",
+     "pos": "learned"|"rope",
+     "rope": {"d_k": d_model // heads, "base": 10000} when pos == "rope", else null,
      "examples": [{"source", "target", "decoded", "correct",
                    "src_labels": [S chars of the padded source],
                    "in_labels":  [L decoder inputs: "<bos>" then the decoded chars],
@@ -51,7 +57,7 @@ from torch.nn import functional as F
 from lab.core.runctx import atomic_write_json
 from lab.tasks import registry
 from lab.tasks.base import Param, TaskSpec
-from lab.tasks.minitf import Block, CrossBlock, attn_snapshot, causal_mask
+from lab.tasks.minitf import ROPE_BASE, Block, CrossBlock, attn_snapshot, causal_mask
 
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 FORMATS = ("{d:02d} {m} {y}", "{m} {d:02d}, {y}", "{d:02d}/{n:02d}/{y}")
@@ -156,23 +162,38 @@ def _causal(length: int, dev: str):
 
 
 class DateTranslator(nn.Module):
-    def __init__(self, d_model: int, heads: int):
+    """`pos` picks the position information: "learned" = one trained position table per side,
+    added to the embeddings (the default: 125 863 params at d_model 64 / 4 heads); "rope" = no
+    tables at all (1 472 params fewer: 124 391), the encoder and the decoder self-attention
+    rotate Q and K by position instead (`minitf` RoPE). The cross-attention read of the memory
+    is position-free in both modes."""
+
+    def __init__(self, d_model: int, heads: int, pos: str = "learned"):
         super().__init__()
-        V = len(ITOS)
-        self.emb_s, self.pos_s = nn.Embedding(V, d_model), nn.Embedding(SRC_LEN, d_model)
-        self.emb_t, self.pos_t = nn.Embedding(V, d_model), nn.Embedding(MAX_OUT, d_model)
-        self.enc, self.dec = Block(d_model, heads), CrossBlock(d_model, heads)
+        assert pos in ("learned", "rope")
+        V, rope = len(ITOS), pos == "rope"
+        # construction order matters for seed reproducibility: same RNG draws as before for
+        # pos="learned", the rope model simply skips the two position tables
+        self.emb_s = nn.Embedding(V, d_model)
+        self.pos_s = None if rope else nn.Embedding(SRC_LEN, d_model)
+        self.emb_t = nn.Embedding(V, d_model)
+        self.pos_t = None if rope else nn.Embedding(MAX_OUT, d_model)
+        self.enc, self.dec = Block(d_model, heads, rope=rope), CrossBlock(d_model, heads, rope=rope)
         self.ln_f, self.head = nn.LayerNorm(d_model), nn.Linear(d_model, V)
 
     def encode(self, src):
         """src [B, S] -> (memory [B, S, D], encoder self-attention [B, H, S, S])."""
-        x = self.emb_s(src) + self.pos_s(torch.arange(src.shape[1], device=src.device))
+        x = self.emb_s(src)
+        if self.pos_s is not None:
+            x = x + self.pos_s(torch.arange(src.shape[1], device=src.device))
         return self.enc(x)
 
     def decode(self, dec_in, memory):
         """dec_in [B, L] (BOS + chars so far) -> (logits [B, L, V], self_attn, cross_attn)."""
         L = dec_in.shape[1]
-        x = self.emb_t(dec_in) + self.pos_t(torch.arange(L, device=dec_in.device))
+        x = self.emb_t(dec_in)
+        if self.pos_t is not None:
+            x = x + self.pos_t(torch.arange(L, device=dec_in.device))
         mask = _causal(L, str(dec_in.device))
         x, self_attn, cross_attn = self.dec(x, memory, mask)
         return self.head(self.ln_f(x)), self_attn, cross_attn
@@ -184,7 +205,8 @@ class DateTranslator(nn.Module):
 
 
 def build(meta: dict) -> DateTranslator:
-    return DateTranslator(int(meta["d_model"]), int(meta["heads"]))
+    # checkpoints from before the `pos` knob have no "pos" key: they are learned-position models
+    return DateTranslator(int(meta["d_model"]), int(meta["heads"]), str(meta.get("pos", "learned")))
 
 
 def teacher_inputs(tgt):
@@ -244,7 +266,8 @@ def _probe(dev):
 def train(ctx) -> None:
     P = ctx.params
     steps = int(P["steps"])
-    meta = {"d_model": int(P["d_model"]), "heads": int(P["heads"]), "steps": steps}
+    meta = {"d_model": int(P["d_model"]), "heads": int(P["heads"]), "steps": steps,
+            "pos": str(P.get("pos", "learned"))}  # fmt: skip
     dev = _device()
     torch.manual_seed(int(P.get("seed", 0)))
     model = build(meta).to(dev)
@@ -335,9 +358,13 @@ def evaluate(ctx) -> None:
     seed, k = int(P.get("eval_seed", 0)), int(P.get("n_examples", 6))
     exact = exact_match(model, date_pairs("heldout", EVAL_N, 1000 + seed))
     shown = date_pairs("heldout", k, 5000 + seed)
+    pos = str(meta.get("pos", "learned"))
     result = {
         "d_model": meta["d_model"], "heads": meta["heads"], "exact": exact, "n_eval": EVAL_N,
-        "seed": seed, "examples": [_example(model, s, t, dev) for s, t, _ in shown],
+        "seed": seed, "pos": pos,
+        "rope": {"d_k": int(meta["d_model"]) // int(meta["heads"]), "base": int(ROPE_BASE)}
+        if pos == "rope" else None,
+        "examples": [_example(model, s, t, dev) for s, t, _ in shown],
     }  # fmt: skip
     atomic_write_json(ctx.dir / "result.json", result)
     ctx.done(f"evaluated: held-out exact-match {exact:.3f}")
@@ -357,6 +384,9 @@ SPEC = TaskSpec(
     params=[
         Param("d_model", "Model width d_model", "int", 64, min=32, max=128, step=32),
         Param("heads", "Heads", "choice", 4, choices=[1, 2, 4]),
+        Param("pos", "Position information", "choice", "learned", choices=["learned", "rope"],
+              help="learned = trained position tables added to the embeddings; "
+                   "rope = no tables, Q and K rotated by position in self-attention"),  # fmt: skip
         Param("steps", "Training steps", "int", 1500, min=200, max=10000, step=100),
         Param("lr", "Learning rate", "float", 2e-3, min=3e-4, max=1e-2),
         Param("seed", "Seed", "int", 0, min=0, max=9999),

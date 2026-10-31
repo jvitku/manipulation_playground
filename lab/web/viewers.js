@@ -973,6 +973,124 @@
     show(0);
   }
 
+  // Pure RoPE helpers, also exercised by the node smoke test. ropeThetas: the per-pair angular
+  // frequencies theta_i = base^(-2i/d_k) (d_k = per-head dim, floor(d_k/2) rotation pairs).
+  // ropeRotate: rotate v (length >= 2*pairs) by position m - each pair (v[2i], v[2i+1]) turns by
+  // the angle m*theta_i. ropeDot: dot(R(m)q, R(n)k) - depends only on the offset n - m, the
+  // property the playground plots.
+  function ropeThetas(dk, base) {
+    const out = [];
+    for (let i = 0; i < Math.floor(dk / 2); i++) out.push(Math.pow(base, -2 * i / dk));
+    return out;
+  }
+  function ropeRotate(v, m, thetas) {
+    const out = v.slice();
+    thetas.forEach((t, i) => {
+      const c = Math.cos(m * t), sn = Math.sin(m * t), a = v[2 * i], b = v[2 * i + 1];
+      out[2 * i] = a * c - b * sn;
+      out[2 * i + 1] = a * sn + b * c;
+    });
+    return out;
+  }
+  function ropeDot(q, k, m, n, thetas) {
+    const rq = ropeRotate(q, m, thetas), rk = ropeRotate(k, n, thetas);
+    let acc = 0;
+    for (let i = 0; i < Math.min(rq.length, rk.length); i++) acc += rq[i] * rk[i];
+    return acc;
+  }
+  // ropeSeededVec(dim, seed): deterministic pseudo-random vector in [-1, 1]^dim (mulberry32),
+  // so the playground's q and k are the same on every render.
+  function ropeSeededVec(dim, seed) {
+    let a = seed >>> 0;
+    const out = [];
+    for (let i = 0; i < dim; i++) {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      out.push((((t ^ (t >>> 14)) >>> 0) / 4294967296) * 2 - 1);
+    }
+    return out;
+  }
+
+  // ropeCard(rope): the hands-on "RoPE playground" card xattn appends when the result was trained
+  // with pos = "rope". Self-contained: everything is computed client-side from rope.d_k and
+  // rope.base; SEQ = 12 matches the date task's padded sequence length. Returns null (no card)
+  // when d_k/base are missing or unusable, so old results are untouched.
+  function ropeCard(rope) {
+    const dk = num(rope && rope.d_k), base = num(rope && rope.base);
+    if (dk == null || dk < 2 || base == null || base <= 0) return null;
+    const SEQ = 12;
+    const thetas = ropeThetas(dk, base);
+    const nPairs = Math.min(thetas.length, 8);
+    const fmtTheta = (t) => (t >= 0.01 ? t.toFixed(3) : t.toExponential(1));
+    const body = h("div", {});
+
+    // a. the multi-hand clock: one dial per frequency pair, hand at angle m * theta_i
+    body.append(h("h4", { text: "a. One clock hand per pair: angle = m · θ_i" }));
+    const mS = h("input", { type: "range", min: "0", max: String(SEQ - 1), value: "0", step: "1", style: "width:220px" });
+    const [prevB, nextB] = stepButtons(mS, () => drawDials());
+    const mLbl = h("b", { text: "" });
+    const D = 64, C = D / 2, RH = C - 8; // dial size, centre, hand length
+    const hands = [];
+    const dialRow = h("div", { style: "display:flex;gap:12px;flex-wrap:wrap;margin:8px 0" });
+    for (let i = 0; i < nPairs; i++) {
+      const svg = s("svg", { viewBox: `0 0 ${D} ${D}`, style: `width:${D}px;height:${D}px`, role: "img", "aria-label": `rotation pair ${i}` });
+      svg.append(s("circle", { cx: C, cy: C, r: C - 5, fill: "none", stroke: "var(--line)" }));
+      svg.append(s("line", { x1: C + RH, y1: C, x2: C + RH + 3, y2: C, stroke: "var(--muted)" })); // the angle-0 mark
+      const hand = s("line", { x1: C, y1: C, x2: C + RH, y2: C, stroke: "var(--accent)", "stroke-width": 2, "stroke-linecap": "round" });
+      svg.append(hand, s("circle", { cx: C, cy: C, r: 2, fill: "var(--accent)" }));
+      hands.push(hand);
+      dialRow.append(h("div", { style: "display:flex;flex-direction:column;align-items:center;gap:2px" }, svg,
+        h("span", { style: "font:10px var(--mono);color:var(--muted)", text: `θ${i} = ${fmtTheta(thetas[i])}` })));
+    }
+    function drawDials() {
+      const m = Number(mS.value);
+      mLbl.textContent = `m = ${m}`;
+      hands.forEach((hd, i) => {
+        const a = m * thetas[i];
+        hd.setAttribute("x2", C + RH * Math.cos(a));
+        hd.setAttribute("y2", C - RH * Math.sin(a));
+      });
+    }
+    mS.addEventListener("input", drawDials);
+    body.append(h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0" },
+      h("span", { text: "position m" }), prevB, mS, nextB, mLbl), dialRow,
+      h("p", { class: "note", text: `Each dial is one of the ${thetas.length} rotation pairs of a d_k = ${dk} head${thetas.length > nPairs ? ` (first ${nPairs} shown)` : ""}: `
+        + "pair i of the vector turns by m·θ_i, θ_i = base^(−2i/d_k). Slide m: low-i hands spin fast, high-i hands barely move - together the hands ARE the position, like a multi-hand clock." }));
+
+    // b. relative-offset demo: dot(R(m)q, R(n)k) over n - m, from two different absolute m
+    body.append(h("h4", { text: "b. The score depends only on the offset n − m" }));
+    const q = ropeSeededVec(dk, 20261031), k = ropeSeededVec(dk, 7);
+    const offs = [];
+    for (let o = -(SEQ - 1); o <= SEQ - 1; o++) offs.push(o);
+    const sA = offs.map((o) => ropeDot(q, k, 0, o, thetas));
+    const sB = offs.map((o) => ropeDot(q, k, 5, 5 + o, thetas));
+    const W = 440, H = 180, L = 36, R = 10, T = 12, B = 28;
+    const vmax = Math.max(1e-9, ...sA.map(Math.abs), ...sB.map(Math.abs));
+    const bw = (W - L - R) / offs.length;
+    const X = (i) => L + (i + 0.5) * bw;
+    const Y = (v) => T + (1 - (v / vmax + 1) / 2) * (H - T - B);
+    const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;max-width:520px;height:auto;font:10px var(--mono)", role: "img", "aria-label": "RoPE dot product vs relative offset" });
+    svg.append(s("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "none", stroke: "var(--line)" }));
+    svg.append(s("line", { x1: L, x2: W - R, y1: Y(0), y2: Y(0), stroke: "var(--line)" }));
+    for (const v of [-vmax, 0, vmax]) svg.append(s("text", { x: L - 4, y: Y(v) + 3, "text-anchor": "end", fill: "var(--muted)" }, v.toFixed(1)));
+    offs.forEach((o, i) => {
+      if (o % 4 === 0 || Math.abs(o) === SEQ - 1) svg.append(s("text", { x: X(i), y: H - B + 13, "text-anchor": "middle", fill: "var(--muted)" }, String(o)));
+      const bar = s("rect", { x: X(i) - bw * 0.36, y: Math.min(Y(0), Y(sA[i])), width: bw * 0.72, height: Math.max(1, Math.abs(Y(sA[i]) - Y(0))), fill: "var(--accent)", "fill-opacity": 0.55 });
+      bar.append(s("title", {}, `offset ${o}: (m=0, n=${o}) -> ${sA[i].toFixed(4)}; (m=5, n=${5 + o}) -> ${sB[i].toFixed(4)}`));
+      svg.append(bar);
+      svg.append(s("circle", { cx: X(i), cy: Y(sB[i]), r: 2.5, fill: "none", stroke: "var(--ink)", "stroke-width": 1.5 }));
+    });
+    svg.append(s("text", { x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle", fill: "var(--muted)" }, "offset n − m"));
+    body.append(svg, h("p", { class: "note", text:
+      "One fixed random q and k, rotated and dotted two ways: bars = (m=0, n=offset), rings = (m=5, n=5+offset). "
+      + "They coincide exactly: the score depends only on the offset, which is the whole point of rotating instead of adding position vectors." }));
+    body.append(h("p", { class: "note", text:
+      "Note the cross-attention read above has no RoPE in either mode: decoder and source are two streams with no shared position axis, so only the self-attentions carry position." }));
+    drawDials();
+    return h("div", { class: "chart", style: "min-width:0;margin-top:14px" }, h("h3", { text: "RoPE playground" }), body);
+  }
+
   // xattn(result, container, ctx): the cross-attention alignment of one translated date (see
   //   task_crossattn.py): output chars (rows) x source chars (columns), a head picker, and a decode
   //   stepper that outlines the row used at step t and shows what the decoder had generated so far.
@@ -1009,12 +1127,16 @@
       });
       return h("div", {}, h("div", { class: "vg-title", text: title }), t);
     }
+    const head = h("div", { style: "margin-bottom:6px" }, chip("held-out exact-match", pct(result.exact)), chip("checked on", `${result.n_eval} dates`),
+      chip("heads", String(result.heads)), chip("d_model", String(result.d_model)));
+    if (typeof result.pos === "string" && result.pos) head.append(chip("pos", result.pos));
     container.replaceChildren(
-      h("div", { style: "margin-bottom:6px" }, chip("held-out exact-match", pct(result.exact)), chip("checked on", `${result.n_eval} dates`),
-        chip("heads", String(result.heads)), chip("d_model", String(result.d_model))),
+      head,
       h("div", { style: "margin:6px 0" }, exL, hdL),
       h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0" }, h("span", { text: "decode step" }), prevB, slider, nextB, stepLbl),
       board, info, vg);
+    const rbox = result.pos === "rope" ? ropeCard(result.rope) : null;
+    if (rbox) container.append(rbox);
     function draw() {
       const e = ex[Number(exS.value)], hh = Number(hdS.value), L = e.out_labels.length;
       slider.max = String(L - 1);

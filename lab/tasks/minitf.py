@@ -3,20 +3,47 @@
 Every attention layer also returns its attention weights, so a lesson page can show what the
 model looked at. Shapes: B = batch, T = tokens, D = d_model, H = heads,
 Tq / Tk = query / key length.
+
+Position information is the caller's job (learned tables added to the embeddings), except the
+opt-in `rope=True` on `MHA` / `Block` / `CrossBlock` (default off, self-attention only), which
+rotates Q and K by position instead - see `rope_rotate`.
 """
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 
+ROPE_BASE = 10000.0
+
+
+def rope_rotate(x: torch.Tensor, base: float = ROPE_BASE) -> torch.Tensor:
+    """Rotary position embedding (RoPE): rotate each head's dims, taken as consecutive pairs.
+
+    x: [B, H, T, dh]. Pair i of the vector at position m is turned by the angle m * theta_i with
+    theta_i = base^(-2i/dh) - low pairs spin fast (local order), high pairs slowly (long range).
+    Applied to Q and K (never V) before the scores, so dot(q_m, k_n) depends on the positions
+    only through the offset m - n: the model reads *relative* position without any position table.
+    """
+    dh = x.shape[-1]
+    theta = base ** (-torch.arange(0, dh, 2, device=x.device) / dh)  # [dh/2]
+    ang = torch.arange(x.shape[-2], device=x.device)[:, None] * theta  # [T, dh/2]
+    cos, sin = ang.cos(), ang.sin()
+    x1, x2 = x[..., 0::2], x[..., 1::2]  # the pair (x1, x2) is one 2D point to rotate
+    out = torch.empty_like(x)
+    out[..., 0::2] = x1 * cos - x2 * sin
+    out[..., 1::2] = x1 * sin + x2 * cos
+    return out
+
 
 class MHA(nn.Module):
     """Multi-head attention. Queries come from `x_q`, keys and values from `x_kv`."""
 
-    def __init__(self, d_model: int, n_heads: int):
+    def __init__(self, d_model: int, n_heads: int, rope: bool = False):
         super().__init__()
         assert d_model % n_heads == 0
         self.h, self.dh = n_heads, d_model // n_heads
+        assert not rope or self.dh % 2 == 0  # RoPE rotates dims in pairs
+        self.rope = rope
         self.q = nn.Linear(d_model, d_model)  # "what am I looking for?"
         self.k = nn.Linear(d_model, d_model)  # "what do I contain?"
         self.v = nn.Linear(d_model, d_model)  # "what do I hand over if picked?"
@@ -27,8 +54,13 @@ class MHA(nn.Module):
 
     def forward(self, x_q, x_kv=None, mask=None):
         """mask: bool, broadcastable to [Tq, Tk], True = may attend. Returns (out, attn)."""
+        # RoPE only in self-attention: a separate x_kv stream (cross-attention) has its own
+        # position axis, so "query position minus key position" is meaningless across the two.
+        use_rope = self.rope and x_kv is None
         x_kv = x_q if x_kv is None else x_kv  # self-attention unless told otherwise
         q, k, v = self.split(self.q(x_q)), self.split(self.k(x_kv)), self.split(self.v(x_kv))
+        if use_rope:
+            q, k = rope_rotate(q), rope_rotate(k)
         scores = q @ k.transpose(-2, -1) / self.dh**0.5  # [B, H, Tq, Tk]: how well q matches k
         if mask is not None:
             scores = scores.masked_fill(~mask, float("-inf"))
@@ -45,10 +77,10 @@ def mlp(d_model: int) -> nn.Sequential:
 class Block(nn.Module):
     """Self-attention, then an MLP, each with a residual connection and a pre-LayerNorm."""
 
-    def __init__(self, d_model: int, n_heads: int):
+    def __init__(self, d_model: int, n_heads: int, rope: bool = False):
         super().__init__()
         self.ln1, self.ln2 = nn.LayerNorm(d_model), nn.LayerNorm(d_model)
-        self.attn, self.mlp = MHA(d_model, n_heads), mlp(d_model)
+        self.attn, self.mlp = MHA(d_model, n_heads, rope=rope), mlp(d_model)
 
     def forward(self, x, mask=None):
         h = self.ln1(x)
@@ -60,10 +92,11 @@ class Block(nn.Module):
 class CrossBlock(nn.Module):
     """Decoder block: masked self-attention, cross-attention into `memory`, then an MLP."""
 
-    def __init__(self, d_model: int, n_heads: int):
+    def __init__(self, d_model: int, n_heads: int, rope: bool = False):
         super().__init__()
         self.ln1, self.ln2, self.ln3 = (nn.LayerNorm(d_model) for _ in range(3))
-        self.self_attn, self.cross_attn = MHA(d_model, n_heads), MHA(d_model, n_heads)
+        # rope reaches the causal self-attention only; the cross read is position-free either way
+        self.self_attn, self.cross_attn = MHA(d_model, n_heads, rope=rope), MHA(d_model, n_heads)
         self.mlp = mlp(d_model)
 
     def forward(self, x, memory, self_mask=None):

@@ -26,13 +26,23 @@ def trained(tmp_path_factory):
     return ctx
 
 
+@pytest.fixture(scope="module")
+def trained_rope(tmp_path_factory):
+    ctx = make_ctx(tmp_path_factory.mktemp("xattn_rope") / "run", {**SHORT, "pos": "rope"})
+    tc.train(ctx)
+    return ctx
+
+
 def test_spec_shape():
     spec = registry.get("cross-attn")
     assert spec.order == 8 and spec.live == "attnlive" and spec.vecgrids is True
     assert spec.viewer == "xattn"
     names = [p.name for p in spec.params + spec.eval_params]
     assert len(names) == len(set(names))
-    assert {"d_model", "heads", "lr", "steps", "seed"} == {p.name for p in spec.params}
+    assert {"d_model", "heads", "pos", "lr", "steps", "seed"} == {p.name for p in spec.params}
+    pos = next(p for p in spec.params if p.name == "pos")
+    assert pos.kind == "choice" and pos.default == "learned"
+    assert pos.choices == ["learned", "rope"]
     assert {"eval_seed", "n_examples"} == {p.name for p in spec.eval_params}
     assert [c["id"] for c in spec.charts] == ["loss", "exact"] and spec.charts[0]["log_y"]
     assert spec.estimate({p.name: p.default for p in spec.params}) > 0
@@ -104,9 +114,53 @@ def test_train_reaches_target(trained):
     assert len(snaps[0]["qkv"]["labels"]) == tc.SRC_LEN
 
 
+def test_param_counts_match_lesson():
+    # the lesson quotes 125 863 for the default (learned positions); rope drops the two tables
+    n = sum(p.numel() for p in tc.build({"d_model": 64, "heads": 4}).parameters())
+    assert n == 125_863
+    r = sum(p.numel() for p in tc.build({"d_model": 64, "heads": 4, "pos": "rope"}).parameters())
+    assert r == n - (tc.SRC_LEN + tc.MAX_OUT) * 64  # 124 391
+
+
+def test_rope_train_reaches_target(trained_rope):
+    assert read_status(trained_rope.dir)["state"] == "done"
+    rows = [r for r in read_metrics(trained_rope.dir) if "exact" in r]
+    # measured (seeds 0/1): rope reaches 1.00 by step ~250 of 500, learned by ~150
+    assert rows[-1]["exact"] >= 0.9
+    ck = torch.load(trained_rope.dir / "ckpt" / "last.pt", weights_only=False)
+    assert ck["meta"]["pos"] == "rope"
+    assert not any(k.startswith(("pos_s", "pos_t")) for k in ck["state"])
+
+
+def test_rope_eval_result(tmp_path, trained_rope):
+    ev = make_ctx(
+        tmp_path / "eval",
+        {"ckpt": str(trained_rope.dir / "ckpt" / "last.pt"), "eval_seed": 3, "n_examples": 3},
+    )
+    tc.evaluate(ev)
+    res = json.loads((ev.dir / "result.json").read_text())
+    assert res["pos"] == "rope" and res["rope"] == {"d_k": 16, "base": 10000}
+    assert res["exact"] >= 0.9 and len(res["examples"]) == 3
+    # the rest of the schema is the one the viewer reads, unchanged
+    assert {"d_model", "heads", "exact", "n_eval", "seed", "examples"} <= set(res)
+    e = res["examples"][0]
+    assert len(e["cross_attn"]) == 4 and len(e["cross_attn"][0][0]) == tc.SRC_LEN
+
+
+def test_old_checkpoint_without_pos_evaluates_as_learned(tmp_path, trained):
+    ck = torch.load(trained.dir / "ckpt" / "last.pt", weights_only=False)
+    old = tmp_path / "old.pt"
+    torch.save({"meta": {k: v for k, v in ck["meta"].items() if k != "pos"}, "state": ck["state"]},
+               old)  # fmt: skip
+    ev = make_ctx(tmp_path / "eval", {"ckpt": str(old), "eval_seed": 0, "n_examples": 1})
+    tc.evaluate(ev)
+    res = json.loads((ev.dir / "result.json").read_text())
+    assert res["pos"] == "learned" and res["rope"] is None and res["exact"] >= 0.9
+
+
 def test_eval_roundtrip(tmp_path, trained):
     ck = torch.load(trained.dir / "ckpt" / "last.pt", weights_only=False)
-    assert {"d_model", "heads"} <= set(ck["meta"])
+    assert {"d_model", "heads"} <= set(ck["meta"]) and ck["meta"]["pos"] == "learned"
     ev = make_ctx(
         tmp_path / "eval",
         {"ckpt": str(trained.dir / "ckpt" / "last.pt"), "eval_seed": 3, "n_examples": 5},
@@ -114,6 +168,7 @@ def test_eval_roundtrip(tmp_path, trained):
     tc.evaluate(ev)
     res = json.loads((ev.dir / "result.json").read_text())
     assert res["heads"] == 4 and res["exact"] >= 0.9 and len(res["examples"]) == 5
+    assert res["pos"] == "learned" and res["rope"] is None
     for e in res["examples"]:
         assert len(e["target"]) == 10 and e["correct"] == (e["decoded"] == e["target"])
         L = len(e["out_labels"])
