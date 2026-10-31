@@ -1469,6 +1469,191 @@
     if (drawText) drawText();
   }
 
+  // ---- claims: the claims board (nfv.claims rows written into result.claims) ----------------
+  // Rows: [{id, statement, metric, expected, measured, verdict, source, url}], all optional.
+  // claimsBoard(rows) returns the table (fvrollout embeds it); the registered "claims" viewer
+  // renders result.claims alone. Verdict chips: CONFIRMED good, NOT CONFIRMED bad,
+  // INCONCLUSIVE warn, anything else (e.g. "NOT MEASURED") plain.
+  function claimsBoard(rows) {
+    if (!Array.isArray(rows) || !rows.length) return null;
+    const cls = (v) => (v === "CONFIRMED" ? " good" : v === "NOT CONFIRMED" ? " bad" : v === "INCONCLUSIVE" ? " warn" : "");
+    const tbl = h("table", { class: "out claims" });
+    tbl.append(h("tr", {}, ...["claim", "source", "expected", "measured", "verdict"].map((t) => h("th", { text: t }))));
+    for (const r of rows) {
+      if (!r || typeof r !== "object") continue;
+      const st = h("td", { style: "max-width:340px" }, h("div", {}, h("b", { text: r.statement || r.id || "?" })));
+      if (r.metric) st.append(h("div", { style: "color:var(--muted);font-size:11px", text: r.metric }));
+      const src = h("td", { style: "max-width:190px;font-size:11px" },
+        r.url ? h("a", { href: r.url, target: "_blank", rel: "noopener", text: r.source || r.url })
+          : h("span", { text: r.source || "" }));
+      tbl.append(h("tr", {}, st, src,
+        h("td", { style: "font-family:var(--mono);font-size:11px;white-space:nowrap", text: r.expected == null ? "" : String(r.expected) }),
+        h("td", { style: "font-size:11px;max-width:300px", text: r.measured == null ? "" : String(r.measured) }),
+        h("td", {}, h("span", { class: "chip" + cls(r.verdict), text: r.verdict || "?" }))));
+    }
+    return tbl;
+  }
+  function claimsViewer(result, container) {
+    const tbl = claimsBoard(result && result.claims);
+    container.replaceChildren(tbl || h("p", { style: "color:var(--muted)", text: "No claims in this result." }));
+  }
+
+  // ---- fvrollout: force-sim testbed results (schema in lab/tasks/task_nfv0.py) --------------
+  // Top: claims board (when result.claims exists), outcome chips + Wilson, the per-scenario
+  // tables, the rollout video; below: a per-episode trace panel (fz vs the commanded force,
+  // a position/hybrid controller-mode strip, event markers, a scrub cursor). Every field is
+  // guarded - an old or partial result renders whatever it holds.
+  function fvrollout(result, container, ctx) {
+    const r = result || {};
+    const wrap = h("div", { class: "viewer-fvrollout" });
+    const board = claimsBoard(r.claims);
+    if (board) wrap.append(h("h4", { text: "Claims" }), board);
+    const o = r.outcomes || {};
+    const stats = h("div", { style: "margin:10px 0 6px" });
+    if (r.scenario) stats.append(chip("scenario", String(r.scenario)));
+    if (num(o.success) != null) stats.append(chip("success", pct(o.success)));
+    if (Array.isArray(o.wilson95) && o.wilson95.length === 2) stats.append(chip("95% CI", `${pct(o.wilson95[0])} – ${pct(o.wilson95[1])}`));
+    if (num(r.n_episodes) != null) stats.append(chip("episodes", String(r.n_episodes)));
+    const pk = r.peak_force || {};
+    if (num(pk.max) != null) stats.append(chip("peak |F|", `${pk.mean} N mean · ${pk.max} N max`));
+    wrap.append(stats);
+    function outTable(title, headers, rows) {
+      if (!rows.length) return;
+      const tbl = h("table", { class: "out", style: "margin-top:6px" });
+      tbl.append(h("tr", {}, ...headers.map((t) => h("th", { text: t }))));
+      for (const row of rows) tbl.append(h("tr", {}, ...row.map((v) => h("td", { text: v == null ? "–" : String(v) }))));
+      wrap.append(h("h4", { text: title }), tbl);
+    }
+    const counts = o.counts || {};
+    const n = num(r.n_episodes) || Object.values(counts).reduce((a, b) => a + (num(b) || 0), 0);
+    outTable("Outcomes", ["outcome", "episodes", "share"],
+      Object.keys(counts).map((k) => [k.replace(/_/g, " "), counts[k], n ? pct(counts[k] / n) : "–"]));
+    const armRows = (arms) => Object.keys(arms).map((a2) => {
+      const d = arms[a2] || {};
+      const ci = Array.isArray(d.wilson95) ? `${pct(d.wilson95[0])} – ${pct(d.wilson95[1])}` : "–";
+      return [a2, d.n, num(d.success) == null ? "–" : pct(d.success), ci,
+        num(d.held_n) != null ? `${d.held_n}/${d.n}` : "–", num(d.in_band_frac) == null ? "–" : pct(d.in_band_frac),
+        num(d.contact_f_n_med) == null ? "–" : d.contact_f_n_med + " N", num(d.coverage_mean) == null ? "–" : pct(d.coverage_mean),
+        d.aborts, num(d.peak_force_mean) == null ? "–" : d.peak_force_mean + " N"];
+    });
+    const ARM_HEAD = ["arm", "n", "success", "95% CI", "held band", "in-band time", "contact F_n (med)", "coverage", "aborts", "peak |F| mean"];
+    if (o.per_task) {
+      outTable("Per task", ["task", "n", "success", "95% CI", "aborts", "peak |F| mean (N)"],
+        Object.keys(o.per_task).map((t) => {
+          const d = o.per_task[t] || {};
+          const ci = Array.isArray(d.wilson95) ? `${pct(d.wilson95[0])} – ${pct(d.wilson95[1])}` : "–";
+          return [t, d.n, num(d.success) == null ? "–" : pct(d.success), ci, d.aborts, d.peak_force_mean];
+        }));
+    }
+    const tk = r.tracking || {};
+    if (Array.isArray(tk.per_height)) {
+      outTable(`Hold at ${tk.target_n} N, per hidden height`, ["hidden dz (mm)", "episodes", "mean F_n (N)", "max |mean err| (N)"],
+        tk.per_height.map((d2) => [d2.dz_mm, d2.n, d2.mean_f_n, d2.max_abs_err_n]));
+    }
+    if (tk.arms) outTable(`Wipe at ${tk.target_n} N: position vs hybrid`, ARM_HEAD, armRows(tk.arms));
+    if (r.kp) outTable("Position-only wipe by K_p (N/m)", ARM_HEAD, armRows(r.kp));
+    if (r.video && ctx && typeof ctx.fileUrl === "function") {
+      const vid = h("video", { controls: "", preload: "metadata", style: "width:100%;max-width:640px;display:block;margin:10px 0;border-radius:8px;background:#000" });
+      vid.setAttribute("src", ctx.fileUrl(r.video));
+      wrap.append(h("h4", { text: "Rollout video" }), vid);
+    }
+    // ---- per-episode traces ----
+    const eps = Array.isArray(r.episodes_traces)
+      ? r.episodes_traces.filter((e) => e && Array.isArray(e.fz) && e.fz.length && Array.isArray(e.t)) : [];
+    if (!eps.length) {
+      if (!wrap.childElementCount) return jsonFallback(result, container);
+      container.replaceChildren(wrap);
+      return;
+    }
+    wrap.append(h("h4", { text: "Episode traces (10 Hz): measured Fz vs commanded force" }));
+    const epS = h("input", { type: "range", min: 0, max: eps.length - 1, value: 0, step: 1, style: "width:160px" });
+    const [prevB, nextB] = stepButtons(epS, () => { drawEp(); });
+    const epLbl = h("b", { text: "" });
+    const scrub = h("input", { type: "range", min: 0, max: 1, value: 0, step: 1, style: "flex:1;min-width:160px;max-width:420px" });
+    const readout = h("span", { style: "font:12px var(--mono);color:var(--muted)" });
+    const svgBox = h("div", {});
+    wrap.append(
+      h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0" },
+        h("span", { text: "episode" }), prevB, epS, nextB, epLbl),
+      svgBox,
+      h("div", { style: "display:flex;gap:10px;align-items:center;margin-top:6px;max-width:640px" }, h("span", { style: "font:12px var(--mono)", text: "scrub" }), scrub),
+      readout,
+      h("p", { class: "note", text: "Course sign convention: pressing on the surface reads NEGATIVE Fz, so a 5 N press sits at −5 N. The strip under the time axis is the z-axis controller mode per policy step: green = hybrid (admittance on the force error), grey = position. Markers: click / abort / seated events." }));
+    container.replaceChildren(wrap);
+    const W = 640, H = 250, L = 46, R = 8, T = 10, B = 44, MS = 9; // MS = mode-strip height
+    let ep = eps[0], cursor = null, cursorStep = 0;
+    function drawEp() {
+      ep = eps[Number(epS.value)] || eps[0];
+      cursorStep = Math.min(cursorStep, ep.fz.length - 1);
+      epLbl.textContent = `${Number(epS.value) + 1}/${eps.length}: ${ep.group || ep.task || "?"} · seed ${ep.seed != null ? ep.seed : "?"} · ${ep.outcome || "?"}`;
+      const fz = ep.fz.map((v) => num(v) || 0);
+      const ft = Array.isArray(ep.f_target) ? ep.f_target.map((v) => num(v) || 0) : [];
+      const tv = ep.t.map((v) => num(v) || 0);
+      const last = fz.length - 1;
+      const all = fz.concat(ft.length ? ft : [0]);
+      let lo = Math.min(...all, 0), hi = Math.max(...all, 0);
+      const padv = Math.max(0.5, (hi - lo) * 0.12);
+      lo = Math.max(-30, lo - padv); hi = Math.min(30, hi + padv);
+      const X = (i) => L + (i / Math.max(1, last)) * (W - L - R);
+      const Y = (v) => T + (1 - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * (H - T - B);
+      const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;max-width:680px;height:auto;font:10px var(--mono)", role: "img", "aria-label": "Measured Fz and commanded force over the episode" });
+      svg.append(s("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "none", stroke: "var(--line)" }));
+      for (const v of [lo, 0, hi]) {
+        svg.append(s("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: "var(--line)", "stroke-opacity": v === 0 ? 1 : 0.5 }));
+        svg.append(s("text", { x: L - 4, y: Y(v) + 3, "text-anchor": "end", fill: "var(--muted)" }, v.toFixed(1)));
+      }
+      if (ft.length && ft.some((v) => v !== 0)) { // all-zero = no force command: draw nothing
+        svg.append(s("polyline", { points: ft.map((v, i) => `${X(i)},${Y(v)}`).join(" "), fill: "none", stroke: "var(--loss)", "stroke-width": 1.4, "stroke-dasharray": "5 3" }));
+      }
+      svg.append(s("polyline", { points: fz.map((v, i) => `${X(i)},${Y(v)}`).join(" "), fill: "none", stroke: "var(--chart1)", "stroke-width": 1.6 }));
+      // controller-mode strip under the time axis (two colours, one cell per 10 Hz step)
+      const modes = Array.isArray(ep.mode) ? ep.mode : [];
+      const y0 = H - B + 6;
+      modes.forEach((m, i) => {
+        const x0 = L + (i / Math.max(1, last)) * (W - L - R);
+        const x1 = L + ((i + 1) / Math.max(1, last)) * (W - L - R);
+        const cell = s("rect", { x: x0, y: y0, width: Math.max(0.5, x1 - x0), height: MS, fill: m === "hybrid" ? "var(--chart3)" : "var(--muted)", "fill-opacity": m === "hybrid" ? 0.9 : 0.45 });
+        cell.append(s("title", {}, `step ${i}: z-axis ${m}`));
+        svg.append(cell);
+      });
+      svg.append(s("text", { x: L, y: y0 + MS + 11, fill: "var(--muted)" }, "z-axis mode: green = hybrid, grey = position"));
+      // event markers
+      for (const ev of Array.isArray(ep.events) ? ep.events : []) {
+        if (!ev || num(ev.t) == null || !tv.length) continue;
+        let bi = 0;
+        for (let i2 = 0; i2 < tv.length; i2++) if (Math.abs(tv[i2] - ev.t) < Math.abs(tv[bi] - ev.t)) bi = i2;
+        svg.append(s("line", { x1: X(bi), x2: X(bi), y1: T, y2: H - B, stroke: "var(--warn)", "stroke-dasharray": "3 3" }));
+        svg.append(s("text", { x: X(bi) + 3, y: T + 10, fill: "var(--warn)" }, ev.label || "event"));
+      }
+      for (const [frac, lab] of [[0, "0"], [0.5, (tv[Math.floor(last / 2)] || 0).toFixed(1)], [1, (tv[last] || 0).toFixed(1)]]) {
+        svg.append(s("text", { x: L + frac * (W - L - R), y: H - B + 4 + MS + 22, "text-anchor": "middle", fill: "var(--muted)" }, lab + " s"));
+      }
+      svg.append(s("text", { x: 11, y: (T + H - B) / 2, "text-anchor": "middle", fill: "var(--muted)", transform: `rotate(-90 11 ${(T + H - B) / 2})` }, "force (N)"));
+      cursor = s("line", { x1: X(cursorStep), x2: X(cursorStep), y1: T, y2: H - B + 6 + MS, stroke: "var(--ink)", "stroke-width": 1.2 });
+      svg.append(cursor);
+      svgBox.replaceChildren(svg);
+      scrub.max = String(last);
+      scrub.value = String(cursorStep);
+      svg._X = X;
+      drawCursor();
+    }
+    function drawCursor() {
+      const i = Math.max(0, Math.min(Number(scrub.value), ep.fz.length - 1));
+      cursorStep = i;
+      const svg = svgBox.firstChild;
+      if (svg && cursor && svg._X) { cursor.setAttribute("x1", svg._X(i)); cursor.setAttribute("x2", svg._X(i)); }
+      const sub = Array.isArray(ep.subtask) ? ep.subtask[i] : null;
+      const md = Array.isArray(ep.mode) ? ep.mode[i] : null;
+      const ftv = Array.isArray(ep.f_target) ? ep.f_target[i] : null;
+      readout.textContent = `t = ${num(ep.t[i]) == null ? "?" : ep.t[i].toFixed(1)} s · Fz ${num(ep.fz[i]) == null ? "?" : ep.fz[i].toFixed(2)} N` +
+        (num(ftv) != null && ftv !== 0 ? ` · commanded ${ftv.toFixed(1)} N` : " · no force command") +
+        (md ? ` · ${md}` : "") + (sub ? ` · subtask: ${sub}` : "");
+    }
+    epS.addEventListener("input", drawEp);
+    scrub.addEventListener("input", drawCursor);
+    drawEp();
+  }
+
   window.LabViewers = { register: (name, fn) => { registry[name] = fn; }, get: (name) => registry[name], render, jsonFallback };
   window.LabViewers.register("t1scatter", t1scatter);
   window.LabViewers.register("traj2d", traj2d);
@@ -1487,4 +1672,6 @@
   window.LabViewers.register("fdlive", fdlive);
   window.LabViewers.register("finddigit", finddigit);
   window.LabViewers.register("tokens", tokens);
+  window.LabViewers.register("claims", claimsViewer);
+  window.LabViewers.register("fvrollout", fvrollout);
 })();

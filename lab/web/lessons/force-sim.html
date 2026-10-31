@@ -1,0 +1,321 @@
+<h3>The question</h3>
+<p>Lessons 16&ndash;19 will train policies that <em>feel</em>. Before any of them can be trusted, two smaller questions
+need honest answers on a testbed: what does a simulated wrist force/torque sensor actually measure &mdash; and why can
+a position controller, however well tuned, not hold a commanded contact force on a surface whose height it does not
+know? This lesson builds the testbed that answers both with numbers: a gantry with a wrist F/T sensor, four
+contact tasks whose deciding quantity is hidden from the camera, a position and a hybrid force/position controller,
+and scripted experts that record the demonstration datasets every later lesson trains on. It also introduces the
+<b>claims board</b>: each quantitative promise the course makes is a registered claim, and every evaluation fills in
+the ones it can measure with a CONFIRMED / NOT CONFIRMED / INCONCLUSIVE verdict.</p>
+
+<h3>The task</h3>
+<p>The robot is a rigid Cartesian <b>gantry</b>: three prismatic joints aligned with the world axes, a yaw hinge
+(position-held at 0 here) and a parallel gripper. A Cartesian step \(\Delta p\) is <em>exactly</em> a joint-space
+step &mdash; no arm kinematics between the policy and the contact physics. Between the z-carriage and the tool sits
+the wrist: a site with a force + torque sensor pair that sees everything distal to it. Two cameras (static + wrist)
+render at 96&times;96. Four tasks share this scene; each hides the one quantity that decides success where the
+camera cannot see it (the static camera covers ~0.6&nbsp;m with 96&nbsp;px, so 1&nbsp;px &asymp; 6&nbsp;mm):</p>
+<table class="out">
+<tr><th>task</th><th>instruction</th><th>hidden quantity</th><th>success</th><th>limit</th></tr>
+<tr><td>T0 reach&ndash;grasp</td><td>"pick up the cube"</td><td>nothing &mdash; the no-regression control</td>
+<td>cube lifted 5 cm</td><td>10 s</td></tr>
+<tr><td>T1 press-until-click</td><td>"press the red/blue button"</td><td>per-button click threshold
+\(\sim U(3, 9)\) N</td><td>instructed button clicks AND peak |F| &lt; 1.5&times; threshold (the other button
+fails it)</td><td>10 s</td></tr>
+<tr><td>T2 wipe</td><td>"wipe the plate gently" = 3 N / "firmly" = 8 N</td><td>plate height &plusmn;8 mm, tilt
+&plusmn;3&deg;</td><td>&ge;90% of 20 strip cells covered AND |F<sub>n</sub> &minus; target| &lt; 1.5 N for &ge;80%
+of &ge;1.5 s contact</td><td>15 s</td></tr>
+<tr><td>T3 peg insert</td><td>"insert the peg"</td><td>true hole = visible marker + \(U(\pm 4)\) mm per axis
+(&asymp; 0.6 px), 0.5 mm clearance</td><td>peg tip seated &ge;28 mm, no abort</td><td>20 s</td></tr>
+</table>
+<p class="ref">T1's threshold exists only in Python (two episodes with different thresholds render pixel-identically
+&mdash; unit-tested); T2's and T3's hidden geometry is sub-pixel. Force is the only channel the hidden quantities
+leak through: the premise every later lesson builds on.</p>
+
+<h3>The method</h3>
+<p><b>The sensing chain.</b> MuJoCo's site sensors report the raw wrench the wrist applies to everything below it,
+so at rest the sensor reads the <em>tool's own weight</em>, rotated into the sensor frame: \(m R^{\top}(-g)\).
+Subtracting that gravity wrench (the mass is the tool subtree's, the centre of mass is read exactly from the model
+every step, so finger motion cannot bias it) leaves the external <b>contact</b> wrench. It is then low-passed by a
+one-pole 20 Hz filter running at the 200 Hz controller rate; the controller and the policy both consume the filtered
+stream, nothing downstream sees raws. <b>Sign convention</b>, used everywhere and unit-tested: contact pushing
+<em>up</em> on the tool reads <b>negative</b> F<sub>z</sub> (pressing on a table: F<sub>z</sub> &lt; 0); a mass
+resting <em>on</em> the tool reads positive. So "press down with 5 N" is a command of
+\(f_{t,z} = -5\) N.</p>
+<p><b>The clock ladder.</b> Physics steps at 2 ms (500 Hz); the controller ticks every 5 ms (200 Hz) &mdash; 200 does
+not divide 500, so one tick advances physics by 2, 3, 2, 3, &hellip; substeps (2.5 on average), and 20 ticks make
+exactly one 100 ms policy step (10 Hz). The wrench is sampled once per tick. <b>What is invisible at control
+rate:</b> an impact transient shorter than ~10 ms lives <em>between</em> 10 Hz policy samples and is attenuated by
+the 20 Hz filter &mdash; which is why the demos store each step's whole 200 Hz window (20&times;6), not just the last
+sample.</p>
+<p><b>Position mode.</b> The 10 Hz action \(\Delta p\) (clamped to &plusmn;5 cm per axis) is linearly interpolated to
+200 Hz position targets driving MuJoCo position actuators &mdash; per axis a PD,</p>
+<p>$$\tau = K_p\,(x_{cmd} - x) - d\,\dot x, \qquad K_p = 800\ \mathrm{N/m},\ d = 60\ \mathrm{Ns/m}.$$</p>
+<p>In steady contact the actuator is a spring: the force is the command's <em>overshoot</em> below the surface times
+the series stiffness of actuator and pad, \(F \approx K_{\mathrm{eff}}\,\delta\) with
+\(1/K_{\mathrm{eff}} = 1/K_p + 1/K_{\mathrm{pad}}\). A position policy commands a penetration depth, not a force
+&mdash; and the depth it would need depends on the height it cannot see.</p>
+<p><b>Hybrid mode</b> &mdash; ForceVLA2 leaves its controller unspecified, so this is the course's written-down law
+(every number a deliberate choice, documented in <code>controllers.py</code>): once per policy step each axis is
+<b>selected</b> for force control, \(S_i = \mathbf{1}[\,|f_{t,i}| &gt; 0.5\ \mathrm{N}\,]\), with 0.1 N of
+hysteresis &mdash; a selected axis stays selected until \(|f_{t,i}| &lt; 0.4\) N. Only the force part can select:
+torque targets are ignored and yaw + gripper always run position mode. A selected axis moves by <b>admittance</b> at
+200 Hz,</p>
+<p>$$\dot x_i = \mathrm{clip}\!\bigl(K_a\,(f_{t,i} - f_i),\ \pm 5\ \mathrm{cm/s}\bigr), \qquad
+x_{cmd,i} \mathrel{+}= \dot x_i \cdot 5\ \mathrm{ms}, \qquad K_a = 0.01\ \mathrm{m/(s\,N)};$$</p>
+<p>unselected axes follow their \(\Delta p\) interpolation. The admittance is <em>integral action on the force
+error</em>: the command keeps descending until the measured force balances the commanded one, so steady-state force
+tracking is exact regardless of \(K_p\), surface height or tool weight. Safety: |F| &gt; 25 N anywhere aborts the
+episode as a failure &mdash; digging in can never score. All commands are clamped to the joint ranges, so a force
+error can never wind the command out of the workspace.</p>
+
+<details class="theory"><summary>Motivation &mdash; why each piece is in this experiment</summary>
+<p><b>A gantry, not an arm.</b> Prismatic world-aligned axes make \(\Delta p\) exactly a joint step: the contact
+physics is isolated from kinematics, \(F = K_{\mathrm{eff}}\,\delta\) is readable off a trace, and the plain-MJCF
+scene (<code>gantry_xml.py</code> builds the XML string) is itself lesson material.</p>
+<p><b>Hidden quantities.</b> Each task hides exactly the number that decides success below one camera pixel or in
+pure Python. That is the course's lever: lessons 17&ndash;18 must show force inputs/outputs beating vision alone,
+which is only measurable when vision alone <em>cannot</em> contain the answer.</p>
+<p><b>96&times;96 osmesa (CPU) rendering.</b> Measured 2.75 ms/frame (363 fps) in this image &mdash; a 200-demo task
+is about 3 minutes of rendering, and rendering never competes with training for the shared 10 GB GPU. The budget and
+the determinism both come from keeping the renderer off the GPU.</p>
+<p><b>DART action noise (0.5 mm).</b> While recording, the <em>executed</em> action is the expert action plus
+\(\mathcal N(0, 0.5\ \mathrm{mm})\) per axis, but the stored label stays clean (task 5 (force-token)'s convention).
+The observations visit states off the expert's exact path without corrupting the regression target &mdash; and the
+T3 expert's spiral-search recovery only appears in the data because the noise sometimes makes it miss.</p>
+<p><b>The 25 N abort.</b> Plan risk row: a position head could "solve" T2 by digging in. The abort makes
+over-forcing a visible failure mode instead of a silent win, on every task.</p>
+<p><b>Demos store the 200 Hz window.</b> Each policy step stores its full 20&times;6 wrench window: the click and
+jam transients the later force encoders need live between 10 Hz samples.</p>
+<p><b>Claims as data.</b> Expectations written as <code>Claim</code> rows (<code>src/nfv/claims.py</code>) get
+verdicts computed from measurements with confidence intervals, not prose &mdash; so "is force actually used" and its
+siblings are validated by default in every later lesson, and a failed expectation shows up red instead of unsaid.</p>
+</details>
+<details class="theory"><summary>Theory &mdash; quasi-static contact, admittance vs impedance, what an F/T sensor
+reads</summary>
+<p><b>Quasi-static contact under position control.</b> A MuJoCo position actuator exerts
+\(\tau = K_p (x_{cmd} - x)\) (plus damping). Pressing a commanded depth \(\delta\) past a surface whose pad has
+stiffness \(K_{\mathrm{pad}}\), the tool rests where the spring forces balance; the two springs are in series, so</p>
+<p>$$F = \frac{\delta}{1/K_p + 1/K_{\mathrm{pad}}} = K_{\mathrm{eff}}\,\delta.$$</p>
+<p>Here the wipe tip's compliant contact (<code>solref 0.02</code> &asymp; 2 mm of give at 5 N, i.e.
+\(K_{\mathrm{pad}} \approx 2.5\) kN/m) in series with \(K_p = 800\) N/m gives \(K_{\mathrm{eff}} \approx 0.6\) N/mm:
+the &plusmn;8 mm hidden height alone moves the contact force by &asymp; &plusmn;5 N &mdash; wider than T2's whole
+&plusmn;1.5 N tracking band. Measured on the testbed (fixed 5 mm press, K<sub>p</sub> 800): 0.7 N on the nominal
+surface, 6.8 N when the surface is 8 mm high, no contact at all when it is 8 mm low.</p>
+<p><b>Admittance and impedance in one paragraph.</b> Both couple motion and force at an interface. An
+<em>impedance</em> controller takes measured motion and commands force (it renders a virtual spring/damper); an
+<em>admittance</em> controller takes measured force and commands motion &mdash; the natural choice on top of a stiff
+position-controlled machine, and what industrial arms usually do. Ours is the simplest useful admittance: pure
+integral action on the force error, rate-limited at 5 cm/s. Integral action is why the steady-state error is zero;
+the clamp plus the compliant pad is why it stays stable (a tenfold \(K_a\) still holds 5.00 N here, peak 5.09 N
+&mdash; measured).</p>
+<p><b>What a wrist F/T sensor measures.</b> Everything distal to it: contact wrenches, the tool's weight
+\(m R^{\top}(-g)\), and inertial terms when accelerating. "Trustworthy force readings" therefore means subtracting a
+load model &mdash; here the exact mass and per-step COM from the simulator (&le; 0.5 m/s and ~0.2 kg distal mass
+keep inertial spikes under the 1 N tolerances; a real sensor needs the least-squares identification this repo's
+Stage 0 built). A grasped object is <em>not</em> part of the subtree: its weight arrives as a contact wrench,
+exactly as on a real sensor.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://doi.org/10.1115/1.3139652" target="_blank" rel="noopener">Raibert &amp; Craig, "Hybrid
+Position/Force Control of Manipulators" (ASME J. Dyn. Sys., Meas., Control, 1981)</a> &mdash; the classic per-axis
+selection idea this controller's \(S_i\) comes from (DOI page; the publisher blocks direct fetches).</li>
+<li><a href="https://arxiv.org/abs/2505.22159" target="_blank" rel="noopener">Yu et&nbsp;al., "ForceVLA" (2025)</a>
+&mdash; force as an <em>input</em> to a VLA; lesson 17's destination.</li>
+<li><a href="https://arxiv.org/abs/2603.15169" target="_blank" rel="noopener">"ForceVLA2" (2026)</a> &mdash; force as
+an <em>output</em>: the model commands a wrench a hybrid controller tracks; lesson 18's destination, and the reason
+this testbed ships that controller now.</li>
+<li><a href="https://mujoco.readthedocs.io/en/stable/overview.html" target="_blank" rel="noopener">MuJoCo
+documentation</a> &mdash; the simulator; see <a href="https://mujoco.readthedocs.io/en/stable/XMLreference.html"
+target="_blank" rel="noopener">the XML reference</a> for the <code>force</code>/<code>torque</code> site sensors and
+<code>solref</code> contact compliance used here.</li>
+</ul>
+</details>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 780 350" role="img" aria-label="The testbed loop: policy at 10 Hz into latch and axis selection, 200 Hz position/admittance controller, PD actuators, 500 Hz physics; back through the F/T site, tool-weight compensation and 20 Hz low-pass into the observation; camera branch and 25 N abort" style="width:100%;max-width:780px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="fsA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+    <marker id="fsG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+  </defs>
+  <text x="14" y="20" fill="var(--muted)">command path &#8594;</text>
+  <!-- row 1: command path -->
+  <rect x="10" y="36" width="128" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="policy"/>
+  <text x="74" y="53" text-anchor="middle" fill="var(--ink)" font-weight="700">policy @ 10 Hz</text>
+  <text x="74" y="68" text-anchor="middle" fill="var(--muted)">expert in M0</text>
+  <text x="74" y="83" text-anchor="middle" fill="var(--muted)">dp, grip, f_tgt</text>
+  <line x1="138" y1="65" x2="168" y2="65" stroke="var(--muted)" marker-end="url(#fsA)"/>
+  <rect x="170" y="36" width="160" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="latch"/>
+  <text x="250" y="53" text-anchor="middle" fill="var(--ink)" font-weight="700">latch + select</text>
+  <text x="250" y="68" text-anchor="middle" fill="var(--muted)">clamp |dp| &#8804; 5 cm</text>
+  <text x="250" y="83" text-anchor="middle" fill="var(--muted)">S_i: |f_t,i| &gt; 0.5 N</text>
+  <line x1="330" y1="65" x2="360" y2="65" stroke="var(--muted)" marker-end="url(#fsA)"/>
+  <rect x="362" y="30" width="170" height="70" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="ctrl200"/>
+  <text x="447" y="47" text-anchor="middle" fill="var(--ink)" font-weight="700">200 Hz controller</text>
+  <text x="447" y="62" text-anchor="middle" fill="var(--muted)">pos: p0 + dp&#183;k/20</text>
+  <text x="447" y="77" text-anchor="middle" fill="var(--muted)">force: admittance</text>
+  <text x="447" y="92" text-anchor="middle" fill="var(--muted)">v = K_a(f_t &#8722; f)</text>
+  <line x1="532" y1="65" x2="562" y2="65" stroke="var(--muted)" marker-end="url(#fsA)"/>
+  <rect x="564" y="36" width="116" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="act"/>
+  <text x="622" y="56" text-anchor="middle" fill="var(--ink)" font-weight="700">PD actuators</text>
+  <text x="622" y="76" text-anchor="middle" fill="var(--muted)">K_p(cmd&#8722;q)&#8722;dv</text>
+  <line x1="680" y1="65" x2="688" y2="65" stroke="var(--muted)" marker-end="url(#fsA)"/>
+  <rect x="690" y="30" width="86" height="70" rx="9" fill="var(--chip)" stroke="var(--line)" data-i="phys"/>
+  <text x="733" y="47" text-anchor="middle" fill="var(--ink)" font-weight="700">physics</text>
+  <text x="733" y="62" text-anchor="middle" fill="var(--muted)">500 Hz</text>
+  <text x="733" y="77" text-anchor="middle" fill="var(--muted)">2 ms steps</text>
+  <text x="733" y="92" text-anchor="middle" fill="var(--muted)">2/3 per tick</text>
+  <!-- row 2: sensing path -->
+  <text x="14" y="160" fill="var(--muted)">&#8592; sensing path (every 5 ms tick)</text>
+  <line x1="733" y1="100" x2="733" y2="176" stroke="var(--muted)" marker-end="url(#fsA)"/>
+  <rect x="690" y="178" width="86" height="52" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="ft"/>
+  <text x="733" y="198" text-anchor="middle" fill="var(--ink)" font-weight="700">F/T site</text>
+  <text x="733" y="215" text-anchor="middle" fill="var(--muted)">raw (6,)</text>
+  <line x1="690" y1="204" x2="662" y2="204" stroke="var(--muted)" marker-end="url(#fsA)"/>
+  <rect x="540" y="178" width="120" height="52" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="comp"/>
+  <text x="600" y="198" text-anchor="middle" fill="var(--ink)" font-weight="700">compensation</text>
+  <text x="600" y="215" text-anchor="middle" fill="var(--muted)">&#8722; tool gravity</text>
+  <line x1="540" y1="204" x2="510" y2="204" stroke="var(--muted)" marker-end="url(#fsA)"/>
+  <rect x="386" y="178" width="122" height="52" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="lp"/>
+  <text x="447" y="198" text-anchor="middle" fill="var(--ink)" font-weight="700">low-pass 20 Hz</text>
+  <text x="447" y="215" text-anchor="middle" fill="var(--muted)">one pole, 200 Hz</text>
+  <line x1="386" y1="204" x2="332" y2="204" stroke="var(--muted)" marker-end="url(#fsA)"/>
+  <rect x="170" y="172" width="160" height="64" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="obs"/>
+  <text x="250" y="189" text-anchor="middle" fill="var(--ink)" font-weight="700">Obs @ 10 Hz</text>
+  <text x="250" y="204" text-anchor="middle" fill="var(--muted)">wrench (6,)</text>
+  <text x="250" y="218" text-anchor="middle" fill="var(--muted)">window (20, 6)</text>
+  <text x="250" y="231" text-anchor="middle" fill="var(--muted)">state (8), rgb</text>
+  <!-- feedback: filtered wrench into the controller, obs into the policy -->
+  <line x1="447" y1="178" x2="447" y2="102" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#fsG)"/>
+  <text x="455" y="130" fill="var(--accent)">f_meas, 200 Hz</text>
+  <polyline points="170,204 74,204 74,98" fill="none" stroke="var(--muted)" stroke-dasharray="4 3" marker-end="url(#fsA)"/>
+  <!-- abort -->
+  <line x1="447" y1="230" x2="447" y2="266" stroke="var(--muted)" marker-end="url(#fsA)"/>
+  <rect x="386" y="268" width="122" height="34" rx="17" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="abort"/>
+  <text x="447" y="289" text-anchor="middle" fill="var(--loss)" font-weight="700">abort |F| &gt; 25 N</text>
+  <!-- cameras -->
+  <polyline points="713,100 675,140 675,250 600,250 600,266" fill="none" stroke="var(--muted)" marker-end="url(#fsA)"/>
+  <rect x="540" y="268" width="120" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="cams"/>
+  <text x="600" y="285" text-anchor="middle" fill="var(--ink)" font-weight="700">cameras 96x96</text>
+  <text x="600" y="300" text-anchor="middle" fill="var(--muted)">static + wrist</text>
+  <text x="600" y="315" text-anchor="middle" fill="var(--muted)">osmesa (CPU)</text>
+  <polyline points="540,318 250,318 250,238" fill="none" stroke="var(--muted)" marker-end="url(#fsA)"/>
+  <text x="300" y="332" fill="var(--muted)">rendered once per policy step (2.75 ms/frame, measured)</text>
+</svg>
+<p class="ref">One 10 Hz policy step = 20 controller ticks = 50 physics steps. The orange feedback edge is the whole
+point of the hybrid mode: the filtered wrench re-enters the <em>controller</em> at 200 Hz, twenty times faster than
+any policy could react. Click a block's &#9432; for its purpose, shapes and update rate.</p>
+
+<details class="code"><summary>The sensing chain: exact COM, gravity compensation, one filtered sample per tick</summary><pre><code class="language-python" data-src="src/nfv/sim/sensors.py">    def _load_now(self) -&gt; tuple[LoadParams, np.ndarray]:
+        """Current load (exact COM from the model) and the site-&gt;world rotation R."""
+        r = np.asarray(self.data.site_xmat[self._site_id], dtype=np.float64).reshape(3, 3)
+        com_world = np.asarray(self.data.subtree_com[self._body_id], dtype=np.float64)
+        site_world = np.asarray(self.data.site_xpos[self._site_id], dtype=np.float64)
+        com_site = r.T @ (com_world - site_world)  # (3,) COM offset in the sensor frame
+        return LoadParams(mass=self.load_mass, com=com_site), r
+
+    def compensated(self) -&gt; np.ndarray:
+        """Contact wrench (6,) = raw &minus; tool gravity wrench, sensor-site frame, unfiltered."""
+        load, r = self._load_now()
+        return compensate(self.raw(), r, load)
+
+    def sample(self) -&gt; np.ndarray:
+        """One 200 Hz pipeline sample: compensated then low-passed. Call once per ctrl tick."""
+        return self._filter(self.compensated())</code></pre></details>
+<details class="code"><summary>Per-axis selection with hysteresis (once per 10 Hz policy step)</summary><pre><code class="language-python" data-src="src/nfv/sim/controllers.py">        if f_target is None:
+            self._selected[:] = False
+            self._ft = np.zeros(3)
+        else:
+            ft = np.asarray(f_target, dtype=np.float64).ravel()  # (6,) commanded wrench
+            self._ft = ft[:3].copy()  # torque components ignored (no compliant rotation)
+            for i in range(3):
+                # hysteresis: select above 0.5 N, an already-selected axis stays down to 0.4 N
+                on = SELECT_ON_N - (SELECT_HYST_N if self._selected[i] else 0.0)
+                self._selected[i] = abs(self._ft[i]) &gt; on</code></pre></details>
+<details class="code"><summary>The 200 Hz tick: interpolation on position axes, admittance on selected ones</summary><pre><code class="language-python" data-src="src/nfv/sim/controllers.py">        i = self._tick_i
+        frac = (i + 1) / CTRL_PER_POLICY  # linear interpolation reaches p0 + dp on the last tick
+        f3 = np.asarray(f_meas, dtype=np.float64)[:3]  # (3,) force part of the (6,) wrench
+        for ax in range(3):
+            if self._selected[ax]:
+                # admittance: integrate the force error into the position command (m/s, clamped)
+                v = np.clip(K_ADMITTANCE * (self._ft[ax] - f3[ax]), -V_MAX, V_MAX)
+                self._p_cmd[ax] += v * CTRL_DT
+            else:
+                self._p_cmd[ax] = self._p0[ax] + self._dp[ax] * frac
+        np.clip(self._p_cmd, self._xyz_lo, self._xyz_hi, out=self._p_cmd)  # (3,) joint ranges</code></pre></details>
+<details class="code"><summary>A hidden quantity at work: T1's click is latched in Python, never in the scene</summary><pre><code class="language-python" data-src="src/nfv/sim/tasks.py">    def on_ctrl_sample(self, env, wrench: np.ndarray) -&gt; None:
+        # 200 Hz hook; wrench (6,) is the filtered stream (unused: the click is kinematic)
+        for c in self.COLORS:
+            if not self.clicked[c]:
+                # click depression (m): the spring force K_SPRING * d crosses the threshold
+                d_click = self.threshold[c] / self.K_SPRING
+                if self.depression(env, c) &gt;= d_click:
+                    self.clicked[c] = True  # latched</code></pre></details>
+
+<h3>What to watch</h3>
+<p>All numbers below were measured in this image (the M0 gate run and this task's own eval scenarios, eval seed 0).
+<b>Train</b> records the demo datasets: at the defaults (4 tasks &times; 200 demos, 0.5 mm noise) about 6&ndash;7
+minutes &mdash; measured 0.30/0.29/0.80/0.47 s per stored demo for T0/T1/T2/T3, ~0.2 MB each compressed &mdash; into
+<code>lab/data/nfv/demos/&lt;task&gt;/</code>, the canonical location lessons 16&ndash;19 read. The charts show per-task
+progress and the expert's success-of-tries (failed episodes are re-drawn, not stored).</p>
+<p><b>Evaluate</b> is the showcase, and the <b>claims board</b> at the top of the viewer is how to read it. Each
+scenario fills the claims it can measure and marks the rest "not measured in this run":</p>
+<ul>
+<li><b>expert_rollouts</b> &rarr; claim c1, the M0 gate: the scripted experts scored <b>100/100 on every task</b>
+over 100 held-out seeds (Wilson 95% CI 96.3&ndash;100%), mean peak forces 3.3 / 6.0 / 7.7 / 11.1 N on T0/T1/T2/T3.
+At the default 20 episodes the same 20/20 comes back <b>INCONCLUSIVE</b> &mdash; the CI (83.9&ndash;100%) straddles
+the 95% gate, which is the board teaching you interval honesty; 100 episodes (~11 s) decide it.</li>
+<li><b>hybrid_hold_5N</b> &rarr; claim c2: commanded 5 N on plates hidden at &minus;8/0/+8 mm, the hybrid holds
+<b>mean F<sub>n</sub> = 5.00 N at every height, max |mean error| &lt; 0.01 N</b> &mdash; integral action does not
+care where the surface is. Watch the trace: the admittance descends, touches, loads to &minus;5 N and sits there;
+the mode strip is green (hybrid) throughout.</li>
+<li><b>position_vs_hybrid_t2</b> &rarr; claim c3, the course's motivating claim, run as a two-arm comparison on the
+same seeds: the hybrid expert <b>held</b> T2's force band (&ge;80% of contact inside &plusmn;1.5 N) in
+<b>100/100</b> episodes; the position-only baseline &mdash; given the <em>oracle</em> press depth for the nominal
+height &mdash; in <b>15/100</b>, exactly the episodes whose hidden height landed in its ~5 mm lucky window
+(band width / contact stiffness). Gap 85%, CI 73&ndash;91%: CONFIRMED already at the default 20 episodes
+(gap 90%, CI 54&ndash;97%). Mean in-band time 97.8% vs 32.8%.</li>
+<li><b>kp_wipe_150_vs_800</b> is c3's mechanism made visible (it fills no claim &mdash; it has no hybrid arm): the
+same fixed-depth wipe at two stiffnesses. At K<sub>p</sub> 150 the median contact force is <b>0.65 N</b> &mdash; it
+barely touches anything (in-band 0.1% of contact, coverage 32%); at K<sub>p</sub> 800 it presses whatever the height
+error dictates &mdash; 0.7 N on a nominal-height plate, 6.8 N on a +8 mm one, nothing on a &minus;8 mm one
+(probe measurements). Soft gains press too little everywhere; stiff gains amplify the height error. No gain holds
+3 N.</li>
+</ul>
+<p>In the <b>trace panel</b>, the blue line is measured F<sub>z</sub>, the dashed red line the commanded force
+(both negative when pressing &mdash; the sign convention), the green/grey strip the z-axis controller mode per step,
+and the markers show click / abort / seated events; scrub to read values and the expert's subtask label. T1 episodes
+are worth a scrub: the press force ramps to just past the hidden threshold (commanded threshold + 0.8 N) and stops
+right at the click &mdash; peaks stay well under the 1.5&times; bound.</p>
+<p><b>Exercises.</b> (1) Run <em>expert_rollouts</em> at 100 episodes and watch c1 flip from INCONCLUSIVE to
+CONFIRMED &mdash; then try episodes = 5 and see how wide a 5/5 interval really is. (2) Run
+<em>kp_wipe_150_vs_800</em> and read the two arms' tables and traces against \(F = K_{\mathrm{eff}}\,\delta\):
+the position traces sit flat at whatever force the hidden height dictates, and reversing direction (the coverage
+retry) changes nothing. (3) A deliberately wrong one: edit <code>FT_5N</code> in
+<code>lab/tasks/task_nfv0.py</code> to <code>+5.0</code> ("force is positive, surely") and run
+<em>hybrid_hold_5N</em>. Measured: the tool <em>climbs away</em> from the plate at the 5 cm/s admittance clamp
+&mdash; z from 0.149 m to 0.296 m within 3 s, F<sub>z</sub> pinned at &minus;0.02 N, and the hold measures 0 N
+forever &mdash; because +5 N asks for a force pushing <em>down</em> on the tool, which only a weight resting on it
+could supply. The sign convention is not a formality; it is the difference between pressing and fleeing.</p>
+
+<h3>Knobs</h3>
+<ul>
+<li><b>Tasks to record</b> (all / t0&ndash;t3) and <b>Demos per task</b> (default 200, the plan's dataset size):
+what Train writes to the canonical demo folders. Re-running overwrites a task's folder.</li>
+<li><b>DART action noise</b> (default 0.5 mm): executed-action noise while recording; labels stay clean. 0 gives
+pristine but narrow data; 2 mm visibly costs expert tries.</li>
+<li><b>Seed</b>: shifts the window inside each task's disjoint demo-seed block (eval seeds are a different block
+entirely &mdash; a policy never trains on an eval placement).</li>
+<li><b>Scenario</b> + <b>Task</b> (expert_rollouts only) + <b>Episodes</b>: per task / hidden height / arm. Claims
+want 100 episodes for decisive intervals; the physics-only scenarios run them in seconds.</li>
+<li><b>Eval seed</b>: shifts the eval-seed window, <b>Render a rollout video</b>: up to 4 episodes, spread over the
+scenario's groups, with the force strip under the camera view.</li>
+</ul>
+
+<p class="ref">The checkpoint this task saves is a tiny "demo set" marker (the eval scenarios drive the scripted
+experts and controllers live and consume no model) &mdash; it exists because every lab evaluation names a
+checkpoint, and its payload records what was recorded, where, with which parameters. Task 16 (nano-vla) trains the
+first real model on these demos; the claims board introduced here is the instrument the whole force-VLA school is
+graded with.</p>
+
+<script type="application/json" class="blkinfo">{"policy": {"t": "policy @ 10 Hz — whoever decides", "html": "<p><b>Purpose:</b> one decision per 100 ms: a Cartesian step dp, a gripper command, an optional force target and a progress scalar s (ignored by the physics, carried for lesson 18). In this lesson the policy is a privileged scripted expert (<code>nfv/sim/experts.py</code>) or a fixed command; from lesson 16 on it is a trained network.</p><p><b>Shapes:</b> <code>Action(dp (3,), gripper float, f_target (6,)|None, s float|None)</code>.</p><p><b>Updated:</b> 10 Hz — fifty physics steps pass between decisions, which is why transients need the 200 Hz window.</p>"}, "latch": {"t": "latch + select — the 10 Hz to 200 Hz boundary", "html": "<p><b>Purpose:</b> <code>begin_policy_step</code> latches the action for the next 20 ticks: clamps dp to ±5 cm per axis, and evaluates the per-axis force selection S_i = 1[|f_target,i| &gt; 0.5 N] with 0.1 N hysteresis (a selected axis stays selected down to 0.4 N — no chattering at the threshold). Torque components never select; yaw and gripper always run position mode.</p><p><b>Shapes:</b> dp (3,), f_target (6,) → selected (3,) bool.</p><p><b>Updated:</b> once per policy step (10 Hz).</p>"}, "ctrl200": {"t": "200 Hz controller — position interpolation or admittance, per axis", "html": "<p><b>Purpose:</b> every 5 ms, each unselected axis moves its position command along the linear interpolation p0 + dp·k/20; each selected axis integrates the force error instead: v = clip(K_a (f_t − f_meas), ±5 cm/s), command += v·5 ms, with K_a = 0.01 m/(s·N). The command vector is clamped to the joint ranges, so a force error cannot wind it out of the workspace.</p><p><b>Shapes:</b> command (3,) m; reads f_meas (6,).</p><p><b>Updated:</b> 200 Hz — 20 ticks per policy step; the tick also samples the wrench once.</p>"}, "act": {"t": "PD actuators — the position actuator IS a spring", "html": "<p><b>Purpose:</b> MuJoCo position actuators per joint: force = K_p (cmd − q) − d·q̇, K_p = 800 N/m on x/y/z (the <i>kp_wipe</i> scenario rebuilds the scene with 150), damping 60 Ns/m. In steady contact this is a spring in series with the contact compliance — the F = K_eff·overshoot rule of the lesson.</p><p><b>Shapes:</b> ctrl (6,) = x, y, z, yaw, two fingers.</p><p><b>Updated:</b> the command changes at 200 Hz; the force law acts every 2 ms physics step.</p>"}, "phys": {"t": "physics — 500 Hz, 2.5 substeps per tick", "html": "<p><b>Purpose:</b> MuJoCo steps at 2 ms (implicitfast, elliptic cones, the repo's proven contact solver settings). 200 Hz does not divide 500 Hz, so one controller tick advances physics by 2, 3, 2, 3, … steps — 2.5 on average, exactly 50 per policy step. The alternation is asserted in <code>tests/nfv/test_nfv_timing.py</code>.</p><p><b>Shapes:</b> the full MjData state.</p><p><b>Updated:</b> 500 Hz.</p>"}, "ft": {"t": "F/T site — the raw sensor", "html": "<p><b>Purpose:</b> a <code>force</code> + <code>torque</code> sensor pair on the wrist site between the z-carriage and the tool. It reads the total wrench the wrist transmits: contact forces AND the tool's own weight (≈ 1.9 N), rotated into the site frame.</p><p><b>Shape:</b> raw (6,) = [fx, fy, fz, tx, ty, tz] in N / N·m, site frame (= world axes while yaw = 0).</p><p><b>Updated:</b> every physics step; the pipeline samples it once per 5 ms tick.</p>"}, "comp": {"t": "compensation — subtract the tool's weight", "html": "<p><b>Purpose:</b> subtract the gravity wrench m·Rᵀ(−g) about the sensor point, leaving the external contact wrench. The mass is the tool subtree's (constant); the COM is read exactly from the simulator every step, so finger motion cannot bias it. Linear-acceleration terms are not compensated — at ≤ 0.5 m/s and ~0.2 kg distal mass they stay under the 1 N tolerances. The math is <code>fvb.ft.compensate</code>, the repo's Stage-0 module.</p><p><b>Shape:</b> (6,) → (6,).</p><p><b>Updated:</b> per 200 Hz sample.</p>"}, "lp": {"t": "low-pass — 20 Hz, one pole, at the controller rate", "html": "<p><b>Purpose:</b> a first-order causal low-pass (cutoff 20 Hz) running at 200 Hz. The controller and the policy both consume the filtered stream; nothing downstream sees raws. This is what makes short impact spikes 'invisible at control rate' — and why the 25 N abort triggers on sustained force, not on a single 2 ms impact sample.</p><p><b>Shape:</b> (6,) → (6,), per-channel IIR, alpha from the fvb Stage-0 filter.</p><p><b>Updated:</b> 200 Hz; reset re-seeds on the first sample after an episode reset.</p>"}, "obs": {"t": "Obs — what a policy (and the demos) will see", "html": "<p><b>Purpose:</b> the 10 Hz observation: both camera frames, the state vector, the latest filtered wrench and the step's full 200 Hz window.</p><p><b>Shapes:</b> rgb_static / rgb_wrist uint8 (96, 96, 3) · state float32 (8,) = [x, y, z, yaw, grip, vx, vy, vz] · wrench float32 (6,) · wrench_window float32 (20, 6), oldest row first · subtask_id int · t float.</p><p><b>Updated:</b> 10 Hz. Demos store every field per step plus the clean dp label, the executed dp, f_target, the ForceVLA2 progress labels and the expert's FSM subtask.</p>"}, "abort": {"t": "abort — the 25 N safety is part of the contract", "html": "<p><b>Purpose:</b> |F| &gt; 25 N on the filtered stream ends the episode as <code>force_abort</code>, a failure. It exists so 'press harder' can never be a winning strategy for any controller or any later policy — the plan's anti-dig-in risk row, enforced at the environment level.</p><p><b>Shape:</b> the norm of the filtered (3,) force.</p><p><b>Updated:</b> checked at every 200 Hz sample; the cut-short window is padded with the last sample.</p>"}, "cams": {"t": "cameras — 96×96, CPU-rendered", "html": "<p><b>Purpose:</b> a fixed workspace camera and a tool-mounted wrist camera. Rendered with osmesa (CPU) at 96×96: measured 2.75 ms/frame, so rendering never competes with training for the GPU, and a 200-demo dataset costs ~3 min. The rollout video renders the same scene at 320×240 through the same offscreen buffer.</p><p><b>Shapes:</b> two uint8 (96, 96, 3) frames per policy step.</p><p><b>Updated:</b> once per 10 Hz step (only when rendering is on; physics-only evals skip it).</p>"}}</script>

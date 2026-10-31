@@ -303,8 +303,10 @@ class PressButton(Task):
         return max(0.0, -float(env.data.qpos[self._cap_qadr[color]]))
 
     def on_ctrl_sample(self, env, wrench: np.ndarray) -> None:
+        # 200 Hz hook; wrench (6,) is the filtered stream (unused: the click is kinematic)
         for c in self.COLORS:
             if not self.clicked[c]:
+                # click depression (m): the spring force K_SPRING * d crosses the threshold
                 d_click = self.threshold[c] / self.K_SPRING
                 if self.depression(env, c) >= d_click:
                     self.clicked[c] = True  # latched

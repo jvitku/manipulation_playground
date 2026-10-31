@@ -11,5 +11,6 @@
   "attention": {"steps_per_s": 720.0, "overhead_s": 0.4},
   "vit-mnist": {"steps_per_s": 270.0, "overhead_s": 1.0},
   "cross-attn": {"steps_per_s": 120.0, "overhead_s": 1.0},
-  "find-digit": {"steps_per_s": 40.0, "overhead_s": 3.0}
+  "find-digit": {"steps_per_s": 40.0, "overhead_s": 3.0},
+  "force-sim": {"s_per_demo": 0.47, "task_overhead_s": 2.0, "overhead_s": 5.0}
 }

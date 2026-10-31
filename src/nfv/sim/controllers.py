@@ -127,9 +127,10 @@ class GantryController:
             self._selected[:] = False
             self._ft = np.zeros(3)
         else:
-            ft = np.asarray(f_target, dtype=np.float64).ravel()
+            ft = np.asarray(f_target, dtype=np.float64).ravel()  # (6,) commanded wrench
             self._ft = ft[:3].copy()  # torque components ignored (no compliant rotation)
             for i in range(3):
+                # hysteresis: select above 0.5 N, an already-selected axis stays down to 0.4 N
                 on = SELECT_ON_N - (SELECT_HYST_N if self._selected[i] else 0.0)
                 self._selected[i] = abs(self._ft[i]) > on
         self._tick_i = 0
@@ -141,14 +142,15 @@ class GantryController:
         """
         i = self._tick_i
         frac = (i + 1) / CTRL_PER_POLICY  # linear interpolation reaches p0 + dp on the last tick
-        f3 = np.asarray(f_meas, dtype=np.float64)[:3]
+        f3 = np.asarray(f_meas, dtype=np.float64)[:3]  # (3,) force part of the (6,) wrench
         for ax in range(3):
             if self._selected[ax]:
+                # admittance: integrate the force error into the position command (m/s, clamped)
                 v = np.clip(K_ADMITTANCE * (self._ft[ax] - f3[ax]), -V_MAX, V_MAX)
                 self._p_cmd[ax] += v * CTRL_DT
             else:
                 self._p_cmd[ax] = self._p0[ax] + self._dp[ax] * frac
-        np.clip(self._p_cmd, self._xyz_lo, self._xyz_hi, out=self._p_cmd)
+        np.clip(self._p_cmd, self._xyz_lo, self._xyz_hi, out=self._p_cmd)  # (3,) joint ranges
         self._grip_cmd = self._g0 + (self._g1 - self._g0) * frac
         self._tick_i = i + 1
         self._write_ctrl()

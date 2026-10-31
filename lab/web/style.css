@@ -93,6 +93,7 @@ pre.json{font-family:var(--mono);font-size:12px;background:var(--bg);border:1px 
 .chip{border-radius:999px;padding:1px 9px;font-size:11px;font-weight:600;background:var(--chip)}
 .chip.good{color:var(--good);background:var(--good-soft)}
 .chip.bad{color:var(--bad);background:var(--bad-soft)}
+.chip.warn{color:var(--warn);background:var(--warn-soft)}
 .note{color:var(--muted);font-size:12px;margin-top:8px}
 .hint{color:var(--muted);font-size:11px;margin-top:2px}
 svg text{font-family:var(--mono);font-size:10px;fill:var(--muted)}
