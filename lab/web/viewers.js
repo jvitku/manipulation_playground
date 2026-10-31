@@ -1043,6 +1043,310 @@
     draw();
   }
 
+  // ---- tokens: action-interface heads (cont / bins / ar) + the tokenization playground ------
+  // result.json from the tokenize task: three heads trained on the diagonal two-mode toy problem
+  // (obs c in [-0.4, 0.4]; the expert modes are (c-g, 0.5-h) and (c+g, 0.5+h)). Schema: n_bins,
+  // bin_edges/bin_centers, heads.{cont,bins,ar} (outcome stats + probe distributions),
+  // probe_samples, embedding.table, expert_example, text_demo. Every field is optional - the
+  // viewer renders whatever a (possibly partial) result holds.
+
+  // Pure helpers, also exercised by the node smoke test: a string to char ids (null = not in the
+  // vocab), and a value to its bin index on the edges ruler (clamped to the outer bins).
+  function tokCharIds(text, vocab) {
+    const ids = [];
+    for (const ch of Array.from(String(text))) {
+      const i = vocab.indexOf(ch);
+      ids.push(i >= 0 ? i : null);
+    }
+    return ids;
+  }
+  function tokBinIndex(v, edges) {
+    if (!Array.isArray(edges) || edges.length < 2 || typeof v !== "number" || !isFinite(v)) return null;
+    let i = 0;
+    while (i < edges.length - 2 && v >= edges[i + 1]) i++;
+    return i;
+  }
+
+  function tokens(result, container, ctx) {
+    const r = result || {};
+    const heads = r.heads || {};
+    const edges = Array.isArray(r.bin_edges) && r.bin_edges.length >= 2 && r.bin_edges.every((v) => num(v) != null) ? r.bin_edges : null;
+    const centers = Array.isArray(r.bin_centers) ? r.bin_centers : [];
+    const nBins = num(r.n_bins) || (edges ? edges.length - 1 : 0);
+    const HEADS = [["cont", "continuous regression", "--chart1"], ["bins", "per-dim bins", "--chart2"], ["ar", "autoregressive tokens", "--chart3"]];
+    const card = (title) => h("div", { class: "chart", style: "min-width:0" }, h("h3", { text: title }), h("div"));
+    const note = (text) => h("p", { class: "note", text });
+
+    const stats = h("div", { style: "margin-bottom:6px" });
+    if (num(r.n_bins) != null) stats.append(chip("bins per dim", String(r.n_bins)));
+    if (num(r.d_model) != null) stats.append(chip("d_model", String(r.d_model)));
+    if (num(r.temperature) != null) stats.append(chip("temperature", String(r.temperature)));
+
+    // 1. outcome table: one row per head
+    const tbl = h("table", { class: "out" });
+    tbl.append(h("tr", {}, ...["head", "collision", "valid x-z pairing", "mode error", "left fraction"].map((t) => h("th", { text: t }))));
+    for (const [k, name] of HEADS) {
+      const hd = heads[k] || {};
+      const col = num(hd.collision), pv = num(hd.pair_valid);
+      const cc = (val, cls) => h("td", {}, h("span", { class: "chip" + (cls ? " " + cls : ""), text: val }));
+      tbl.append(h("tr", {},
+        h("td", { text: `${k} - ${name}` }),
+        cc(pct(hd.collision), col == null ? "" : col <= 0.05 ? "good" : "bad"),
+        cc(pct(hd.pair_valid), pv == null ? "" : pv >= 0.95 ? "good" : "bad"),
+        h("td", { text: num(hd.mode_err) == null ? "n/a" : hd.mode_err.toFixed(3) }),
+        h("td", { text: pct(hd.left_frac) })));
+    }
+
+    // 2. scatter of probe_samples per head at the probe obstacle position
+    function scatter(box) {
+      const samp = r.probe_samples || {};
+      const sets = HEADS.map(([k, name, col]) => ({ k, name, col,
+        pts: (Array.isArray(samp[k]) ? samp[k] : []).filter((p) => Array.isArray(p) && num(p[0]) != null && num(p[1]) != null) }));
+      const exm = r.expert_example && Array.isArray(r.expert_example.a) && num(r.expert_example.a[0]) != null && num(r.expert_example.a[1]) != null ? r.expert_example : null;
+      // the expert action and its mirror in the other mode: ax -> 2c - ax, az -> 1 - az
+      const marks = exm ? [exm.a, [2 * (num(exm.c) || 0) - exm.a[0], 1 - exm.a[1]]] : [];
+      const xs = [], zs = [];
+      for (const st of sets) for (const p of st.pts) { xs.push(p[0]); zs.push(p[1]); }
+      for (const m of marks) { xs.push(m[0]); zs.push(m[1]); }
+      if (!xs.length) { box.append(note("No probe samples in this result.")); return; }
+      const pad = (lo, hi) => { const d = Math.max(0.2, (hi - lo) * 0.15); return [lo - d, hi + d]; };
+      const [x0, x1] = pad(Math.min(...xs), Math.max(...xs)), [z0, z1] = pad(Math.min(...zs), Math.max(...zs));
+      const W = 400, H = 360, L = 44, R = 10, T = 10, B = 32;
+      const X = (v) => L + ((v - x0) / (x1 - x0)) * (W - L - R);
+      const Y = (v) => T + (1 - (v - z0) / (z1 - z0)) * (H - T - B);
+      const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;max-width:440px;height:auto;font:10px var(--mono)", role: "img", "aria-label": "Sampled actions per head at one obstacle position" });
+      svg.append(s("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "none", stroke: "var(--line)" }));
+      for (const v of [x0, (x0 + x1) / 2, x1]) svg.append(s("text", { x: X(v), y: H - B + 13, "text-anchor": "middle", fill: "var(--muted)" }, v.toFixed(2)));
+      for (const v of [z0, (z0 + z1) / 2, z1]) svg.append(s("text", { x: L - 5, y: Y(v) + 3, "text-anchor": "end", fill: "var(--muted)" }, v.toFixed(2)));
+      svg.append(s("text", { x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle", fill: "var(--muted)" }, "sampled a_x"));
+      svg.append(s("text", { x: 11, y: (T + H - B) / 2, "text-anchor": "middle", fill: "var(--muted)", transform: `rotate(-90 11 ${(T + H - B) / 2})` }, "sampled a_z"));
+      for (const st of sets) for (const p of st.pts) {
+        const d = s("circle", { cx: X(p[0]), cy: Y(p[1]), r: 3, fill: `var(${st.col})`, "fill-opacity": 0.6 });
+        d.append(s("title", {}, `${st.k}: a = (${p[0].toFixed(3)}, ${p[1].toFixed(3)})`));
+        svg.append(d);
+      }
+      marks.forEach((m, i) => {
+        const x = X(m[0]), y = Y(m[1]);
+        for (const [a1, b1, a2, b2] of [[-6, -6, 6, 6], [-6, 6, 6, -6]]) {
+          svg.append(s("line", { x1: x + a1, y1: y + b1, x2: x + a2, y2: y + b2, stroke: "var(--ink)", "stroke-width": 2 }));
+        }
+        svg.append(s("text", { x: x + 9, y: y - 7, fill: "var(--ink)" }, i === 0 ? "expert mode" : "mirrored mode"));
+      });
+      const leg = h("div", { style: "font:11px var(--mono);color:var(--muted);display:flex;gap:14px;flex-wrap:wrap;margin-top:4px" });
+      for (const [k, name, col] of HEADS) {
+        leg.append(h("span", {}, h("span", { style: `display:inline-block;width:10px;height:10px;border-radius:2px;background:var(${col});margin-right:5px;vertical-align:-1px` }),
+          document.createTextNode(`${k} (${name})`)));
+      }
+      box.append(svg, leg, h("div", { class: "leg", style: "font-size:11px;color:var(--muted)", text:
+        "x marks = the two expert modes. cont collapses between them, bins fills all four corners (x and z sampled independently), ar keeps only the two valid corners." }));
+    }
+
+    // small builders for the playground: bin-edges ruler, one-hot row, probability bars
+    function ruler(eds) {
+      const W = 340, H = 36, L = 8, R = 8;
+      const e0 = eds[0], e1 = eds[eds.length - 1];
+      const X = (v) => L + ((v - e0) / (e1 - e0)) * (W - L - R);
+      const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;max-width:340px;height:auto;font:9px var(--mono)" });
+      const hi = s("rect", { y: 9, height: 14, width: 0, fill: "var(--accent-soft, var(--chip))", stroke: "var(--accent)", rx: 2 });
+      svg.append(hi, s("line", { x1: X(e0), x2: X(e1), y1: 16, y2: 16, stroke: "var(--line)", "stroke-width": 1.5 }));
+      eds.forEach((v, i) => {
+        svg.append(s("line", { x1: X(v), x2: X(v), y1: 10, y2: 22, stroke: "var(--muted)" }));
+        if (i === 0 || i === eds.length - 1 || eds.length <= 9) svg.append(s("text", { x: X(v), y: 33, "text-anchor": "middle", fill: "var(--muted)" }, v.toFixed(1)));
+      });
+      return { el: svg, set(i) {
+        if (i == null) { hi.setAttribute("width", 0); return; }
+        hi.setAttribute("x", X(eds[i]));
+        hi.setAttribute("width", Math.max(1, X(eds[i + 1]) - X(eds[i])));
+      } };
+    }
+    function onehotRow(n, label) {
+      const row = h("div", { style: "display:flex;gap:2px;align-items:center;margin:2px 0" },
+        h("span", { style: "font:10px var(--mono);color:var(--muted);width:56px", text: label }));
+      const cells = [];
+      for (let i = 0; i < n; i++) {
+        const c = h("span", { title: `index ${i}`, style: "display:inline-block;width:12px;height:12px;border-radius:2px;background:var(--chip)" });
+        cells.push(c);
+        row.append(c);
+      }
+      return { el: row, set(i) { cells.forEach((c, j) => { c.style.background = j === i ? "var(--accent)" : "var(--chip)"; }); } };
+    }
+    function probBars(title, probs, color) {
+      const n = probs.length, W = 340, H = 110, L = 8, R = 8, T = 8, B = 16;
+      const mx = Math.max(1e-9, ...probs.map((p) => num(p) || 0));
+      const bw = (W - L - R) / n;
+      const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;max-width:340px;height:auto;font:9px var(--mono)", role: "img", "aria-label": title });
+      svg.append(s("line", { x1: L, x2: W - R, y1: H - B, y2: H - B, stroke: "var(--line)" }));
+      probs.forEach((p, i) => {
+        const v = num(p) || 0, bh = (v / mx) * (H - T - B);
+        const bar = s("rect", { x: L + i * bw + 1, y: H - B - bh, width: Math.max(1, bw - 2), height: Math.max(0, bh), fill: color });
+        bar.append(s("title", {}, `token ${i}${num(centers[i]) != null ? ` (center ${centers[i].toFixed(2)})` : ""}: ${v.toFixed(3)}`));
+        svg.append(bar);
+      });
+      [0, n - 1].forEach((i) => svg.append(s("text", { x: L + (i + 0.5) * bw, y: H - 4, "text-anchor": "middle", fill: "var(--muted)" },
+        num(centers[i]) != null ? centers[i].toFixed(1) : String(i))));
+      return h("div", { style: "margin:4px 0" }, h("div", { class: "vg-title", text: title }), svg);
+    }
+
+    // 3. the playground body (sub-sections a-e, stacked like the embeddings viewer)
+    const body = h("div", {});
+
+    // a. text: string -> char ids -> one-hot
+    const td = r.text_demo || {};
+    const vocab = typeof td.vocab === "string" && td.vocab.length ? td.vocab : null;
+    let drawText = null;
+    body.append(h("h4", { text: "a. Text: string -> token ids -> one-hot" }));
+    if (!vocab) {
+      body.append(note("No text demo in this result."));
+    } else {
+      const inp = h("input", { type: "text", value: typeof td.sample === "string" ? td.sample : "", maxlength: "40",
+        style: "font:13px var(--mono);padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);width:100%;max-width:340px" });
+      const cellsRow = h("div", { style: "display:flex;gap:4px;flex-wrap:wrap;margin:8px 0" });
+      const oh = h("canvas", { style: "display:block;border:1px solid var(--line);border-radius:4px" });
+      drawText = () => {
+        const chars = Array.from(inp.value).slice(0, 40);
+        const ids = tokCharIds(chars.join(""), vocab);
+        cellsRow.replaceChildren();
+        chars.forEach((ch, i) => {
+          cellsRow.append(h("div", { style: "display:flex;flex-direction:column;align-items:center;gap:2px" },
+            h("span", { style: "min-width:18px;text-align:center;background:var(--chip);border-radius:4px;padding:2px 4px;font:13px var(--mono)", text: ch === " " ? "␣" : ch }),
+            h("span", { style: `font:10px var(--mono);color:${ids[i] == null ? "var(--bad)" : "var(--muted)"}`, text: ids[i] == null ? "?" : String(ids[i]) })));
+        });
+        const cw = Math.max(3, Math.min(8, Math.floor(560 / vocab.length)));
+        oh.width = vocab.length * cw;
+        oh.height = Math.max(1, chars.length) * cw;
+        oh.style.width = oh.width + "px";
+        oh.style.height = oh.height + "px";
+        const g = oh.getContext("2d");
+        g.fillStyle = css("--panel", "#fff");
+        g.fillRect(0, 0, oh.width, oh.height);
+        chars.forEach((ch, ri) => {
+          for (let j = 0; j < vocab.length; j++) {
+            g.fillStyle = ids[ri] === j ? css("--accent", "#d8490b") : ids[ri] == null ? css("--bad-soft", "#fbe9e7") : css("--chip", "#eceef2");
+            g.fillRect(j * cw, ri * cw, cw - 1, cw - 1);
+          }
+        });
+      };
+      inp.addEventListener("input", drawText);
+      body.append(inp, cellsRow,
+        h("div", { style: "font:10px var(--mono);color:var(--muted);margin-bottom:2px", text: `one-hot, one row per character (${vocab.length} columns = the vocab)` }), oh,
+        note("Each character's id is its position in the vocab; the one-hot row is that id as a vector. A trained text model multiplies the one-hot by an embedding table exactly like the action-token table below (e)."));
+    }
+
+    // b + c share the two action sliders
+    const exa = r.expert_example && Array.isArray(r.expert_example.a) ? r.expert_example.a : null;
+    const clamp = (v, d) => (num(v) == null ? d : Math.max(-1, Math.min(1, v)));
+    const dxS = h("input", { type: "range", min: "-1", max: "1", step: "0.01", value: String(clamp(exa && exa[0], 0.5)), style: "flex:1;min-width:140px;max-width:280px" });
+    const dzS = h("input", { type: "range", min: "-1", max: "1", step: "0.01", value: String(clamp(exa && exa[1], 0.75)), style: "flex:1;min-width:140px;max-width:280px" });
+    const vxCell = h("b", { text: "" }), vzCell = h("b", { text: "" });
+    const valChip = (label, cell) => h("span", { class: "chip", style: "font:12px var(--mono);margin-right:8px" }, document.createTextNode(label + " "), cell);
+    body.append(h("h4", { text: "b. Continuous: the floats go in raw" }),
+      h("div", { style: "display:flex;gap:10px;align-items:center;margin:4px 0;max-width:420px" }, h("span", { style: "font:11px var(--mono);color:var(--muted);width:20px", text: "dx" }), dxS),
+      h("div", { style: "display:flex;gap:10px;align-items:center;margin:4px 0;max-width:420px" }, h("span", { style: "font:11px var(--mono);color:var(--muted);width:20px", text: "dz" }), dzS),
+      h("div", { style: "margin:6px 0" }, valChip("a_x", vxCell), valChip("a_z", vzCell)),
+      note("No tokens here: the two floats go straight into the network - this is what task 1's regression head eats."));
+
+    // c. bins: the same sliders through the bin_edges ruler -> token ids -> one-hot
+    body.append(h("h4", { text: "c. Bins: one token per dimension" }));
+    const dims = [{ name: "dx", slider: dxS }, { name: "dz", slider: dzS }];
+    if (!edges || !nBins) {
+      body.append(note("No bin edges in this result."));
+    } else {
+      for (const d of dims) {
+        d.rul = ruler(edges);
+        d.hot = onehotRow(nBins, "one-hot");
+        d.id = h("b", { text: "" });
+        body.append(h("div", { style: "margin:8px 0" },
+          h("div", { style: "font:12px var(--mono);margin-bottom:2px" }, document.createTextNode(`${d.name}: `), d.id),
+          d.rul.el, d.hot.el));
+      }
+    }
+    const bprobe = heads.bins && heads.bins.probe ? heads.bins.probe : null;
+    const pc = bprobe && num(bprobe.c) != null ? bprobe.c : 0;
+    if (bprobe && Array.isArray(bprobe.px) && Array.isArray(bprobe.pz)) {
+      body.append(h("div", { style: "display:flex;gap:18px;flex-wrap:wrap" },
+        probBars(`P(token_x | c=${pc})`, bprobe.px, "var(--chart2)"),
+        probBars(`P(token_z | c=${pc})`, bprobe.pz, "var(--chart2)")));
+      body.append(note("The trained bins head at the probe observation: both marginals are bimodal, but x and z are sampled independently - half the draws pair a left x with a right z. That independence is the flaw this task is about."));
+    } else {
+      body.append(note("No trained bins-head probe distributions in this result."));
+    }
+
+    // d. ar: pick token_x, watch P(token_z | c, token_x) flip
+    body.append(h("h4", { text: "d. Autoregressive: token_z is conditioned on token_x" }));
+    const aprobe = heads.ar && heads.ar.probe ? heads.ar.probe : null;
+    const pzg = aprobe && aprobe.pz_given && Array.isArray(aprobe.pz_given.left) && Array.isArray(aprobe.pz_given.right) ? aprobe.pz_given : null;
+    if (!pzg) {
+      body.append(note("No trained ar-head probe distributions in this result."));
+    } else {
+      const apc = num(aprobe.c) != null ? aprobe.c : 0;
+      const tokL = num(aprobe.tok_left), tokR = num(aprobe.tok_right);
+      const bL = h("button", { type: "button", text: `token_x = left mode${tokL == null ? "" : ` (id ${tokL})`}` });
+      const bR = h("button", { type: "button", text: `token_x = right mode${tokR == null ? "" : ` (id ${tokR})`}` });
+      const arBox = h("div", {});
+      function drawAr(side) {
+        [[bL, "left"], [bR, "right"]].forEach(([b2, sd]) => { b2.style.borderColor = sd === side ? "var(--accent)" : "var(--line)"; b2.style.color = sd === side ? "var(--accent)" : "var(--ink)"; });
+        arBox.replaceChildren(probBars(`P(token_z | c=${apc}, token_x = ${side})`, pzg[side], "var(--chart3)"));
+      }
+      bL.addEventListener("click", () => drawAr("left"));
+      bR.addEventListener("click", () => drawAr("right"));
+      body.append(h("div", { style: "display:flex;gap:10px;margin:6px 0;flex-wrap:wrap" }, bL, bR), arBox,
+        note("The ar head samples token_x first, then feeds it back in: the z distribution collapses onto the mode that matches the chosen x, so only valid pairs come out."));
+      drawAr("left");
+    }
+
+    // e. token embeddings: ids are lookups into a table of vectors
+    body.append(h("h4", { text: "e. Token embeddings: ids are lookups" }));
+    const emb = r.embedding;
+    const vg = window.LabVecGrid && window.LabVecGrid.panel(ctx);
+    if (!(emb && Array.isArray(emb.table) && emb.table.length && Array.isArray(emb.table[0]))) {
+      body.append(note("No embedding table in this result."));
+    } else if (!vg) {
+      body.append(note("Turn on 'vector grids' to see the embedding table."));
+    } else {
+      const tok = r.expert_example && Array.isArray(r.expert_example.tok) ? r.expert_example.tok : [];
+      const CELL = 12;
+      const labs = h("div", { style: "display:flex;flex-direction:column;padding-top:1px" });
+      emb.table.forEach((_, i) => {
+        const mk = [];
+        if (tok[0] === i) mk.push("x");
+        if (tok[1] === i) mk.push("z");
+        labs.append(h("div", { style: `height:${CELL}px;line-height:${CELL}px;font:10px var(--mono);text-align:right;padding-right:6px;color:${mk.length ? "var(--accent)" : "var(--muted)"}`,
+          text: `${mk.length ? "expert " + mk.join("+") + " ▸ " : ""}${num(centers[i]) != null ? centers[i].toFixed(2) : String(i)}` }));
+      });
+      const gridBox = h("div", {});
+      window.LabVecGrid.render(gridBox, emb.table, { cell: CELL });
+      body.append(h("div", { class: "vg-title", text: `embedding table (${emb.table.length} tokens x ${num(emb.d) || emb.table[0].length} dims), row labels = bin centers` }),
+        h("div", { style: "display:flex;align-items:flex-start" }, labs, gridBox),
+        note("A token id is an index into this table: row i IS token i's vector, that row is all the network sees. The marked rows are the two tokens of the expert example above."));
+    }
+
+    // assemble: two cards on top, the playground card below
+    const a = card("Outcomes per head"), b = card("Samples at one obstacle position");
+    a.lastChild.append(tbl);
+    scatter(b.lastChild);
+    const grid = h("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px" }, a, b);
+    const play = h("div", { class: "chart", style: "min-width:0;margin-top:14px" }, h("h3", { text: "Hands-on: tokenization playground" }), body);
+    container.replaceChildren(stats, grid, play);
+
+    function updatePlay() {
+      const vx = Number(dxS.value), vz = Number(dzS.value);
+      vxCell.textContent = vx.toFixed(2);
+      vzCell.textContent = vz.toFixed(2);
+      if (edges) {
+        for (const d of dims) {
+          if (!d.rul) continue;
+          const i = tokBinIndex(Number(d.slider.value), edges);
+          d.id.textContent = i == null ? "n/a" : `token ${i}${num(centers[i]) != null ? ` (center ${centers[i].toFixed(2)})` : ""}`;
+          d.rul.set(i);
+          d.hot.set(i);
+        }
+      }
+    }
+    [dxS, dzS].forEach((x) => x.addEventListener("input", updatePlay));
+    updatePlay();
+    if (drawText) drawText();
+  }
+
   window.LabViewers = { register: (name, fn) => { registry[name] = fn; }, get: (name) => registry[name], render, jsonFallback };
   window.LabViewers.register("t1scatter", t1scatter);
   window.LabViewers.register("traj2d", traj2d);
@@ -1060,4 +1364,5 @@
   window.LabViewers.register("xattn", xattn);
   window.LabViewers.register("fdlive", fdlive);
   window.LabViewers.register("finddigit", finddigit);
+  window.LabViewers.register("tokens", tokens);
 })();

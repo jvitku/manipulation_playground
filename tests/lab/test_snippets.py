@@ -9,7 +9,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 LESSONS = sorted((ROOT / "lab/web/lessons").glob("*.html"))
 BLOCK = re.compile(r'<code\b[^>]*\bdata-src="([^"]+)"[^>]*>(.*?)</code>', re.S)
-NEW_LESSONS = ("attention", "vit-mnist", "cross-attn", "find-digit")
+NEW_LESSONS = ("attention", "vit-mnist", "cross-attn", "find-digit", "tokenization")
 
 
 def blocks(lesson: Path):

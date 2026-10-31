@@ -1,0 +1,269 @@
+<h3>The question</h3>
+<p>A transformer eats token ids and emits a distribution over token ids. Text fits that interface naturally; a robot
+action is two floating-point numbers. So how does an action get in and out? Three interfaces are in actual use:
+<b>keep it continuous</b> (regress floats, as task 1 (bc-mse) did, or sample them with a generative head, as task 2
+(flow) did), <b>chop each dimension into bins</b> and classify (one independent softmax per dimension), or <b>write
+the action as a token sequence</b> and let the model spell it out one token at a time, exactly like a sentence. This
+task trains all three on one tiny problem built so that they come apart &mdash; same trunk, same data, only the
+interface changes.</p>
+
+<h3>The task</h3>
+<p>The <b>diagonal two-mode</b> problem. The observation is one number \(c \sim U(-0.4,\, 0.4)\). The expert flips a
+coin \(s = \pm 1\) and acts</p>
+<p>$$a^\ast = \bigl(c + s\,g,\;\; 0.5 + s\,h\bigr) + \mathcal{N}(0,\, 0.05^2), \qquad g = 0.5,\; h = 0.25,$$</p>
+<p>so the two modes are \((c - 0.5,\, 0.25)\) and \((c + 0.5,\, 0.75)\). It is the same family as task 1 (bc-mse) and
+task 2 (flow) &mdash; an obstacle at \(\lvert a_x - c \rvert \lt 0.25\), pass it left or right &mdash; with one twist:
+<b>both action dimensions flip together</b>. The x choice and the z choice are correlated through \(s\), and that
+correlation is exactly the property that separates the three heads below. A pair that mixes the sides (left x with
+right z) matches no expert mode. Actions already live in \([-1, 1]\) (x in \([-0.9, 0.9]\), z in \(\{0.25, 0.75\}\)),
+so nothing is z-scored here: the uniform quantisation grid over \([-1, 1]\) <em>is</em> the normalisation.</p>
+
+<h3>The method</h3>
+<p><b>Continuous regression</b> (head <code>cont</code>). An MLP maps \(c\) straight to two floats and trains with</p>
+<p>$$L = \lVert \hat a - a^\ast \rVert^2 .$$</p>
+<p>The L2-optimal prediction is the conditional mean \(\mathbb{E}[a^\ast \mid c] = (c,\, 0.5)\) &mdash; the centre of
+the obstacle. Task 1 (bc-mse) made this failure the whole lesson; here it is the baseline.</p>
+<p><b>Per-dimension bins</b> (head <code>bins</code>). Each action dimension is clipped to \([-1, 1]\) and quantised
+into \(K\) uniform bins (\(K\) = <em>Bins per dimension</em>),</p>
+<p>$$q(a) = \Bigl\lfloor \tfrac{a + 1}{2}\, K \Bigr\rfloor ,$$</p>
+<p>and the same trunk now ends in \(2K\) logits &mdash; a \(K\)-way classification per dimension, trained with
+cross-entropy against the expert's bin indices. Classification has no reason to average: each marginal becomes
+cleanly bimodal. Decoding samples a softmax per dimension and returns the bin centre. This is the
+<a href="https://arxiv.org/abs/2212.06817" target="_blank" rel="noopener" title="RT-1: Robotics Transformer for Real-World Control at Scale">RT-1</a>
+recipe (256 uniform bins per action dimension). But the two softmaxes are <em>independent</em>: the head models</p>
+<p>$$P(t_x \mid c)\, P(t_z \mid c),$$</p>
+<p>the product of the marginals, not the joint &mdash; and in this problem the joint is the point.</p>
+<p><b>Autoregressive tokens</b> (head <code>ar</code>). The action becomes a 2-token <em>sequence</em> over a
+vocabulary of \(K\) ids, and a tiny causal transformer factorises the joint by the chain rule:</p>
+<p>$$P(t_x, t_z \mid c) = P(t_x \mid c)\; P(t_z \mid c,\, t_x).$$</p>
+<p>The observation enters as a projected obs token, each action token is a row of an
+<code>nn.Embedding</code> table, and decoding samples \(t_x\) first, then feeds it back in and samples \(t_z\)
+<em>given</em> \(t_x\) &mdash; the same mechanism that lets a language model keep a sentence coherent token by token,
+and the style of
+<a href="https://arxiv.org/abs/2307.15818" target="_blank" rel="noopener" title="RT-2: Vision-Language-Action Models Transfer Web Knowledge to Robotic Control">RT-2</a>,
+where actions are literally emitted as text tokens by a VLM.</p>
+<p>This is the same id-lookup machinery as text tokenization: characters, words or byte-pair merges become integer
+ids, and an id is nothing but a row index into an embedding table. Task 8 (cross-attn) reads dates with exactly this
+interface &mdash; a 39-token vocabulary (36 characters plus pad/bos/eos) &mdash; and the evaluation ships that
+character vocabulary, so the playground (section a of the viewer) lets you tokenize &ldquo;23 Oct 2026&rdquo; and the
+two actions with the same moves.</p>
+
+<details class="theory"><summary>Theory &mdash; why tokenize at all, and what the factorisation buys</summary>
+<p>Tokenising an action buys the entire language-model toolchain. A softmax over ids gives an <em>exact, normalised
+likelihood</em> for any discrete joint via the chain rule,</p>
+<p>$$P(t_1, \dots, t_n \mid c) = \prod_{i} P(t_i \mid c,\, t_{\lt i}),$$</p>
+<p>trainable with plain cross-entropy (no mode averaging, however multimodal the target), and sampling from it gives
+multimodality for free &mdash; plus temperature, argmax and beam search as knobs. The catch is the factorisation you
+pick. Per-dimension bins model only the marginals, \(P(t_x \mid c)\,P(t_z \mid c)\): fine when dimensions are
+independent, wrong the moment they correlate. The autoregressive factorisation is exact for <em>any</em> joint; the
+token order changes only how easy each conditional is to learn. The price of tokens is quantisation error (a bin
+centre is off by up to half a bin) and sequence length &mdash; real action chunks at 50&nbsp;Hz make naive binning
+hundreds of highly correlated tokens.</p>
+<p>Text made the same moves first: characters are exact but long, words are short but unbounded,
+<a href="https://arxiv.org/abs/1508.07909" target="_blank" rel="noopener">BPE</a> interpolates by greedily merging
+frequent pairs &mdash; a bigger vocabulary buys shorter sequences at the cost of a larger embedding table and rarer,
+worse-trained rows. The modern robot-action spectrum spans the same trade:
+<a href="https://arxiv.org/abs/2212.06817" target="_blank" rel="noopener">RT-1</a> uses 256 uniform bins per
+dimension (our <code>bins</code> head, scaled up);
+<a href="https://arxiv.org/abs/2307.15818" target="_blank" rel="noopener">RT-2</a> spells actions in the VLM's own
+text tokens; <a href="https://arxiv.org/abs/2501.09747" target="_blank" rel="noopener">FAST</a> DCT-transforms the
+action chunk and BPE-compresses the quantised coefficients, cutting the token count by an order of magnitude; and
+<a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener" title="pi0">pi0</a> /
+<a href="https://arxiv.org/abs/2506.01844" target="_blank" rel="noopener" title="SmolVLA">SmolVLA</a> skip tokens for
+the action side entirely and keep a continuous flow head &mdash; task 2 (flow)'s answer, attached to a VLM.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/1508.07909" target="_blank" rel="noopener">Sennrich et al., "Neural Machine Translation of Rare Words with Subword Units" (2015)</a> &mdash; BPE: the merge rule behind most modern text vocabularies.</li>
+<li><a href="https://huggingface.co/learn/llm-course/chapter6/5" target="_blank" rel="noopener">Hugging Face LLM course, "Byte-Pair Encoding tokenization"</a> &mdash; a worked BPE example with running code, the gentlest way in.</li>
+<li><a href="https://arxiv.org/abs/2212.06817" target="_blank" rel="noopener">Brohan et al., "RT-1: Robotics Transformer for Real-World Control at Scale" (2022)</a> &mdash; actions as 256 uniform bins per dimension.</li>
+<li><a href="https://arxiv.org/abs/2307.15818" target="_blank" rel="noopener">Brohan et al., "RT-2: Vision-Language-Action Models Transfer Web Knowledge to Robotic Control" (2023)</a> &mdash; actions emitted as literal text tokens of a VLM.</li>
+<li><a href="https://arxiv.org/abs/2501.09747" target="_blank" rel="noopener">Pertsch et al., "FAST: Efficient Action Tokenization for Vision-Language-Action Models" (2025)</a> &mdash; DCT + BPE action tokens; why naive binning fails on high-frequency chunks.</li>
+<li><a href="https://arxiv.org/abs/2106.01345" target="_blank" rel="noopener">Chen et al., "Decision Transformer" (2021)</a> &mdash; the broader bet: control as plain sequence modeling.</li>
+</ul>
+</details>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 760 460" role="img" aria-label="One observation into three heads: continuous MLP, per-dim bins MLP, autoregressive token transformer; each with its decode path and loss node" style="width:100%;max-width:760px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="tkA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--muted)"/>
+    </marker>
+    <marker id="tkL" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="var(--loss)"/>
+    </marker>
+  </defs>
+  <!-- lane tags -->
+  <text x="150" y="16" fill="var(--ink)" font-weight="700">cont &mdash; two floats</text>
+  <text x="150" y="126" fill="var(--ink)" font-weight="700">bins &mdash; independent tokens</text>
+  <text x="150" y="242" fill="var(--ink)" font-weight="700">ar &mdash; a token sequence</text>
+  <!-- shared input -->
+  <rect x="10" y="204" width="104" height="40" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="obs"/>
+  <text x="62" y="221" text-anchor="middle" fill="var(--ink)">obs c</text>
+  <text x="62" y="235" text-anchor="middle" fill="var(--muted)">(B, 1)</text>
+  <line x1="114" y1="214" x2="148" y2="54" stroke="var(--muted)" marker-end="url(#tkA)"/>
+  <line x1="114" y1="222" x2="148" y2="162" stroke="var(--muted)" marker-end="url(#tkA)"/>
+  <line x1="114" y1="232" x2="148" y2="282" stroke="var(--muted)" marker-end="url(#tkA)"/>
+  <!-- cont lane -->
+  <rect x="150" y="26" width="180" height="52" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="cont_mlp"/>
+  <text x="240" y="47" text-anchor="middle" fill="var(--ink)">MLP 1 &#8594; 256 &#8594; 256 &#8594; 2</text>
+  <text x="240" y="63" text-anchor="middle" fill="var(--muted)">GELU, trained with MSE</text>
+  <line x1="330" y1="52" x2="366" y2="52" stroke="var(--muted)" marker-end="url(#tkA)"/>
+  <rect x="368" y="32" width="120" height="40" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="cont_out"/>
+  <text x="428" y="49" text-anchor="middle" fill="var(--ink)">a&#770; = (ax, az)</text>
+  <text x="428" y="63" text-anchor="middle" fill="var(--muted)">(B, 2) floats</text>
+  <line x1="428" y1="72" x2="440" y2="94" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#tkL)"/>
+  <rect x="390" y="96" width="110" height="28" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="cont_loss"/>
+  <text x="445" y="114" text-anchor="middle" fill="var(--loss)" font-weight="700">L (MSE)</text>
+  <text x="383" y="114" text-anchor="end" fill="var(--loss)">&#8214;a&#770; &minus; a*&#8214;&sup2;</text>
+  <line x1="488" y1="52" x2="538" y2="52" stroke="var(--muted)" marker-end="url(#tkA)"/>
+  <rect x="540" y="26" width="210" height="52" rx="9" fill="var(--good-soft)" stroke="var(--good)" data-i="cont_decode"/>
+  <text x="645" y="47" text-anchor="middle" fill="var(--ink)">decode: nothing to do</text>
+  <text x="645" y="63" text-anchor="middle" fill="var(--muted)">the 2 floats ARE the action</text>
+  <!-- bins lane -->
+  <rect x="150" y="136" width="180" height="52" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="bins_mlp"/>
+  <text x="240" y="157" text-anchor="middle" fill="var(--ink)">MLP 1 &#8594; 256 &#8594; 256 &#8594; 2&middot;K</text>
+  <text x="240" y="173" text-anchor="middle" fill="var(--muted)">K = n_bins (9 / 17 / 33)</text>
+  <line x1="330" y1="162" x2="366" y2="162" stroke="var(--muted)" marker-end="url(#tkA)"/>
+  <rect x="368" y="142" width="120" height="40" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="bins_logits"/>
+  <text x="428" y="159" text-anchor="middle" fill="var(--ink)">2 &times; K logits</text>
+  <text x="428" y="173" text-anchor="middle" fill="var(--muted)">(B, 2, K)</text>
+  <line x1="428" y1="182" x2="440" y2="204" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#tkL)"/>
+  <rect x="390" y="206" width="110" height="28" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="bins_loss"/>
+  <text x="445" y="224" text-anchor="middle" fill="var(--loss)" font-weight="700">L (CE &times; 2)</text>
+  <text x="383" y="224" text-anchor="end" fill="var(--loss)">CE per dim</text>
+  <line x1="488" y1="162" x2="538" y2="162" stroke="var(--muted)" marker-end="url(#tkA)"/>
+  <rect x="540" y="136" width="210" height="52" rx="9" fill="var(--good-soft)" stroke="var(--good)" data-i="bins_decode"/>
+  <text x="645" y="157" text-anchor="middle" fill="var(--ink)">softmax + sample per dim</text>
+  <text x="645" y="173" text-anchor="middle" fill="var(--muted)">tx, tz apart &#8594; centers[t]</text>
+  <!-- ar lane -->
+  <rect x="150" y="252" width="180" height="64" rx="9" fill="var(--chip)" stroke="var(--line)" data-i="ar_emb"/>
+  <text x="240" y="268" text-anchor="middle" fill="var(--ink)">tokens &#8594; vectors</text>
+  <text x="240" y="283" text-anchor="middle" fill="var(--muted)">obs: Linear(1 &#8594; d_model)</text>
+  <text x="240" y="297" text-anchor="middle" fill="var(--muted)">emb: Embedding(n_bins, d)</text>
+  <text x="240" y="311" text-anchor="middle" fill="var(--muted)">pos: Embedding(2, d)</text>
+  <line x1="330" y1="284" x2="366" y2="284" stroke="var(--muted)" marker-end="url(#tkA)"/>
+  <rect x="368" y="252" width="160" height="64" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="ar_tf"/>
+  <text x="448" y="270" text-anchor="middle" fill="var(--ink)">causal transformer</text>
+  <text x="448" y="286" text-anchor="middle" fill="var(--muted)">2 &times; Block(d, 2 heads)</text>
+  <text x="448" y="301" text-anchor="middle" fill="var(--muted)">LN + head Linear(d &#8594; K)</text>
+  <line x1="448" y1="316" x2="445" y2="334" stroke="var(--loss)" stroke-width="1.6" marker-end="url(#tkL)"/>
+  <rect x="390" y="336" width="110" height="28" rx="14" fill="var(--bad-soft)" stroke="var(--loss)" stroke-width="2" data-i="ar_loss"/>
+  <text x="445" y="354" text-anchor="middle" fill="var(--loss)" font-weight="700">L (CE &times; 2)</text>
+  <text x="383" y="354" text-anchor="end" fill="var(--loss)">CE, z given x</text>
+  <line x1="528" y1="284" x2="558" y2="284" stroke="var(--muted)" marker-end="url(#tkA)"/>
+  <rect x="560" y="244" width="190" height="80" rx="9" fill="var(--good-soft)" stroke="var(--good)" data-i="ar_decode"/>
+  <text x="655" y="263" text-anchor="middle" fill="var(--ink)">sample tx ~ P(&middot;|c)</text>
+  <text x="655" y="279" text-anchor="middle" fill="var(--ink)">then tz ~ P(&middot;|c, tx)</text>
+  <text x="655" y="295" text-anchor="middle" fill="var(--muted)">action = bin centers</text>
+  <text x="655" y="310" text-anchor="middle" fill="var(--muted)">temperature or argmax</text>
+  <polyline points="655,324 655,372 240,372 240,320" fill="none" stroke="var(--muted)" stroke-dasharray="2 3" marker-end="url(#tkA)"/>
+  <text x="447" y="386" text-anchor="middle" fill="var(--muted)">sampled tx feeds back as the next input token</text>
+  <!-- expert targets -->
+  <rect x="10" y="396" width="150" height="52" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="expert"/>
+  <text x="85" y="417" text-anchor="middle" fill="var(--ink)">expert a* (B, 2)</text>
+  <text x="85" y="433" text-anchor="middle" fill="var(--muted)">quantize &#8594; t*x, t*z</text>
+  <line x1="160" y1="422" x2="530" y2="422" stroke="var(--muted)" stroke-dasharray="2 3"/>
+  <line x1="530" y1="422" x2="530" y2="110" stroke="var(--muted)" stroke-dasharray="2 3"/>
+  <line x1="530" y1="110" x2="502" y2="110" stroke="var(--muted)" stroke-dasharray="2 3" marker-end="url(#tkA)"/>
+  <line x1="530" y1="220" x2="502" y2="220" stroke="var(--muted)" stroke-dasharray="2 3" marker-end="url(#tkA)"/>
+  <line x1="530" y1="350" x2="502" y2="350" stroke="var(--muted)" stroke-dasharray="2 3" marker-end="url(#tkA)"/>
+</svg>
+<p class="ref">One observation, three heads, trained one after another with fresh seeds. The dashed path carries the
+expert action into every loss: raw floats for the MSE, quantised token ids \(t^\ast_x, t^\ast_z\) for both
+cross-entropies. The ar lane trains teacher-forced (the <em>expert's</em> \(t^\ast_x\) is fed in) and decodes with
+its own sampled \(t_x\) &mdash; the dashed feedback loop.</p>
+
+<details class="code"><summary>The grid: edges, centers, and quantisation into token ids</summary><pre><code class="language-python" data-src="lab/tasks/task_token.py">def bin_edges(n_bins: int) -&gt; np.ndarray:
+    return np.linspace(-1.0, 1.0, n_bins + 1)
+
+
+def bin_centers(n_bins: int) -&gt; np.ndarray:
+    e = bin_edges(n_bins)
+    return (e[:-1] + e[1:]) / 2
+
+
+def quantize(a: torch.Tensor, n_bins: int) -&gt; torch.Tensor:
+    """[-1, 1] values (clipped first) -&gt; bin indices, same shape, int64."""
+    return (((a.clamp(-1, 1) + 1) / 2) * n_bins).long().clamp(0, n_bins - 1)</code></pre></details>
+<details class="code"><summary>The two cross-entropy losses: independent bins vs teacher-forced tokens</summary><pre><code class="language-python" data-src="lab/tasks/task_token.py">def _loss_bins(model, c, a, n_bins):
+    logits = model(c).view(-1, 2, n_bins)
+    tok = quantize(a, n_bins)
+    return (F.cross_entropy(logits[:, 0], tok[:, 0]) + F.cross_entropy(logits[:, 1], tok[:, 1])) / 2
+
+
+def _loss_ar(model, c, a, n_bins):
+    tok = quantize(a, n_bins)
+    logits = model(c, tok[:, 0])  # [B, 2, n_bins]
+    return (F.cross_entropy(logits[:, 0], tok[:, 0]) + F.cross_entropy(logits[:, 1], tok[:, 1])) / 2</code></pre></details>
+<details class="code"><summary>Decoding: sample the dims apart (bins) vs t_z given t_x (ar)</summary><pre><code class="language-python" data-src="lab/tasks/task_token.py">@torch.no_grad()
+def bins_sample(model, c, n_bins, temperature, gen):
+    """Per-dim independent softmax sample -&gt; token ids tx, tz [B]."""
+    logits = model(c).view(-1, 2, n_bins)
+    return _pick(logits[:, 0], temperature, gen), _pick(logits[:, 1], temperature, gen)
+
+
+@torch.no_grad()
+def ar_sample(model, c, n_bins, temperature, gen):
+    """tok_x from P(.|c), then tok_z from P(.|c, tok_x) -&gt; token ids tx, tz [B]."""
+    tx = _pick(model(c)[:, 0], temperature, gen)
+    tz = _pick(model(c, tx)[:, 1], temperature, gen)
+    return tx, tz</code></pre></details>
+<details class="code"><summary>The AR head: obs token + token embedding into a 2-block causal transformer</summary><pre><code class="language-python" data-src="lab/tasks/task_token.py">class ARTokenHead(nn.Module):
+    """Tiny causal transformer over [obs-token, tok_x]; logits [B, T, n_bins] per position."""
+    # ...
+    def forward(self, c: torch.Tensor, tok_x: torch.Tensor | None = None) -&gt; torch.Tensor:
+        x = self.obs(c)[:, None]  # [B, 1, D]
+        if tok_x is not None:
+            x = torch.cat([x, self.emb(tok_x)[:, None]], 1)  # [B, 2, D]
+        x = x + self.pos(torch.arange(x.shape[1], device=x.device))
+        mask = causal_mask(x.shape[1]).to(x.device)
+        for b in self.blocks:
+            x, _ = b(x, mask)
+        return self.head(self.ln_f(x))</code></pre></details>
+
+<h3>What to watch</h3>
+<p>Numbers below are from a small reference run of this task (800 steps per head, 9 bins, d_model 16, temperature
+1.0, on CPU) &mdash; your run at the defaults should tell the same story with its own values. In the <b>outcome
+table</b>: the <code>cont</code> head put <b>100%</b> of its samples in the obstacle (collision 1.000, mode error
+0.514) &mdash; the conditional mean, sitting dead centre between the modes. Its pairing column read 1.0, and that is
+<em>not</em> a win: with both residuals a hair from zero, <code>sign(dx) == sign(dz)</code> compares the signs of
+sub-noise leftovers of one deterministic function &mdash; a degenerate artifact, not valid behaviour. The
+<code>bins</code> head fixed the collision (0.002) but its pairing was a coin flip: <b>pair_valid 0.510</b>. The
+<code>ar</code> head got both: collision 0.003, <b>pair_valid 0.996</b>, mode error 0.109.</p>
+<p>The <b>probe scatter</b> (samples at one obstacle position) draws the mechanism: <code>cont</code> is a single
+blob in the middle, <code>bins</code> fills all <b>four corners</b> &mdash; each marginal is bimodal, but x and z are
+drawn independently, so half the pairs mix the sides &mdash; and <code>ar</code> keeps only the <b>two valid
+corners</b>. Then open the playground's section d: in the reference run the AR x-distribution at \(c = 0\) peaked at
+bins 2 and 6 (centers \(\pm 0.444\), the quantised \(\pm 0.5\) modes), and clicking the two buttons flips
+\(P(t_z \mid c, t_x)\) from a peak at bin 5 (center \(+0.222\), the low mode) to bin 7 (center \(+0.667\), the high
+mode) &mdash; the second token literally reads the first. Section e shows the <b>token-embedding table</b> as a
+vector grid: a token id is nothing but a row index into it, with the expert example's two tokens marked.</p>
+
+<h3>Knobs</h3>
+<ul>
+<li><b>Training steps per head</b> (default 3000): each of the three heads trains this many Adam steps, so a run
+costs about three single trainings. The AR head is the slowest to sharpen; the loss chart overlays all three (log
+scale &mdash; MSE and CE are different units, read trends, not levels).</li>
+<li><b>Learning rate</b> (1e-3) and <b>Batch size</b> (256): shared by all heads; mostly speed and noise knobs.</li>
+<li><b>Bins per dimension (vocab)</b> (9 / 17 / 33, default 17): the resolution&ndash;data trade. More bins mean
+finer actions (a bin centre is off by at most half a bin) but fewer samples per bin and a wider softmax &mdash; the
+tokenizer's vocab-size trade-off in miniature.</li>
+<li><b>Transformer width d_model</b> (16 / 32 / 64, default 32): the AR head only &mdash; embedding, blocks and head
+all scale with it. This 2-token problem is easy at 16; the knob is for watching capacity, not for fixing failures.</li>
+<li><b>Seed</b>: each head gets a fresh derived init and data stream.</li>
+<li><b>Eval seed</b> / <b>Samples across the c grid</b> (4000): the evaluation grid and its sampling noise.</li>
+<li><b>Sampling temperature</b> (0&ndash;2, default 1.0): 0 means argmax &mdash; deterministic decoding, which kills
+the multimodality (every draw picks the same pair, and the sample scatter collapses to single points). Values at or
+below 0.01 decode as argmax; higher values mix more, and past 1 they start leaking probability into bins the data
+never used.</li>
+</ul>
+
+<p class="ref">Task 1 (bc-mse) showed the collapse; task 2 (flow) fixed it by keeping the action continuous and
+sampling a learned flow; this task fixes the same multimodality problem with discrete tokens instead &mdash; two
+different answers to one question, both alive in production VLAs: task 10 (ta-vla) and
+<a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener">pi0</a> /
+<a href="https://arxiv.org/abs/2506.01844" target="_blank" rel="noopener">SmolVLA</a> on the continuous side,
+<a href="https://arxiv.org/abs/2307.15818" target="_blank" rel="noopener">RT-2</a> and
+<a href="https://arxiv.org/abs/2501.09747" target="_blank" rel="noopener">FAST</a> on the token side.</p>
+
+<script type="application/json" class="blkinfo">{"obs": {"t": "obs c — the one-number observation", "html": "<p><b>Purpose:</b> everything the policy knows: the obstacle position c ~ U(−0.4, 0.4). All three heads condition on this same number.</p><p><b>Shape:</b> <code>(B, 1)</code>.</p><p><b>Updated:</b> drawn fresh every training step by <code>diag_data</code>, together with the matching expert action.</p>"}, "cont_mlp": {"t": "cont — the regression trunk", "html": "<p><b>Purpose:</b> map c straight to two floats: <code>Linear(1, 256) → GELU → Linear(256, 256) → GELU → Linear(256, 2)</code>.</p><p><b>Shapes:</b> in <code>(B, 1)</code>, out <code>(B, 2)</code>.</p><p><b>Updated:</b> every optimizer step (Adam, the form's learning rate), MSE loss; fresh init per head (each head reseeds from the form seed).</p>"}, "cont_out": {"t": "â — the predicted action", "html": "<p><b>Purpose:</b> the network's single answer. L2 training makes it the conditional mean of the two expert modes — (c, 0.5), the centre of the obstacle.</p><p><b>Shape:</b> <code>(B, 2)</code> floats, clamped to [−1, 1] when decoded.</p><p><b>Detail:</b> one input, one output: this head cannot represent two answers at all.</p>"}, "cont_loss": {"t": "L (MSE) — the averaging loss", "html": "<p><b>Purpose:</b> <code>F.mse_loss(model(c), a)</code> against the raw expert floats.</p><p><b>Shape:</b> scalar over the batch and both dims.</p><p><b>Detail:</b> the L2-optimal prediction is the conditional mean — with two equally likely modes, that mean is exactly the invalid middle. Task 1 (bc-mse)'s failure, reproduced as the baseline.</p>"}, "cont_decode": {"t": "decode (cont) — a no-op", "html": "<p><b>Purpose:</b> nothing to decode: the two output floats are the action, clamped to [−1, 1].</p><p><b>Updated:</b> deterministic — the temperature knob does not apply; every evaluation sample at the same c is the same point.</p>"}, "bins_mlp": {"t": "bins — the same trunk, 2·K logits", "html": "<p><b>Purpose:</b> the identical MLP (1 → 256 → 256) now ending in <code>2 · n_bins</code> logits, viewed as <code>(B, 2, K)</code>: one K-way classification per action dimension.</p><p><b>Shapes:</b> in <code>(B, 1)</code>, out <code>(B, 2·K)</code>, K = <i>Bins per dimension</i> (9 / 17 / 33, default 17).</p><p><b>Updated:</b> every optimizer step, cross-entropy per dim; fresh init.</p>"}, "bins_logits": {"t": "2 × K logits — two independent marginals", "html": "<p><b>Purpose:</b> row 0 is the distribution over x-bins, row 1 over z-bins. Softmaxed, they are P(t_x | c) and P(t_z | c) — each cleanly bimodal after training.</p><p><b>Shape:</b> <code>(B, 2, K)</code>.</p><p><b>Detail:</b> the head models the product of the marginals, never the joint — nothing in it can say &ldquo;IF x went left THEN z goes low&rdquo;.</p>"}, "bins_loss": {"t": "L (CE × 2) — classification per dim", "html": "<p><b>Purpose:</b> the mean of two cross-entropies, <code>CE(logits[:, 0], tok[:, 0])</code> and <code>CE(logits[:, 1], tok[:, 1])</code>, against <code>quantize(a, n_bins)</code>.</p><p><b>Shape:</b> scalar.</p><p><b>Detail:</b> classification has no mode-averaging failure — a bimodal target just makes a two-peaked softmax. The flaw is downstream, in how the two dims are sampled.</p>"}, "bins_decode": {"t": "decode (bins) — sample the dims apart", "html": "<p><b>Purpose:</b> <code>bins_sample</code>: softmax each row at the eval temperature, sample t_x and t_z independently, return the bin centers.</p><p><b>Shape:</b> token ids <code>(B,)</code> each → action <code>(B, 2)</code>.</p><p><b>Updated:</b> runs at evaluation only. Temperature ≤ 0.01 switches to argmax (deterministic). Because the draws are independent, about half the pairs mix the sides — the four-corner scatter.</p>"}, "ar_emb": {"t": "tokens → vectors — the AR input layer", "html": "<p><b>Purpose:</b> build the input sequence: the observation as a projected obs token (<code>Linear(1 → d_model)</code>), the previous action token as a row of <code>nn.Embedding(n_bins, d_model)</code>, plus a learned 2-position embedding <code>nn.Embedding(2, d_model)</code>.</p><p><b>Shapes:</b> <code>[B, 1, D]</code> (obs only) or <code>[B, 2, D]</code> (obs + t_x); d_model 16 / 32 / 64, default 32.</p><p><b>Updated:</b> all three tables train with the head; the embedding table is what the viewer's vector grid shows.</p>"}, "ar_tf": {"t": "causal transformer — the only sequence model here", "html": "<p><b>Purpose:</b> 2 × <code>minitf.Block(d_model, 2 heads)</code> under a causal mask, then LayerNorm and a <code>Linear(d_model → n_bins)</code> head: position 0 predicts t_x from the obs token, position 1 predicts t_z from obs + t_x.</p><p><b>Shapes:</b> <code>[B, T, D]</code> in, logits <code>[B, T, n_bins]</code> out (T = 1 or 2).</p><p><b>Updated:</b> every optimizer step; same Adam, steps and batch as the other heads.</p>"}, "ar_loss": {"t": "L (CE × 2) — teacher-forced sequence loss", "html": "<p><b>Purpose:</b> feed the <em>expert's</em> t*_x in (teacher forcing) and apply cross-entropy at both positions: position 0 against t*_x, position 1 against t*_z.</p><p><b>Shape:</b> scalar, the mean of the two CEs.</p><p><b>Detail:</b> position 1's target depends on the token it was given — this is where the joint P(t_z | c, t_x) is learned, the one thing the bins head cannot express.</p>"}, "ar_decode": {"t": "decode (ar) — spell the action out", "html": "<p><b>Purpose:</b> <code>ar_sample</code>: sample t_x from P(·|c), feed it back as the next input token, sample t_z from P(·|c, t_x), return both bin centers as the action.</p><p><b>Shape:</b> two forward passes per decision; action <code>(B, 2)</code>.</p><p><b>Updated:</b> evaluation only; temperature ≤ 0.01 means argmax. The feedback edge is the autoregression — the same loop a language model runs per word.</p>"}, "expert": {"t": "expert a* — one target, two currencies", "html": "<p><b>Purpose:</b> the demonstration: a* = (c + s·0.5, 0.5 + s·0.25) + noise, s = ±1 per sample. The MSE consumes it raw; both CE losses consume <code>quantize(a*, n_bins)</code> — the same action as token ids t*_x, t*_z.</p><p><b>Shape:</b> <code>(B, 2)</code> floats → <code>(B, 2)</code> int64 ids.</p><p><b>Updated:</b> drawn fresh every step with its c; the eval's expert example (and its two token ids) is shown in the viewer playground.</p>"}}</script>

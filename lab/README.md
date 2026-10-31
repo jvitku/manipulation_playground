@@ -20,6 +20,7 @@ FastAPI backend (`lab/server`), static front end (`lab/web`), tasks in `lab/task
 | 11 | `td3` | hidden-hole insertion learned from reward alone | ~25 min |
 | 12 | `td3-bc` | TD3 with demonstrations in the buffer and an imitation term | ~30 min |
 | 13 | `residual-rl` | frozen flow policy plus a TD3-learned residual | ~2 min |
+| 14 | `tokenize` | one task, three action interfaces: continuous regression, per-dim bins, autoregressive tokens — with a hands-on tokenization playground | ~30 s |
 
 The ladder page shows each card's estimate at the default parameters and the state of its newest
 run (`GET /api/tasks`: `est_label`, `last_state`). Runs of `td3`/`td3-bc` are long; they and any
