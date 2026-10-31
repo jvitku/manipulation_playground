@@ -78,6 +78,8 @@ services:
       dockerfile: docker/Dockerfile.lab
     user: "1001:1001"
     restart: unless-stopped
+    # guard: a leaking training job must not take the host down (62 GiB box; swap stays allowed)
+    mem_limit: 48g
     volumes:
       - ..:/workspace
     working_dir: /workspace
