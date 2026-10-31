@@ -1,0 +1,189 @@
+"""Assemble the nanoVLA Policy: prefix (vision + text -> trunk), suffix (state + chunk ->
+expert), flow-matching loss, Euler-sampling act(), and the EMA copy that is evaluated.
+
+Two modules live here:
+
+* ``NanoVLA`` — the trainable network. ``prefix()`` encodes [image ; text] once into E
+  (≤ 84 tokens); ``velocity()`` runs the action expert over the suffix against that E and
+  returns the flow velocity. Splitting the two is what makes Euler sampling cheap: one
+  prefix pass, K small suffix passes.
+* ``Policy`` — ``NanoVLA`` plus the house conventions: ``loss(batch)`` (flow matching with
+  the dataset's pad mask), ``act(obs, instruction)`` (the ActionChunk contract), and an EMA
+  copy of the parameters (decay 0.999) that ``act`` evaluates — the lab's convention that
+  the evaluated/checkpointed model is the EMA (lab/core/loop.py). The optimizer and the
+  parameter budget both refer to ``policy.net`` only; the EMA is a frozen shadow.
+
+Action scaling (fixed, not fitted — a checkpoint needs no data statistics): the env clamps
+dp to ±DP_MAX (0.05 m) per axis and the gripper lives in [0, 1], so model units are
+dp / DP_MAX in [-1, 1] and gripper * 2 - 1 in [-1, 1]; flow matching runs in model units.
+
+Shape legend: B = batch, H = chunk (16), A = act_dim (4), D = d_model, S = prefix tokens,
+T = max_text. Batch contract = nfv.data.dataset plus "text" int64 [B, T] (nfv.train adds it).
+"""
+
+from __future__ import annotations
+
+import copy
+
+import numpy as np
+import torch
+from torch import nn
+
+from nfv.model.config import ModelConfig
+from nfv.model.expert import ActionExpert
+from nfv.model.flow import FlowMatching
+from nfv.model.text import TextEncoder, tokenize
+from nfv.model.trunk import Trunk, attn_snapshot
+from nfv.model.vision import VisionEncoder
+from nfv.sim.controllers import DP_MAX  # ±0.05 m: the env's per-axis dp clamp
+
+EMA_DECAY = 0.999  # house convention (lab/core/loop.py)
+
+
+def actions_to_model(dp: torch.Tensor, gripper: torch.Tensor) -> torch.Tensor:
+    """Env units -> model units in [-1, 1]: x0 = [dp / DP_MAX ; gripper * 2 - 1] [B, H, 4]."""
+    return torch.cat([dp / DP_MAX, (gripper * 2 - 1)[..., None]], dim=-1)
+
+
+def actions_from_model(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Model units -> env units, clamped to what the env accepts: (dp [.., 3], gripper [..])."""
+    dp = x[..., :3].clamp(-1, 1) * DP_MAX
+    gripper = ((x[..., 3] + 1) / 2).clamp(0, 1)
+    return dp, gripper
+
+
+class NanoVLA(nn.Module):
+    """The ≈ 7 M-parameter network; blocks named after the plan's table (param_table keys)."""
+
+    def __init__(self, cfg: ModelConfig):
+        super().__init__()
+        self.cfg = cfg
+        self.vision = VisionEncoder(cfg.d_model, cfg.img, cfg.cameras)
+        self.text = TextEncoder(cfg.d_model, cfg.heads, cfg.ffn, cfg.vocab, cfg.max_text)
+        self.trunk = Trunk(cfg.d_model, cfg.heads, cfg.ffn, cfg.trunk_layers)
+        self.state_in = nn.Linear(cfg.d_state, cfg.d_model)  # state -> one suffix token
+        self.expert = ActionExpert(
+            cfg.d_model, cfg.heads, cfg.ffn, cfg.expert_layers, cfg.act_dim, cfg.chunk
+        )
+        self.head = nn.Linear(cfg.d_model, cfg.act_dim)  # chunk features -> velocity
+
+    def prefix(self, rgb_static, rgb_wrist, text_ids):
+        """[image ; text] -> (E [B, S, D], key_mask [B, S], attns: trunk layers list).
+
+        Vision tokens are always real; the text key_mask hides <pad> both inside the trunk
+        and later as cross-attention keys.
+        """
+        v = self.vision(rgb_static, rgb_wrist)  # [B, 72, D]
+        t, t_mask, _ = self.text(text_ids)  # [B, T, D], [B, T]
+        tokens = torch.cat([v, t], dim=1)  # [B, S, D], S = 72 + T
+        v_mask = torch.ones(v.shape[:2], dtype=torch.bool, device=v.device)  # [B, 72]
+        key_mask = torch.cat([v_mask, t_mask], dim=1)  # [B, S]
+        e, attns = self.trunk(tokens, key_mask)  # E [B, S, D]
+        return e, key_mask, attns
+
+    def velocity(self, x_tau, tau, state, e, e_mask, return_attn: bool = False):
+        """One flow-velocity evaluation: v [B, H, A] (+ the expert's attention maps)."""
+        state_token = self.state_in(state)  # [B, d_state] -> [B, D]
+        feats, self_attn, cross_attn = self.expert(x_tau, tau, state_token, e, e_mask)
+        v = self.head(feats)  # [B, H, D] -> [B, H, A]
+        if return_attn:
+            return v, {"expert_self_attn": self_attn, "expert_cross_attn": cross_attn}
+        return v
+
+
+class Policy(nn.Module):
+    """NanoVLA + flow loss + EMA + act(); constructed through nfv.model.config.build(cfg)."""
+
+    def __init__(self, cfg: ModelConfig):
+        super().__init__()
+        self.cfg = cfg
+        self.flow = FlowMatching()
+        self.net = NanoVLA(cfg)
+        self.ema = copy.deepcopy(self.net).eval()  # the evaluated copy (house convention)
+        for p in self.ema.parameters():
+            p.requires_grad_(False)
+
+    @torch.no_grad()
+    def ema_update(self, decay: float = EMA_DECAY) -> None:
+        """Shadow <- lerp(shadow, net, 1 - decay) after every optimizer step."""
+        for pe, pm in zip(self.ema.parameters(), self.net.parameters(), strict=True):
+            pe.lerp_(pm, 1 - decay)
+
+    def loss(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
+        """Flow-matching loss on one dataset batch (+ "text"); aux splits it per action part.
+
+        Uses ``batch``: rgb_static/rgb_wrist [B, 3, 96, 96], state [B, d_state], text [B, T],
+        dp [B, H, 3], gripper [B, H], pad_mask [B, H] (True = real step).
+        """
+        x0 = actions_to_model(batch["dp"], batch["gripper"])  # [B, H, A] in model units
+        e, e_mask, _ = self.net.prefix(batch["rgb_static"], batch["rgb_wrist"], batch["text"])
+
+        def velocity(x_tau, tau):
+            return self.net.velocity(x_tau, tau, batch["state"], e, e_mask)
+
+        per, aux = self.flow.loss(velocity, x0, batch["pad_mask"])  # per-sample [B]
+        per_dim = aux["per_dim"]  # [A] masked MSE per action dimension
+        return per.mean(), {
+            "loss_dp": float(per_dim[:3].mean()),
+            "loss_gripper": float(per_dim[3]),
+        }
+
+    @torch.no_grad()
+    def act(self, obs, instruction: str, generator: torch.Generator | None = None) -> dict:
+        """One Obs + instruction -> the ActionChunk contract (plan §interfaces), via the EMA.
+
+        Returns {"dp": f32 [H, 3] (env units, clamped), "gripper": f32 [H] in [0, 1],
+        "f_target": None, "s": None (both land with the lesson-18 hybrid head),
+        "aux": attention snapshots (trunk last layer + the final Euler step's expert maps)}.
+        The executor is expected to run the first cfg.n_exec of the H steps.
+        """
+        cfg = self.cfg
+        dev = next(self.ema.parameters()).device
+        assert obs.rgb_static is not None, "act() needs a rendering env (render=True)"
+        # uint8 HWC -> uint8 CHW [1, 3, 96, 96]; the vision stem normalises uint8 itself
+        rgb_s = torch.from_numpy(np.ascontiguousarray(obs.rgb_static)).permute(2, 0, 1)[None]
+        rgb_w = torch.from_numpy(np.ascontiguousarray(obs.rgb_wrist)).permute(2, 0, 1)[None]
+        state = torch.from_numpy(np.asarray(obs.state, dtype=np.float32))[None]  # [1, d_state]
+        text = torch.from_numpy(tokenize(instruction, cfg.max_text))[None]  # [1, T]
+        rgb_s, rgb_w, state, text = (t.to(dev) for t in (rgb_s, rgb_w, state, text))
+
+        e, e_mask, trunk_attns = self.ema.prefix(rgb_s, rgb_w, text)
+        last_attn: dict[str, torch.Tensor] = {}
+
+        def velocity(x_tau, tau):
+            v, attn = self.ema.velocity(x_tau, tau, state, e, e_mask, return_attn=True)
+            last_attn.update(attn)  # keep the final Euler step's maps for aux
+            return v
+
+        x = self.flow.sample(
+            velocity, (1, cfg.chunk, cfg.act_dim), cfg.euler_steps, dev, generator=generator
+        )  # [1, H, A] in model units
+        dp, gripper = actions_from_model(x)  # env units
+        aux = {"trunk_attn": attn_snapshot(trunk_attns[-1])}
+        aux.update({k: attn_snapshot(v) for k, v in last_attn.items()})
+        return {
+            "dp": dp[0].cpu().numpy().astype(np.float32),  # [H, 3]
+            "gripper": gripper[0].cpu().numpy().astype(np.float32),  # [H]
+            "f_target": None,
+            "s": None,
+            "aux": aux,
+        }
+
+
+def param_table(policy: Policy) -> dict[str, int]:
+    """Trainable-parameter count per plan-table block (EMA excluded), plus the total."""
+
+    def count(m: nn.Module) -> int:
+        return sum(p.numel() for p in m.parameters())
+
+    net = policy.net
+    table = {
+        "vision": count(net.vision),
+        "text": count(net.text),
+        "trunk": count(net.trunk),
+        "state": count(net.state_in),
+        "expert": count(net.expert),
+        "head": count(net.head),
+    }
+    table["total"] = sum(table.values())
+    return table
