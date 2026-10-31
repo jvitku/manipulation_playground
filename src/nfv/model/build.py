@@ -32,6 +32,7 @@ from torch import nn
 from nfv.model.config import ModelConfig
 from nfv.model.expert import ActionExpert
 from nfv.model.flow import FlowMatching
+from nfv.model.force_in import BALANCE_LOSS_COEF, ForceInput, apply_force_noise
 from nfv.model.text import TextEncoder, tokenize
 from nfv.model.trunk import Trunk, attn_snapshot
 from nfv.model.vision import VisionEncoder
@@ -66,25 +67,43 @@ class NanoVLA(nn.Module):
             cfg.d_model, cfg.heads, cfg.ffn, cfg.expert_layers, cfg.act_dim, cfg.chunk
         )
         self.head = nn.Linear(cfg.d_model, cfg.act_dim)  # chunk features -> velocity
+        self.force = ForceInput(cfg)  # the force_in route (no parameters for "none")
 
-    def prefix(self, rgb_static, rgb_wrist, text_ids):
-        """[image ; text] -> (E [B, S, D], key_mask [B, S], attns: trunk layers list).
+    def prefix(self, rgb_static, rgb_wrist, text_ids, wrench=None):
+        """[image ; text (; force tokens)] -> (E [B, S, D], key_mask [B, S], attns list).
 
         Vision tokens are always real; the text key_mask hides <pad> both inside the trunk
-        and later as cross-attention keys.
+        and later as cross-attention keys. ``wrench`` [B, 6] is required by the force_in
+        routes that touch the prefix (prefix_linear / prefix_moe / concat_after /
+        prompt_bins — nfv.model.force_in) and ignored otherwise; appended force tokens are
+        real (mask True).
         """
         v = self.vision(rgb_static, rgb_wrist)  # [B, 72, D]
         t, t_mask, _ = self.text(text_ids)  # [B, T, D], [B, T]
         tokens = torch.cat([v, t], dim=1)  # [B, S, D], S = 72 + T
         v_mask = torch.ones(v.shape[:2], dtype=torch.bool, device=v.device)  # [B, 72]
         key_mask = torch.cat([v_mask, t_mask], dim=1)  # [B, S]
+        extra = self.force.prefix_tokens(wrench)  # [B, k, D] or None (route-dependent)
+        if extra is not None:
+            tokens = torch.cat([tokens, extra], dim=1)  # [B, S + k, D]
+            pad = torch.ones(extra.shape[:2], dtype=torch.bool, device=extra.device)
+            key_mask = torch.cat([key_mask, pad], dim=1)  # force tokens are real
+        tokens = self.force.pre_trunk(tokens)  # prefix_moe's LIMoE pass; else identity
         e, attns = self.trunk(tokens, key_mask)  # E [B, S, D]
+        e = self.force.post_trunk(e, wrench)  # concat_after's fuse; else identity
         return e, key_mask, attns
 
-    def velocity(self, x_tau, tau, state, e, e_mask, return_attn: bool = False):
-        """One flow-velocity evaluation: v [B, H, A] (+ the expert's attention maps)."""
+    def velocity(self, x_tau, tau, state, e, e_mask, return_attn: bool = False, feats_add=None):
+        """One flow-velocity evaluation: v [B, H, A] (+ the expert's attention maps).
+
+        ``feats_add`` [B, H, D] is the fvlmoe injection (force_in.ForceInput.expert_add):
+        added to the chunk features BEFORE the action head — the reference's
+        ``action_out_proj(limoe_out[:, -H:] + suffix_out[:, -H:])``.
+        """
         state_token = self.state_in(state)  # [B, d_state] -> [B, D]
         feats, self_attn, cross_attn = self.expert(x_tau, tau, state_token, e, e_mask)
+        if feats_add is not None:
+            feats = feats + feats_add  # [B, H, D]
         v = self.head(feats)  # [B, H, D] -> [B, H, A]
         if return_attn:
             return v, {"expert_self_attn": self_attn, "expert_cross_attn": cross_attn}
@@ -113,20 +132,34 @@ class Policy(nn.Module):
         """Flow-matching loss on one dataset batch (+ "text"); aux splits it per action part.
 
         Uses ``batch``: rgb_static/rgb_wrist [B, 3, 96, 96], state [B, d_state], text [B, T],
-        dp [B, H, 3], gripper [B, H], pad_mask [B, H] (True = real step).
+        dp [B, H, 3], gripper [B, H], pad_mask [B, H] (True = real step) — plus wrench [B, 6]
+        when force_in is on (the dataset serves it; force_noise corrupts it here, the same
+        place act() does). With cfg.balance_loss the LIMoE's load-balancing aux is ADDED
+        (coef BALANCE_LOSS_COEF) — the reference only computes it (force_in.py docstring).
         """
         x0 = actions_to_model(batch["dp"], batch["gripper"])  # [B, H, A] in model units
-        e, e_mask, _ = self.net.prefix(batch["rgb_static"], batch["rgb_wrist"], batch["text"])
+        wrench = None
+        if self.net.force.needs_wrench:
+            wrench = apply_force_noise(batch["wrench"], self.cfg.force_noise)
+        e, e_mask, _ = self.net.prefix(
+            batch["rgb_static"], batch["rgb_wrist"], batch["text"], wrench
+        )
+        feats_add = self.net.force.expert_add(e, wrench, self.cfg.chunk)  # fvlmoe or None
 
         def velocity(x_tau, tau):
-            return self.net.velocity(x_tau, tau, batch["state"], e, e_mask)
+            return self.net.velocity(x_tau, tau, batch["state"], e, e_mask, feats_add=feats_add)
 
         per, aux = self.flow.loss(velocity, x0, batch["pad_mask"])  # per-sample [B]
         per_dim = aux["per_dim"]  # [A] masked MSE per action dimension
-        return per.mean(), {
-            "loss_dp": float(per_dim[:3].mean()),
-            "loss_gripper": float(per_dim[3]),
-        }
+        loss = per.mean()
+        out = {"loss_dp": float(per_dim[:3].mean()), "loss_gripper": float(per_dim[3])}
+        moe_aux = self.net.force.last_aux  # set by the LIMoE routes during the forward
+        if moe_aux is not None:
+            out["moe_fraction_dropped"] = float(moe_aux["fraction_dropped"])
+            out["loss_balance"] = float(moe_aux["balance_loss"])
+            if self.cfg.balance_loss:
+                loss = loss + BALANCE_LOSS_COEF * moe_aux["balance_loss"]
+        return loss, out
 
     @torch.no_grad()
     def act(self, obs, instruction: str, generator: torch.Generator | None = None) -> dict:
@@ -146,12 +179,19 @@ class Policy(nn.Module):
         state = torch.from_numpy(np.asarray(obs.state, dtype=np.float32))[None]  # [1, d_state]
         text = torch.from_numpy(tokenize(instruction, cfg.max_text))[None]  # [1, T]
         rgb_s, rgb_w, state, text = (t.to(dev) for t in (rgb_s, rgb_w, state, text))
+        wrench = None
+        if self.ema.force.needs_wrench:
+            wrench = torch.from_numpy(np.asarray(obs.wrench, dtype=np.float32))[None].to(dev)
+            wrench = apply_force_noise(wrench, cfg.force_noise, generator=generator)
 
-        e, e_mask, trunk_attns = self.ema.prefix(rgb_s, rgb_w, text)
+        e, e_mask, trunk_attns = self.ema.prefix(rgb_s, rgb_w, text, wrench)
+        feats_add = self.ema.force.expert_add(e, wrench, cfg.chunk)  # fvlmoe or None
         last_attn: dict[str, torch.Tensor] = {}
 
         def velocity(x_tau, tau):
-            v, attn = self.ema.velocity(x_tau, tau, state, e, e_mask, return_attn=True)
+            v, attn = self.ema.velocity(
+                x_tau, tau, state, e, e_mask, return_attn=True, feats_add=feats_add
+            )
             last_attn.update(attn)  # keep the final Euler step's maps for aux
             return v
 
@@ -184,6 +224,7 @@ def param_table(policy: Policy) -> dict[str, int]:
         "state": count(net.state_in),
         "expert": count(net.expert),
         "head": count(net.head),
+        "force": count(net.force),  # 0 for force_in="none"
     }
     table["total"] = sum(table.values())
     return table

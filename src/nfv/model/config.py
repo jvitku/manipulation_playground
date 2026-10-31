@@ -13,7 +13,9 @@ Architecture fields (all defaults = the plan's nanoVLA table, ≈ 7 M parameters
 
 Course flags (lessons 17-19; defaults = nanoVLA, i.e. everything off):
     force_in       where the wrench enters: none | prefix_linear | prefix_moe | concat_after |
-                   fvlmoe | forcevla2 | prompt_bins (ForceVLA Table 3 + ForceVLA2 + ForceBench)
+                   fvlmoe | forcevla2 | prompt_bins (ForceVLA Table 3 + ForceVLA2 + ForceBench).
+                   The five Table-3 routes are implemented (nfv.model.force_in, lesson 17);
+                   forcevla2 still refuses until lesson 18
     moe            router of the fvlmoe fusion: top1_capacity (the reference port) | top1 | soft
     n_experts      experts in the fvlmoe MoE (paper: 4)
     balance_loss   add a load-balancing loss (the reference computes one but never applies it)
@@ -92,8 +94,8 @@ def build(cfg: ModelConfig):
     _check(cfg.expert_inputs, EXPERT_INPUTS, "expert_inputs")
     _check(cfg.head, HEAD, "head")
     _check(cfg.force_noise, FORCE_NOISE, "force_noise")
-    if cfg.force_in != "none":
-        raise NotImplementedError(f"force_in={cfg.force_in!r} lands in lesson 17/18")
+    if cfg.force_in == "forcevla2":
+        raise NotImplementedError("force_in='forcevla2' lands in lesson 18")
     if cfg.force_prompt:
         raise NotImplementedError("force_prompt lands in lesson 18")
     if cfg.head != "position":

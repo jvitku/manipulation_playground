@@ -9,6 +9,13 @@ Blocks (one file per plan-table row): vision (conv stem -> 72 tokens), text (voc
 flow (flow matching + Euler sampler), build (Policy assembly). Training lives in nfv.train.
 """
 
+# Import the build SUBMODULE before re-exporting the build FUNCTION: a submodule import
+# anywhere (`from nfv.model.build import param_table`) sets the package attribute
+# `nfv.model.build` to the MODULE, shadowing the function for any later
+# `from nfv.model import build`. Loading the submodule here first and rebinding the name
+# below keeps the function exported in every import order (later submodule imports are
+# sys.modules cache hits and do not re-set the attribute).
+import nfv.model.build  # noqa: F401  (rebound to the function just below)
 from nfv.model.config import ModelConfig, build
 
 __all__ = ["ModelConfig", "build"]

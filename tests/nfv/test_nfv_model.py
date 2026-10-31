@@ -104,9 +104,13 @@ def test_vocab_covers_tasks_zero_unks():
 
 
 def test_build_refuses_unlanded_flags():
-    """Lesson-17/18 switches exist in the config but refuse to build until their lesson."""
-    with pytest.raises(NotImplementedError, match="lesson 17/18"):
-        build(ModelConfig(force_in="fvlmoe"))
+    """Lesson-18 switches exist in the config but refuse to build until their lesson.
+
+    (The five lesson-17 force_in routes landed with nfv.model.force_in — covered in
+    tests/nfv/test_nfv_limoe_routes.py; forcevla2 is the one force_in still gated.)
+    """
+    with pytest.raises(NotImplementedError, match="lesson 18"):
+        build(ModelConfig(force_in="forcevla2"))
     with pytest.raises(NotImplementedError, match="lesson 18"):
         build(ModelConfig(head="hybrid", act_dim=11))
     with pytest.raises(NotImplementedError, match="lesson 18"):
