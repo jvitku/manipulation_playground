@@ -670,7 +670,7 @@ SPEC = TaskSpec(
               help="init + batch sampling + flow noise; suite arms use seed + 101*i"),
     ],  # fmt: skip
     eval_params=[
-        Param("episodes", "Episodes per arm", "int", 100, min=2, max=200, step=1,
+        Param("episodes", "Episodes per arm", "int", 100, min=2, max=1000, step=1,
               help="held-out seeds per arm; the claims want 100 for decisive intervals"),
         Param("eval_seed", "Eval seed", "int", 0, min=0, max=99,
               help="shifts the window inside the task's eval-seed block"),
