@@ -342,3 +342,35 @@ of the first training episodes ended in a force failure (0 % at 2 mm) and the co
 reached 1.25 vs 0.40 mm/step — yet the deterministic eval was identical by 4k steps. On hardware
 the exploratory episodes are the ones that break things: watch the training force-failure rate,
 not the eval curve.
+
+**19.14 — reward alone had nothing to propagate; corrections did.** Round 2 simulated a deployment:
+a privileged operator takes over when the peg stalls on the rim or the force passes 12 N (≤ 20 %
+of steps), its corrections supervise the actor, and the critics learn only from autonomous
+segments without bootstrapping across a take-over — ForceRFT's recipe. Same base, same seeds:
+median success 2 % → 42 % (+40; every seed +34 to +50) against +0 for reward alone, peak force
+−24 %. Take-away: the residual's purpose at deployment is to absorb a dense correction signal;
+from a weak base a sparse reward alone is not enough.
+
+**19.15 — an intervention rate that hits its budget measures the budget.** The "autonomy rises"
+claim failed at a ratio of 0.99: the step-weighted operator rate sat at exactly the 20 % budget
+in every bin, because the triggers wanted more than the budget allowed. The robot-side signals
+did move (episodes the operator touched 73 % → 60 %; success among untouched episodes 48 % → 71 %).
+Take-away: report operator *demand* (triggers fired), not operator *supply*, or set the budget
+above demand.
+
+**19.16 — a trigger that fires on slowness can never step back.** With an unlimited operator, the
+trained residuals were taken over in 86–98 % of episodes at the same step as the base, yet alone
+they succeed 36–52 %: "1 s in contact without 1 mm of depth" is also what a careful learned
+search looks like. A simulated operator should step in on failure (force rising toward abort, no
+progress for a long time), as HIL-SERL's humans do.
+
+**19.17 — imitated contact corrections leak into free space.** The residual was no longer quiet in
+free space (0.40 vs 0.44 mm/step in contact): corrections exist only in contact states, and BC
+toward zero at a 50 % batch share did not pin the free-space output. Free-space states need more
+weight toward zero (and torque inputs scaled so the actor can read the hole direction).
+
+**19.18 — what the residual actually fills: a channel gap again.** The base stalls ~15 mm deep in a
+hole it has found, with dp_z ≈ 0, because its demonstrations pushed through the force target a
+position-head base cannot emit. The operator pushes in position mode, and that vertical gap is
+what the residual learned — the same "which action channel carries the motion" lesson as 15.7
+and 18.8.

@@ -589,10 +589,10 @@ def check(params: dict) -> None:
 SPEC = TaskSpec(
     id="force-rl",
     order=19,
-    title="Runtime RL on the frozen VLA",
-    subtitle="A bounded residual learns online on top of a frozen nanoVLA: TD3 with twin "
-             "critics, BC toward zero with a floor, the wrench as input - per-seed curves, "
-             "before/after on the same seed.",  # fmt: skip
+    title="Residual RL at deployment: refining a frozen VLA",
+    subtitle="A bounded residual learns online on top of a frozen nanoVLA - first from reward "
+             "alone, then in a simulated deployment where an operator's corrections teach it "
+             "(ForceRFT-style). Per-seed curves, before/after on the same seed.",  # fmt: skip
     params=[
         Param("base_ckpt", "Frozen base (nano-vla checkpoint)", "ckpt", "", ckpt_task="nano-vla",
               help="a lesson-16 checkpoint trained on the chosen task; a suite checkpoint "
