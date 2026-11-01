@@ -29,6 +29,12 @@ parameter: measured on 40 held-out seeds, 55-58 % of two frozen T1 bases' episod
 wrong_button, which a residual without images or instruction cannot fix, and only 1-3 of 40 in
 a force failure — the residual's whole T1 headroom (``success_cond`` reports it).
 
+Simulated deployment (``interventions="expert"``, ``deploy_mode``; both default off, and off
+they leave every line of the lesson-19 path above untouched): a privileged operator corrects
+the robot in residual space, the actor imitates the corrections, the critics learn only from
+autonomous transitions with bootstrapping cut at intervention boundaries, and the acting
+policy is a snapshot swapped every ``swap_every`` updates — see :mod:`nfv.rl.deploy`.
+
 Returned dict (also the shape the lab wrapper writes): see :func:`run_residual_rl`.
 
 RunContext duck-type (the same four optional methods nfv.train.fit uses): ``should_continue()``,
@@ -49,6 +55,16 @@ import torch
 from fvb.policy.td3 import ReplayBuffer
 from nfv.model.config import ModelConfig, build
 from nfv.model.text import BLANK_INSTRUCTION
+from nfv.rl.deploy import (
+    CorrectionBCView,
+    CriticView,
+    DeployBuffer,
+    PegOperator,
+    PolicySnapshot,
+    budget_at,
+    correction,
+    robot_minutes,
+)
 from nfv.rl.residual import (
     BC_FLOOR,
     BC_START,
@@ -174,6 +190,11 @@ class _Slot:
     pending: tuple | None = None  # (o, a, r, terminal) waiting for its o2
     hole_mm: float | None = None  # privileged peg-to-hole distance (reward shaping only)
     trace: dict = field(default_factory=dict)
+    # simulated deployment only (interventions="expert"; untouched otherwise)
+    op: PegOperator | None = None  # this episode's operator
+    last_idx: int = -1  # buffer index of this episode's previous transition (boundary cut)
+    ep_id: int = -1
+    ep_iv: int = 0  # operator steps in this episode
 
 
 class ResidualActor:
@@ -370,6 +391,12 @@ def run_residual_rl(
     zero_last_layer: bool = False,
     torch_threads: int | None = 1,
     dp_res: float = DP_RES,
+    interventions: str = "off",
+    intervention_budget: float = 0.2,
+    intervention_decay: float = 0.0,
+    corr_frac: float = 0.5,
+    deploy_mode: bool = False,
+    swap_every: int = 500,
 ) -> dict:
     """Train one residual on a frozen base for ``env_steps`` env transitions; one RL seed.
 
@@ -396,7 +423,26 @@ def run_residual_rl(
          "residual_trace": {"contact_mm", "free_mm", "trace"} of the final eval,
          "env_steps", "updates", "env_steps_per_s", "wall_s", "seed", "task", "base": info,
          "config": {...the knobs...}, "agent": the TD3 object}
+
+    Simulated deployment (:mod:`nfv.rl.deploy`; all off by default): ``interventions``
+    "off" | "expert" (the privileged T3 operator; T3 only), ``intervention_budget`` (max share
+    of env steps the operator may take, default 0.2), ``intervention_decay`` (0 = constant
+    budget, 1 = linearly to 0 by the end), ``corr_frac`` (share of each BC batch drawn from
+    intervention samples), ``deploy_mode`` (act with a snapshot of the actor refreshed every
+    ``swap_every`` updates). With either on, the train rows add ``robot_min`` (and with
+    interventions ``intervention_rate_ma``, ``operator_steps``, ``operator_min``,
+    ``corr_share``, ``n_segments``) and the dict adds ``"deploy"``: {"robot_min",
+    "operator_steps", "operator_min", "operator_share", "first20_rate", "last20_rate",
+    "curve": {"env_step", "rate"} (intervened share per bin of env steps), "episodes": [...],
+    "swaps", "n_segments", "triggers"}.
     """
+    if interventions not in ("off", "expert"):
+        raise ValueError(f"interventions must be 'off' or 'expert', got {interventions!r}")
+    op_on = interventions == "expert"
+    if op_on and task != "t3":
+        raise ValueError("the simulated operator (interventions='expert') exists for T3 only")
+    if deploy_mode and int(swap_every) < 1:
+        raise ValueError("swap_every must be >= 1")
     device = device or "cpu"
     if bc_decay is None:
         bc_decay = max(1, env_steps // 2)
@@ -408,8 +454,17 @@ def run_residual_rl(
     base, base_info = load_base(base_ckpt, task, arm, device)
     agent = make_agent(residual_force, hidden, batch, device, zero_last_layer)
     actor = ResidualActor(base, agent, residual_force, device, dp_res=dp_res)
-    buf = ReplayBuffer(agent.obs_dim, agent.act_dim, max(env_steps, 1))
-    bc_view = ZeroActionView(buf)
+    if op_on:  # flags per transition; BC toward corrections; critics on autonomous data only
+        buf = DeployBuffer(agent.obs_dim, agent.act_dim, max(env_steps, 1))
+        bc_view, critic_buf = CorrectionBCView(buf, corr_frac), CriticView(buf)
+    else:
+        buf = ReplayBuffer(agent.obs_dim, agent.act_dim, max(env_steps, 1))
+        bc_view, critic_buf = ZeroActionView(buf), buf
+    # the policy that ACTS in training: the learner itself, or (deploy mode) its snapshot
+    snapshot = PolicySnapshot(agent) if deploy_mode else None
+    train_actor = actor if snapshot is None else ResidualActor(
+        base, snapshot, residual_force, device, dp_res=dp_res)  # fmt: skip
+    kp = None
     reward_kw = {"step_cost": step_cost, "peak_force_penalty": peak_force_penalty,
                  "fail_penalty": fail_penalty, "hole_shaping": hole_shaping}  # fmt: skip
     config = {
@@ -420,6 +475,9 @@ def run_residual_rl(
         "residual_force": residual_force, "hidden": hidden, "batch": batch, **reward_kw,
         "n_exec": actor.n_exec,
         "torch_threads": torch.get_num_threads(),
+        "interventions": interventions, "intervention_budget": float(intervention_budget),
+        "intervention_decay": float(intervention_decay), "corr_frac": float(corr_frac),
+        "deploy_mode": bool(deploy_mode), "swap_every": int(swap_every),
     }  # fmt: skip
     ev_seeds = eval_seeds(task, n_eval, eval_offset)
     eval_env = Env(task=task, render=True)
@@ -452,13 +510,28 @@ def run_residual_rl(
     record_eval(0, base_eval)
     t_train0 = time.monotonic()
 
-    for sl in slots:
-        actor.start(sl, RL_SEED0 + seed * RL_SEED_BLOCK + ep_counter)
+    def start_train(sl: _Slot) -> None:
+        nonlocal ep_counter
+        train_actor.start(sl, RL_SEED0 + seed * RL_SEED_BLOCK + ep_counter)
+        if op_on:
+            sl.op = PegOperator(kp)
+            sl.last_idx, sl.ep_id, sl.ep_iv = -1, ep_counter, 0
         ep_counter += 1
+
+    if op_on:
+        kp = float(envs[0].controller.kp)
+    for sl in slots:
+        start_train(sl)
     rets: deque = deque(maxlen=MA_WINDOW)
     succ: deque = deque(maxlen=MA_WINDOW)
     ffail: deque = deque(maxlen=MA_WINDOW)  # force_abort / over_force among training episodes
     res_ma: deque = deque(maxlen=500)
+    iv_ma: deque = deque(maxlen=MA_WINDOW)  # per-episode operator share (interventions only)
+    iv_steps = np.zeros(max(env_steps, 1), bool)  # per env step: did the operator act?
+    ep_log: list[dict] = []
+    triggers = {"stall": 0, "force": 0}
+    swap_log: list[int] = []
+    op_steps = 0
     loss_acc: dict[str, list] = {}
     peak_prev = [0.0] * len(slots)
     budget, updates, t, last = 0.0, 0, 0, None
@@ -470,33 +543,63 @@ def run_residual_rl(
             if t >= env_steps:
                 break
             o = sl.feat
-            r = actor.residual(o, expl_noise, rng)
-            obs, info, _ = actor.step(sl, r)
+            iv = False
+            if op_on:  # the operator watches the observation the robot is about to act on
+                sl.op.observe(sl.env)
+                why = "" if sl.op.active else sl.op.wants_in(sl.env)
+                allowed = budget_at(t, env_steps, intervention_budget, intervention_decay)
+                if why and op_steps <= allowed * t:
+                    sl.op.begin(why)
+                    triggers[why] += 1
+                    buf.mark_boundary(sl.last_idx)  # no TD target may cross into the take-over
+                iv = sl.op.active
+            if iv:
+                # ---- snippet: the operator's correction replaces the actor's residual ----
+                base_dp = train_actor._base_next(sl, replan=False)[0]  # [3] m, base's next dp
+                r = correction(sl.op.operator_dp(sl.env), base_dp, train_actor.dp_res)  # [A]
+            else:
+                r = train_actor.residual(o, expl_noise, rng)
+            obs, info, _ = train_actor.step(sl, r)
+            if iv:
+                sl.op.tick()
+                sl.ep_iv += 1
+                op_steps += 1
+                iv_steps[t] = True
             rr, terminal = reward(info, peak_prev[si], **reward_kw)
             peak_prev[si] = float(info["peak_force"])
             sl.ep_ret += rr
-            res_ma.append(_residual_mm(r, actor.dp_res))
+            if not iv:
+                res_ma.append(_residual_mm(r, actor.dp_res))
             t += 1
+            extra = {"intervened": iv, "ep_id": sl.ep_id, "ep_t": sl.ep_len - 1} if op_on else {}
             if info["done"]:
                 # o2 for the (timeout) bootstrap: the base's plan continuation, no re-plan
-                o2 = actor._features(sl, replan=False)
-                buf.add(o, r, rr, o2, terminal)
+                o2 = train_actor._features(sl, replan=False)
+                buf.add(o, r, rr, o2, terminal, **extra)
                 rets.append(sl.ep_ret)
                 succ.append(float(info["success"]))
                 ffail.append(float(info["force_abort"] or info["outcome"] == "over_force"))
+                if op_on or deploy_mode:
+                    ep_log.append({"env_step": t, "len": sl.ep_len, "operator_steps": sl.ep_iv,
+                                   "outcome": info["outcome"] or "timeout"})  # fmt: skip
+                    iv_ma.append(sl.ep_iv / max(sl.ep_len, 1))
                 peak_prev[si] = 0.0
-                actor.start(sl, RL_SEED0 + seed * RL_SEED_BLOCK + ep_counter)
-                ep_counter += 1
+                start_train(sl)
             else:
-                sl.feat = actor._features(sl)
-                buf.add(o, r, rr, sl.feat, terminal)
+                sl.feat = train_actor._features(sl)
+                idx = buf.add(o, r, rr, sl.feat, terminal, **extra)
+                if op_on:
+                    sl.last_idx = idx
             if t > warmup and buf.n >= batch:
                 budget += utd
                 while budget >= 1.0:
                     budget -= 1.0
                     w = bc_weight_at(t, bc_decay, bc_start, bc_floor)
-                    out = agent.update(buf, rng, demo=bc_view, bc_weight=w)
+                    out = agent.update(critic_buf, rng, demo=bc_view, bc_weight=w)
                     updates += 1
+                    if snapshot is not None and updates % int(swap_every) == 0:
+                        snapshot.refresh()  # deploy mode: the robot gets the new weights now
+                        swap_log.append(updates)
                     for k, v in out.items():
                         loss_acc.setdefault(k, []).append(v)
             if t % log_every == 0:
@@ -510,6 +613,17 @@ def run_residual_rl(
                     "updates": updates,
                     "env_steps_per_s": round(t / max(time.monotonic() - t_train0, 1e-9), 2),
                 }
+                if op_on or deploy_mode:
+                    row["robot_min"] = round(robot_minutes(t), 3)
+                    row["swaps"] = len(swap_log)
+                if op_on:
+                    row.update({
+                        "intervention_rate_ma": float(np.mean(iv_ma)) if iv_ma else None,
+                        "operator_steps": op_steps,
+                        "operator_min": round(robot_minutes(op_steps), 3),
+                        "corr_share": float(buf.intervened[: buf.n].mean()) if buf.n else 0.0,
+                        "n_segments": sum(triggers.values()),
+                    })  # fmt: skip
                 row.update({k: float(np.mean(v)) for k, v in loss_acc.items()})
                 loss_acc = {}
                 train_log.append(row)
@@ -532,7 +646,12 @@ def run_residual_rl(
     for e in (*envs, eval_env):
         e.close()
     del last
+    out = {}
+    if op_on or deploy_mode:
+        out["deploy"] = _deploy_summary(t, iv_steps[:t], op_steps, ep_log, swap_log, triggers,
+                                        op_on)  # fmt: skip
     return {
+        **out,
         "curves": curves,
         "train": train_log,
         "base_eval": base_eval,
@@ -551,6 +670,36 @@ def run_residual_rl(
         "base": base_info,
         "config": config,
         "agent": agent,
+    }
+
+
+DEPLOY_BINS = 40  # intervention-rate curve: env steps split into this many equal bins
+EDGE_FRAC = 0.2  # "first / last 20 % of training" for m4.autonomy_rises
+
+
+def _deploy_summary(t, iv_steps, op_steps, ep_log, swap_log, triggers, op_on) -> dict:
+    """Robot time, operator cost and the intervention-rate curve of one training run.
+
+    Rates are STEP-weighted (operator steps / env steps inside a window), so a long autonomous
+    timeout counts as 200 steps of autonomy, not as one episode.
+    """
+    iv = np.asarray(iv_steps, bool)
+    edges = np.linspace(0, t, DEPLOY_BINS + 1).round().astype(int) if t else np.zeros(2, int)
+    rate = [float(iv[a:b].mean()) if b > a else 0.0 for a, b in zip(edges[:-1], edges[1:],
+                                                                    strict=True)]  # fmt: skip
+    k = max(1, int(round(EDGE_FRAC * t)))
+    return {
+        "robot_min": round(robot_minutes(t), 3),
+        "operator_steps": int(op_steps),
+        "operator_min": round(robot_minutes(op_steps), 3),
+        "operator_share": float(op_steps / max(t, 1)),
+        "first20_rate": float(iv[:k].mean()) if op_on and t else None,
+        "last20_rate": float(iv[-k:].mean()) if op_on and t else None,
+        "curve": {"env_step": [int(b) for b in edges[1:]], "rate": rate},
+        "n_segments": int(sum(triggers.values())),
+        "triggers": dict(triggers),
+        "swaps": list(swap_log),
+        "episodes": ep_log,
     }
 
 

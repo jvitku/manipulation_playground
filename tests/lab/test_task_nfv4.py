@@ -115,3 +115,66 @@ def test_eval_claims_rows(result):
     assert spread["verdict"] == "NOT CONFIRMED" and "s0" in spread["measured"]  # 2 < 5 seeds
     imp = next(c for c in r["claims"] if c["id"] == "m4.residual_improves_t3")
     assert imp["verdict"] != NOT_MEASURED
+
+
+# ---- the simulated deployment (interventions=expert + deploy_mode) --------------------------
+def test_new_claims_not_measured_without_operator(result):
+    _, r = result
+    rows = {c["id"]: c for c in r["claims"]}
+    for cid in ("m4.corrections_unlock_learning", "m4.autonomy_rises"):
+        assert rows[cid]["verdict"] == NOT_MEASURED
+    assert "operator" not in r
+
+
+def test_deploy_spec_params_and_check():
+    s = registry.get("force-rl")
+    p = {x.name: x for x in s.params}
+    assert p["interventions"].default == "off" and p["interventions"].choices == ["off", "expert"]
+    assert p["intervention_budget"].default == 0.2 and p["intervention_decay"].default == 0.0
+    assert p["deploy_mode"].default is False and p["swap_every"].default == 500
+    charts = {c["id"] for c in s.charts}
+    assert {"operator", "robot_time"} <= charts
+    with pytest.raises(ValueError, match="t3 only"):
+        s.check({**TINY, "task": "t1", "interventions": "expert"})
+    s.check({**TINY, "interventions": "expert"})
+
+
+def test_operator_cost_pooling():
+    dep = {"0": {"robot_min": 1.0, "operator_steps": 60, "operator_min": 0.1,
+                 "operator_share": 0.1, "first20_rate": 0.4, "last20_rate": 0.1,
+                 "n_segments": 3, "triggers": {"stall": 2, "force": 1}},
+           "1": {"robot_min": 1.0, "operator_steps": 40, "operator_min": 0.067,
+                 "operator_share": 0.067, "first20_rate": 0.2, "last20_rate": 0.2,
+                 "n_segments": 2, "triggers": {"stall": 2, "force": 0}}}  # fmt: skip
+    op = tn.operator_cost(dep)
+    assert op["operator_steps"] == 100 and op["robot_min"] == pytest.approx(2.0)
+    assert op["first20_rate"] == pytest.approx(0.3) and op["last20_rate"] == pytest.approx(0.15)
+    assert op["autonomy_ratio"] == pytest.approx(0.5)
+    assert tn.operator_cost({}) is None and tn.operator_cost(None) is None
+
+
+def test_deploy_train_and_eval(base_ckpt, tmp_path_factory):
+    params = {**TINY, "base_ckpt": str(base_ckpt), "interventions": "expert",
+              "intervention_budget": 0.3, "deploy_mode": True, "swap_every": 50}  # fmt: skip
+    run = make_ctx(tmp_path_factory.mktemp("nfv4_dep") / "run", "force-rl", params)
+    tn.train(run)
+    ck = torch.load(run.dir / "ckpt" / "last.pt", map_location="cpu", weights_only=False)
+    assert set(ck["deploy"]) == {"0", "1"}
+    for d in ck["deploy"].values():
+        assert {"operator_steps", "operator_min", "robot_min", "first20_rate", "last20_rate",
+                "curve", "swaps"} <= set(d)  # fmt: skip
+        assert "episodes" not in d  # the per-episode log stays in the seed's result.json
+    keys = {k for row in read_metrics(run.dir) for k in row}
+    assert {"s0_robot_min", "s0_operator_min", "s1_operator_steps"} <= keys
+    ev = make_ctx(tmp_path_factory.mktemp("nfv4_dep_eval") / "eval", "force-rl",
+                  {"ckpt": str(run.dir / "ckpt" / "last.pt"), "episodes": 2, "eval_seed": 0,
+                   "video": False})  # fmt: skip
+    tn.evaluate(ev)
+    r = json.loads((ev.dir / "result.json").read_text())
+    assert r["operator"]["operator_steps"] == sum(d["operator_steps"]
+                                                  for d in ck["deploy"].values())  # fmt: skip
+    rows = {c["id"]: c for c in r["claims"]}
+    assert [c["id"] for c in r["claims"]] == [c.id for c in M4_CLAIMS]
+    unlock = rows["m4.corrections_unlock_learning"]
+    assert unlock["verdict"] in VERDICTS and "operator" in unlock["measured"]
+    assert rows["m4.autonomy_rises"]["verdict"] in ALLOWED

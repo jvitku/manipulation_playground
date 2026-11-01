@@ -15,6 +15,9 @@ steps with the in-training evaluations — where a sequential loop would take 5x
 checkpoint), ``result.json`` (run_residual_rl's dict without the agent). A file ``STOP`` in
 DIR makes should_continue() return False (the parent's stop button).
 
+With ``--interventions expert`` / ``--deploy-mode`` (the simulated deployment, see
+nfv.rl.deploy) result.json also carries ``"deploy"`` (operator steps, intervention-rate curve).
+
 ``eval`` re-evaluates the frozen base (``--which base``) or one saved residual (``--which``
 = its seed) of a suite checkpoint on ``nfv.seeds.eval_seeds(task, n, offset)`` and writes the
 nfv.rl.loop.evaluate dict to FILE.json.
@@ -96,6 +99,9 @@ def cmd_train(a) -> int:
         bc_floor=a.bc_floor, peak_force_penalty=a.peak_force_penalty,
         hole_shaping=a.hole_shaping,
         residual_force=a.residual_force, dp_res=a.dp_res,
+        interventions=a.interventions, intervention_budget=a.intervention_budget,
+        intervention_decay=a.intervention_decay, corr_frac=a.corr_frac,
+        deploy_mode=a.deploy_mode, swap_every=a.swap_every,
     )  # fmt: skip
     _dump(ctx.dir / "result.json", _jsonable(out))
     return 0
@@ -136,6 +142,13 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("--hole-shaping", type=float, default=0.0)
     t.add_argument("--residual-force", action="store_true")
     t.add_argument("--dp-res", type=float, default=DP_RES)
+    # simulated deployment (nfv.rl.deploy), all off by default
+    t.add_argument("--interventions", choices=("off", "expert"), default="off")
+    t.add_argument("--intervention-budget", type=float, default=0.2)
+    t.add_argument("--intervention-decay", type=float, default=0.0)
+    t.add_argument("--corr-frac", type=float, default=0.5)
+    t.add_argument("--deploy-mode", action="store_true")
+    t.add_argument("--swap-every", type=int, default=500)
     t.set_defaults(fn=cmd_train)
     e = sub.add_parser("eval")
     e.add_argument("--suite", required=True)
