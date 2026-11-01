@@ -1,9 +1,8 @@
 """ModelConfig: every switch of the force-VLA school in one dataclass (plan §4).
 
 Every variant the course trains — nanoVLA, the ForceVLA routes, ForceVLA2, every ablation —
-is a value of this config, never a subclass. The flags for lessons 17/18 are declared NOW so
-the later modules only implement behaviour, never re-plumb configuration; ``build`` refuses
-them with NotImplementedError until their lesson lands.
+is a value of this config, never a subclass. Every flag of lessons 17/18 is implemented;
+``build`` refuses combinations that would silently ignore a switch (ValueError).
 
 Architecture fields (all defaults = the plan's nanoVLA table, ≈ 7 M parameters):
     d_model 256 everywhere; two 96x96 cameras -> 72 vision tokens; vocabulary ≤ 64 words,
@@ -15,13 +14,14 @@ Course flags (lessons 17-19; defaults = nanoVLA, i.e. everything off):
     force_in       where the wrench enters: none | prefix_linear | prefix_moe | concat_after |
                    fvlmoe | forcevla2 | prompt_bins (ForceVLA Table 3 + ForceVLA2 + ForceBench).
                    The five Table-3 routes are implemented (nfv.model.force_in, lesson 17);
-                   forcevla2 still refuses until lesson 18
+                   forcevla2 = nfv.model.forcevla2 (lesson 18)
     moe            router of the fvlmoe fusion: top1_capacity (the reference port) | top1 | soft
     n_experts      experts in the fvlmoe MoE (paper: 4)
     balance_loss   add a load-balancing loss (the reference computes one but never applies it)
     expert_inputs  ForceVLA2 expert ablation: all | vision_only | none
     force_prompt   ForceVLA2: append the running subtask's words to the instruction
-    head           position (Δp + gripper) | hybrid (+ f_target 6 + progress 1, lesson 18)
+    head           position (Δp + gripper, act_dim 4) | hybrid (+ f_target 6 + progress 1,
+                   act_dim 11, lesson 18)
     force_noise    eval-time twin/FACT checks: off | zero | shuffle | gaussian
     text_dropout   train-time: per sample, replace the instruction with the constant blank
                    text (nfv.model.text.BLANK_INSTRUCTION) with this probability — the
@@ -50,6 +50,7 @@ FORCE_IN = (
 MOE = ("top1_capacity", "top1", "soft")
 EXPERT_INPUTS = ("all", "vision_only", "none")
 HEAD = ("position", "hybrid")
+HYBRID_ACT_DIM = 11  # [dp 3 ; gripper 1 ; f_target 6 ; s 1] (nfv.model.forcevla2.HYBRID_DIM)
 FORCE_NOISE = ("off", "zero", "shuffle", "gaussian")
 
 
@@ -93,8 +94,9 @@ def _check(value: str, allowed: tuple[str, ...], name: str) -> None:
 def build(cfg: ModelConfig):
     """Validate the config and return the assembled Policy (the only model constructor).
 
-    Flags whose lesson has not landed yet raise NotImplementedError here, so a config that
-    silently ignores its own switches cannot exist.
+    Combinations that would silently ignore a switch raise ValueError here (a hybrid head
+    that is not 11-D, expert_inputs without the ForceVLA2 fusion), so a config that ignores
+    its own switches cannot exist.
     """
     from nfv.model.build import Policy  # local import: build.py needs ModelConfig
 
@@ -107,12 +109,13 @@ def build(cfg: ModelConfig):
         raise ValueError(f"text_dropout={cfg.text_dropout!r} not in [0, 1)")
     if not math.isfinite(cfg.cfg_w) or cfg.cfg_w < 0.0:
         raise ValueError(f"cfg_w={cfg.cfg_w!r} must be a finite weight >= 0")
-    if cfg.force_in == "forcevla2":
-        raise NotImplementedError("force_in='forcevla2' lands in lesson 18")
-    if cfg.force_prompt:
-        raise NotImplementedError("force_prompt lands in lesson 18")
-    if cfg.head != "position":
-        raise NotImplementedError(f"head={cfg.head!r} lands in lesson 18")
     if cfg.head == "position" and cfg.act_dim != 4:
         raise ValueError("the position head on the gantry is 4-D: dp xyz + gripper")
+    if cfg.head == "hybrid" and cfg.act_dim != HYBRID_ACT_DIM:
+        raise ValueError(
+            f"the hybrid head is {HYBRID_ACT_DIM}-D: dp 3 + gripper 1 + f_target 6 + s 1"
+        )
+    if cfg.expert_inputs != "all" and cfg.force_in != "forcevla2":
+        raise ValueError("expert_inputs is the ForceVLA2 expert ablation (force_in='forcevla2')")
+    # force_prompt is independent of force_in: the paper's "+ force prompt" row is pi0 + prompt
     return Policy(cfg)

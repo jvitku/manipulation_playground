@@ -284,3 +284,83 @@ def test_dataset_serves_s_sub(tmp_path):
     b = ds.sample_batch(4, np.random.default_rng(0), chunk=16)
     assert b["s_sub"].shape == (4, 16) and b["s_sub"].dtype == torch.float32
     assert (b["s_sub"] >= 0).all() and (b["s_sub"] <= 1).all()
+
+
+# --- wiring into the nano Policy (build.py / config.py / train.py) -----------------------
+
+
+def _tiny_cfg(**kw):
+    from nfv.model.config import ModelConfig
+
+    base = dict(trunk_layers=1, expert_layers=1, ffn=128, chunk=8, n_exec=4, euler_steps=2)
+    base.update(kw)
+    return ModelConfig(**base)
+
+
+@pytest.fixture(scope="module")
+def t2_demos(tmp_path_factory):
+    from nfv.data.dataset import DemoDataset
+    from nfv.data.record import record_demos
+
+    root = tmp_path_factory.mktemp("t2demos")
+    record_demos("t2", n=2, out_dir=root, noise_mm=0.5)
+    return DemoDataset(root, "t2")
+
+
+def test_build_validates_forcevla2_flags():
+    from nfv.model.config import build
+
+    with pytest.raises(ValueError, match="11-D"):
+        build(_tiny_cfg(force_in="forcevla2", head="hybrid"))
+    with pytest.raises(ValueError, match="expert_inputs"):
+        build(_tiny_cfg(force_in="fvlmoe", expert_inputs="vision_only"))
+    pol = build(_tiny_cfg(force_in="forcevla2", head="hybrid", act_dim=11, force_prompt=True))
+    assert pol.net.fv2 is not None and pol.net.head.out_features == 11
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        dict(force_in="forcevla2", head="hybrid", act_dim=11, force_prompt=True),  # arm B
+        dict(force_in="forcevla2", head="position", force_prompt=True),  # arm C
+        dict(force_in="forcevla2", head="hybrid", act_dim=11, expert_inputs="none"),
+    ],
+)
+def test_fit_and_act_end_to_end(kw, t2_demos, render_env):
+    from nfv.model.build import param_table
+    from nfv.train import fit
+
+    cfg = _tiny_cfg(**kw)
+    policy, hist = fit(cfg, t2_demos, steps=4, batch=4, log_every=2, device="cpu")
+    last = hist[-1]
+    assert np.isfinite(last["loss"])
+    assert "gate_force_vision" in last and "gate_force_force" in last
+    assert ("loss_f_target" in last) == (cfg.head == "hybrid")
+    assert param_table(policy)["fusion"] > 0
+    obs = render_env.reset(0, task="t2")
+    out = policy.act(obs, "wipe the plate gently approach")
+    assert out["dp"].shape == (8, 3) and out["gripper"].shape == (8,)
+    assert set(out["aux"]["gate_groups"]) == {"vision", "text", "state", "force"}
+    if cfg.head == "hybrid":
+        assert out["f_target"].shape == (8, 6) and out["s"].shape == (8,)
+        assert np.abs(out["f_target"][:, :3]).max() <= F_SCALE
+        assert (out["s"] >= 0).all() and (out["s"] <= 1).all()
+    else:
+        assert out["f_target"] is None and out["s"] is None
+
+
+def test_force_prompt_text_follows_chunk_subtask(t2_demos):
+    from nfv.model.text import tokenize
+    from nfv.sim.tasks import TASKS
+    from nfv.train import episode_prompt_ids, sample_batch_with_text
+
+    ids = episode_prompt_ids(t2_demos, 12)
+    subs = TASKS["t2"].SUBTASKS
+    assert ids.shape == (len(t2_demos), len(subs), 12)
+    b = sample_batch_with_text(t2_demos, ids, 16, np.random.default_rng(0), 8)
+    instr = [ep["instruction"] for ep in t2_demos.index["episodes"]]
+    texts = {tuple(tokenize(f"{i} {s}")) for i in instr for s in subs}
+    for row, sub in zip(b["text"].tolist(), b["subtask"].tolist(), strict=True):
+        assert tuple(row) in texts
+        assert any(tuple(row) == tuple(tokenize(f"{i} {subs[sub]}")) for i in instr)
+    assert "s_sub" in b and b["s_sub"].shape == (16, 8)

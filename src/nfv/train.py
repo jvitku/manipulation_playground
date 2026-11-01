@@ -31,9 +31,11 @@ import torch
 
 from nfv.model.config import ModelConfig, build
 from nfv.model.text import tokenize_batch
+from nfv.sim.subtasks import hindsight_progress
 
 _OBS_KEYS = ("rgb_static", "rgb_wrist", "state", "wrench", "wrench_window")
-_CHUNK_KEYS = ("dp", "gripper", "f_target", "s_fv2", "s_lin")
+_CHUNK_KEYS = ("dp", "gripper", "f_target", "s_fv2", "s_lin", "s_sub")
+_LOGGED_AUX = ("loss_f_target", "loss_s", "gate_force_")  # lesson-18 extras, logged if present
 
 
 def episode_text_ids(dataset, max_text: int) -> torch.Tensor:
@@ -41,10 +43,30 @@ def episode_text_ids(dataset, max_text: int) -> torch.Tensor:
     return tokenize_batch([ep["instruction"] for ep in dataset.index["episodes"]], max_text)
 
 
+def episode_prompt_ids(dataset, max_text: int) -> torch.Tensor:
+    """The ForceVLA2 force prompt per (episode, subtask): int64 [n_episodes, n_subtasks, T].
+
+    Row [i, k] tokenizes "<instruction of episode i> <SUBTASKS[k]>" — the text the model sees
+    when the sampled chunk STARTS in subtask k (the run-time SubtaskMachine appends the same
+    word, nfv.sim.subtasks). ``sample_batch_with_text`` picks the row by the batch "subtask".
+    """
+    from nfv.sim.tasks import TASKS  # local import: the sim pulls MuJoCo
+
+    subtasks = TASKS[dataset.index["task"]].SUBTASKS
+    instr = [ep["instruction"] for ep in dataset.index["episodes"]]
+    rows = [tokenize_batch([f"{i} {sub}" for sub in subtasks], max_text) for i in instr]
+    return torch.stack(rows)  # [n_episodes, n_subtasks, T]
+
+
 def sample_batch_with_text(
     dataset, text_ids: torch.Tensor, batch_size: int, rng: np.random.Generator, chunk: int
 ) -> dict[str, torch.Tensor]:
     """One training batch: the DemoDataset batch contract plus "text" int64 [B, T].
+
+    ``text_ids`` is [n_episodes, T] (the instruction) or, with the force prompt,
+    [n_episodes, n_subtasks, T] (``episode_prompt_ids``: indexed by the chunk's start subtask).
+    ``s_sub`` is taken from the episode when present (DemoDataset derives it at load), else
+    derived here from its ``subtask`` labels (tiny fakes in tests).
 
     Mirrors DemoDataset.sample_batch (uniform starts over all steps; a start near the episode
     end gets a zero-padded tail and a False pad_mask) so the instruction can be joined per
@@ -58,7 +80,8 @@ def sample_batch_with_text(
             out[k].append(ep[k][t])
         valid = min(chunk, n - t)
         for k in _CHUNK_KEYS:
-            a = ep[k][t : t + valid].astype(np.float32)  # [valid, ...]
+            src = ep[k] if k in ep or k != "s_sub" else hindsight_progress(ep["subtask"])
+            a = src[t : t + valid].astype(np.float32)  # [valid, ...]
             if valid < chunk:  # zero-pad past the episode end; pad_mask marks it
                 a = np.concatenate(
                     [a, np.zeros((chunk - valid, *a.shape[1:]), dtype=np.float32)], axis=0
@@ -76,7 +99,10 @@ def sample_batch_with_text(
         batch[k] = torch.from_numpy(np.stack(out[k]).astype(np.float32))
     batch["pad_mask"] = torch.from_numpy(np.stack(out["pad_mask"]))  # [B, H] bool
     batch["subtask"] = torch.from_numpy(np.stack(out["subtask"]))  # [B] int64
-    batch["text"] = text_ids[picks[:, 0]]  # [B, T] int64, the sampled episodes' instructions
+    if text_ids.dim() == 3:  # force prompt: [episode, start subtask] -> [B, T]
+        batch["text"] = text_ids[torch.as_tensor(picks[:, 0]), batch["subtask"]]
+    else:
+        batch["text"] = text_ids[picks[:, 0]]  # [B, T] int64, the sampled episodes' instructions
     return batch
 
 
@@ -120,7 +146,10 @@ def fit(
     policy = build(cfg).to(device)
     opt = torch.optim.AdamW(policy.net.parameters(), lr=lr, weight_decay=weight_decay)
     rng = np.random.default_rng(seed)  # batch sampling stream
-    text_ids = episode_text_ids(dataset, cfg.max_text)
+    if cfg.force_prompt:
+        text_ids = episode_prompt_ids(dataset, cfg.max_text)  # [n_ep, n_subtasks, T]
+    else:
+        text_ids = episode_text_ids(dataset, cfg.max_text)  # [n_ep, T]
     warmup = max(10, steps // 50) if warmup is None else max(1, warmup)
 
     def lr_at(s: int) -> float:
@@ -163,6 +192,9 @@ def fit(
         acc["loss"] += float(loss)
         acc["loss_dp"] += aux["loss_dp"]
         acc["loss_gripper"] += aux["loss_gripper"]
+        for k, v in aux.items():  # lesson 18: f_target / s losses + force-expert gate weights
+            if k.startswith(_LOGGED_AUX):
+                acc[k] = acc.get(k, 0.0) + v
         nacc += 1
         if step % log_every == 0:
             now = time.monotonic()

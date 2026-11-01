@@ -306,3 +306,151 @@ M2_CLAIMS: tuple[Claim, ...] = (
         url="https://arxiv.org/abs/2505.22159",
     ),
 )
+
+
+# ---- the nanoForceVLA2 module's claims (module "nano-force-vla2", lesson 18) -----------------
+
+_FV2_URL = "https://arxiv.org/abs/2603.15169"
+
+M3_CLAIMS: tuple[Claim, ...] = (
+    Claim(
+        id="m3.hybrid_tracks_force",
+        statement="With a force OUTPUT, the policy holds a commanded force: full ForceVLA2 "
+        "(forcevla2 + hybrid head + force prompt) solves the T2 wipe in at least 75% of "
+        "episodes AND tracks the commanded force (3 N gently / 8 N firmly) with a contact "
+        "RMSE under 1 N - the plan's M3 gate. Both halves must hold",
+        module="nano-force-vla2",
+        task="t2",
+        arms={
+            "a": {"arm": "B forcevla2+hybrid", "force_in": "forcevla2", "head": "hybrid",
+                  "force_prompt": True, "task": "t2"},
+            "b": {"arm": "B forcevla2+hybrid", "metric": "contact force RMSE (N)"},
+        },
+        metric="T2 success (a) on held-out seeds AND contact force RMSE |F_n - F_target| "
+        "over contact steps (b <= 1.0 N)",
+        expect="a >= 0.75",
+        source="course plan §8, M3 gate (docs/plans/force_vla_school_plan.md); ForceVLA2 "
+        "arXiv 2603.15169 (clean board 70%, force-controlled wiping)",
+        url=_FV2_URL,
+    ),
+    Claim(
+        id="m3.position_head_cannot",
+        statement="Force INPUTS without a force OUTPUT cannot hold a commanded force: the "
+        "same ForceVLA2 inputs (prompt + encoder + MoE) with a position-only head solve the "
+        "T2 wipe in at most 20% of episodes - the row ForceVLA2 never ran",
+        module="nano-force-vla2",
+        task="t2",
+        arms={"a": {"arm": "C forcevla2+position", "force_in": "forcevla2",
+                    "head": "position", "force_prompt": True, "task": "t2"}},
+        metric="T2 success on held-out seeds",
+        expect="a <= 0.20",
+        source="course plan §2/§6 (the position-head control row); the M0 finding that a "
+        "position controller holds the band in only ~15% of hidden heights",
+        url=_FV2_URL,
+    ),
+    Claim(
+        id="m3.force_output_is_the_lever",
+        statement="The force output is the lever: on identical inputs, the hybrid head beats "
+        "the position head by at least 30 points on T2",
+        module="nano-force-vla2",
+        task="t2",
+        arms={
+            "a": {"arm": "B forcevla2+hybrid", "head": "hybrid"},
+            "b": {"arm": "C forcevla2+position", "head": "position"},
+        },
+        metric="T2 success, B minus C, shared held-out seeds",
+        expect="a-b >= 0.30",
+        source="course plan §6 (isolating the force output); ForceVLA2 arXiv 2603.15169 "
+        "does not run this ablation",
+        url=_FV2_URL,
+    ),
+    Claim(
+        id="m3.beats_forcevla",
+        statement="ForceVLA2 beats ForceVLA on the commanded-force task: B gains at least 30 "
+        "points over lesson 17's fvlmoe + position head trained on the same T2 demos",
+        module="nano-force-vla2",
+        task="t2",
+        arms={
+            "a": {"arm": "B forcevla2+hybrid", "force_in": "forcevla2"},
+            "b": {"arm": "A fvlmoe+position", "force_in": "fvlmoe", "head": "position"},
+        },
+        metric="T2 success, B minus A, shared held-out seeds",
+        expect="a-b >= 0.30",
+        source="ForceVLA2 arXiv 2603.15169 (66% vs ForceVLA 35% average over 5 tasks)",
+        url=_FV2_URL,
+    ),
+    Claim(
+        id="m3.gate_tilts_to_force",
+        statement="The dense gate tilts toward the force expert in contact: B's mean "
+        "force-expert gate weight is higher on decisions taken in contact than in free space",
+        module="nano-force-vla2",
+        task="t2",
+        arms={
+            "a": {"arm": "B forcevla2+hybrid", "bucket": "contact (F_n > 0.5 N)"},
+            "b": {"arm": "B forcevla2+hybrid", "bucket": "free space"},
+        },
+        metric="force-expert weight averaged over token groups, contact minus free "
+        "(both numbers reported)",
+        expect="a-b >= 0",
+        source="ForceVLA2 arXiv 2603.15169 (cross-scale MoE: modality experts, token-wise "
+        "gate); course plan §8 M3 'gate weights visibly tilting'",
+        url=_FV2_URL,
+    ),
+)
+
+# M4 (lesson 19, `force-rl`): runtime residual RL on the frozen nanoVLA. Bars fixed by the
+# plan §8 M4 gate; the expected direction follows ForceRFT (a bounded residual on a frozen
+# force-conditioned VLA, twin critics). Arms: a = the residual(s), b = the frozen base, all on
+# the same shared held-out seeds.
+_FRFT_URL = "https://arxiv.org/abs/2609.22840"
+
+M4_CLAIMS: tuple[Claim, ...] = (
+    Claim(
+        id="m4.residual_improves_t3",
+        statement="A bounded residual learned online on top of the frozen base raises T3 "
+        "success by at least 10 points (median over the RL seeds)",
+        module="force-rl",
+        task="t3",
+        arms={"a": {"arm": "base + residual (median seed)"}, "b": {"arm": "frozen base"}},
+        metric="T3 success on shared held-out seeds, median-over-seeds residual minus base",
+        expect="a-b >= 0.10",
+        source="course plan §8 M4 gate (+10 pts over 5 seeds); ForceRFT arXiv 2609.22840",
+        url=_FRFT_URL,
+    ),
+    Claim(
+        id="m4.peak_force_down",
+        statement="The residual makes contact gentler: mean episode peak |F| at least 20 % "
+        "below the frozen base's",
+        module="force-rl",
+        task="t3",
+        arms={"a": {"arm": "1 - peak(residual, median over seeds) / peak(base)"}},
+        metric="relative reduction of the mean episode peak |F|",
+        expect="a >= 0.20",
+        source="course plan §8 M4 gate (peak force down >= 20 %); ForceRFT arXiv 2609.22840",
+        url=_FRFT_URL,
+    ),
+    Claim(
+        id="m4.residual_quiet_in_free_space",
+        statement="The residual stays near zero in free space and acts at contact: its mean "
+        "magnitude away from contact is at most a third of its magnitude in contact",
+        module="force-rl",
+        task="t3",
+        arms={"a": {"arm": "residual", "bucket": "free (|F| <= 0.5 N) / contact"}},
+        metric="mean |residual dp| free space / in contact (mm/step), mean over seeds",
+        expect="a <= 0.3333",
+        source="course plan §8 M4 gate ('residual ~ 0 in free space'); v1 Module 4",
+        url=_FRFT_URL,
+    ),
+    Claim(
+        id="m4.seed_spread_reported",
+        statement="The result is reported per RL seed (at least the plan's 5), not as one "
+        "mean curve: RL convergence is a seed lottery (lessons 11-13)",
+        module="force-rl",
+        task="t3",
+        arms={"a": {"arm": "number of RL seeds evaluated"}},
+        metric="RL seeds evaluated on the shared seeds (per-seed finals in the measured text)",
+        expect="a >= 5",
+        source="course plan §8 M4 (5 seeds, per-seed curves); lessons 11-13 seed spread",
+        url=_FRFT_URL,
+    ),
+)

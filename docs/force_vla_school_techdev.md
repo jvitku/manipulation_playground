@@ -231,6 +231,42 @@ controller selects an axis at |f| > 0.5 N — 0.02 in model units — so residue
 dimensions could flip an axis into admittance mid-air. The lesson-18 eval measures the
 spurious-selection rate before any deadband is added.
 
+**18.8 — a position head cannot even reach the plate.** Both position-head arms scored 0/100
+with zero contact steps (peak force ~0.5 N): they hover. Found by the eval's contact-step count,
+then reading the wipe expert: its engage step is `dp = 0` with a force target, and its wipe
+steps keep `dp_z = 0` — the descent to the surface exists only in `f_target`, executed by the
+admittance controller. A position-head clone learns `dp_z ≈ 0`. Consequence for reading the
+board: on the wipe task the force output also carries the motion to the surface, so the 99-point
+gap measures "can the policy reach the surface at all", not only force tracking. (Same family as
+entry 15.7 — what the demonstrator puts in which action channel decides what can be learned.)
+
+**18.9 — the force-tracking bar missed on "firmly".** The full model wiped 99/100 but its contact
+RMSE was 1.155 N against the 1.0 N bar: 0.715 N for the 3 N instruction, 1.41 N for 8 N, with
+peaks up to 11 N — likely touchdown impacts at the higher target (not yet verified). The task's
+own success band (±1.5 N for 80 % of contact) passes; the plan's stricter gate does not. Bar kept;
+both numbers reported.
+
+**18.10 — the subtask prompt is load-bearing, measured.** Freezing the prompt at "approach" for the
+whole episode dropped the full model from 99 % to 15/30 (firmly 2/14, gently 13/16) — the subtask
+word matters most for the 8 N instruction.
+
+**18.11 — spurious force-axis selection, measured.** The risk from 18.7: x/y were selected for
+force control on 0.23 % of 2,144 free-space steps — no deadband needed. The z-selection rate in
+free space (87.7 %) mixes the legitimate force-controlled descent with any spurious selections
+and cannot be split with the current counters.
+
+**18.12 — the gate tilt is real, but not where expected.** The force expert's weight rises from
+0.19 (free space) to 0.29 (contact) averaged over token groups — claim confirmed — but the tilt
+comes from the vision and text tokens (0.06 → 0.27, 0.13 → 0.34); the force token's own
+force-expert weight goes slightly the other way (0.44 → 0.39). Report the breakdown, not just
+the average.
+
+**18.13 — budgeting on a saturated host.** Training ran at 9 steps/s instead of the calibrated 25
+(load ~115 on 24 cores), so the suite was cut to 8k steps per arm; the 100-episode eval ran as 8
+parallel windows over one shared seed block and was merged (counts add exactly; RMSE and gate
+means re-weighted by contact steps and decisions). Windowed evals over a fixed seed block
+parallelise without changing the seeds.
+
 ## Lesson 19 — runtime RL on the frozen VLA (M4)
 
 **19.1 — on the button task the residual had nothing to fix.** Symptom: two 5k-step RL runs left

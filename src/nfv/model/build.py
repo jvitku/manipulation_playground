@@ -17,7 +17,12 @@ Action scaling (fixed, not fitted — a checkpoint needs no data statistics): th
 dp to ±DP_MAX (0.05 m) per axis and the gripper lives in [0, 1], so model units are
 dp / DP_MAX in [-1, 1] and gripper * 2 - 1 in [-1, 1]; flow matching runs in model units.
 
-Shape legend: B = batch, H = chunk (16), A = act_dim (4), D = d_model, S = prefix tokens,
+Action scaling for head="hybrid" (lesson 18): nfv.model.forcevla2.hybrid_to_model — the same
+dp / gripper units plus f_target / (25 N, 2.5 Nm) and s * 2 - 1; the progress label is the
+dataset's per-subtask ``s_sub`` (nfv.sim.subtasks.hindsight_progress).
+
+Shape legend: B = batch, H = chunk (16), A = act_dim (4, or 11 hybrid), D = d_model,
+S = prefix tokens,
 T = max_text. Batch contract = nfv.data.dataset plus "text" int64 [B, T] (nfv.train adds it).
 """
 
@@ -33,6 +38,7 @@ from nfv.model.config import ModelConfig
 from nfv.model.expert import ActionExpert
 from nfv.model.flow import FlowMatching
 from nfv.model.force_in import BALANCE_LOSS_COEF, ForceInput, apply_force_noise
+from nfv.model.forcevla2 import ForceVLA2Fusion, hybrid_from_model, hybrid_to_model
 from nfv.model.text import BLANK_INSTRUCTION, TextEncoder, tokenize
 from nfv.model.trunk import Trunk, attn_snapshot
 from nfv.model.vision import VisionEncoder
@@ -77,6 +83,14 @@ class NanoVLA(nn.Module):
         )
         self.head = nn.Linear(cfg.d_model, cfg.act_dim)  # chunk features -> velocity
         self.force = ForceInput(cfg)  # the force_in route (no parameters for "none")
+        # ForceVLA2 (lesson 18): cross-attention + bypass + 3-expert MoE; its output REPLACES
+        # E as the action expert's memory (``condition``). None for every other route.
+        self.fv2 = None
+        if cfg.force_in == "forcevla2":
+            n_vision = cfg.cameras * (cfg.img // 16) ** 2  # 4 stride-2 convs: 36 per camera
+            self.fv2 = ForceVLA2Fusion(
+                cfg.d_model, cfg.d_state, cfg.heads, cfg.expert_inputs, n_vision=n_vision
+            )
         # The blank text's token ids [1, T] (text_dropout / cfg_w read them); non-persistent:
         # a constant of the vocabulary, deliberately absent from every checkpoint state_dict.
         self.register_buffer(
@@ -108,6 +122,16 @@ class NanoVLA(nn.Module):
         e, attns = self.trunk(tokens, key_mask)  # E [B, S, D]
         e = self.force.post_trunk(e, wrench)  # concat_after's fuse; else identity
         return e, key_mask, attns
+
+    def condition(self, e, e_mask, state, wrench):
+        """The action expert's memory: (memory [B, S', D], mask [B, S'], fv2 aux | None).
+
+        ForceVLA2: ``ForceVLA2Fusion(E, state, wrench)`` -> cond [B, S+3, D] (E_MoE projected),
+        which replaces E; every other route returns the prefix E unchanged.
+        """
+        if self.fv2 is None:
+            return e, e_mask, None
+        return self.fv2(e, e_mask, state, wrench)
 
     def velocity(self, x_tau, tau, state, e, e_mask, return_attn: bool = False, feats_add=None):
         """One flow-velocity evaluation: v [B, H, A] (+ the expert's attention maps).
@@ -156,7 +180,10 @@ class Policy(nn.Module):
         with that probability (the CFG conditioning dropout); at 0 the branch is never
         entered, so the default training consumes exactly the pre-round-2 RNG stream.
         """
-        x0 = actions_to_model(batch["dp"], batch["gripper"])  # [B, H, A] in model units
+        if self.cfg.head == "hybrid":  # [dp ; gripper ; f_target ; s] -> [B, H, 11]
+            x0 = hybrid_to_model(batch["dp"], batch["gripper"], batch["f_target"], batch["s_sub"])
+        else:
+            x0 = actions_to_model(batch["dp"], batch["gripper"])  # [B, H, 4] in model units
         text = batch["text"]
         if self.cfg.text_dropout > 0:
             drop = torch.rand(text.shape[0], device=text.device) < self.cfg.text_dropout
@@ -166,6 +193,7 @@ class Policy(nn.Module):
             wrench = apply_force_noise(batch["wrench"], self.cfg.force_noise)
         e, e_mask, _ = self.net.prefix(batch["rgb_static"], batch["rgb_wrist"], text, wrench)
         feats_add = self.net.force.expert_add(e, wrench, self.cfg.chunk)  # fvlmoe or None
+        e, e_mask, fv2_aux = self.net.condition(e, e_mask, batch["state"], wrench)  # ForceVLA2
 
         def velocity(x_tau, tau):
             return self.net.velocity(x_tau, tau, batch["state"], e, e_mask, feats_add=feats_add)
@@ -174,6 +202,12 @@ class Policy(nn.Module):
         per_dim = aux["per_dim"]  # [A] masked MSE per action dimension
         loss = per.mean()
         out = {"loss_dp": float(per_dim[:3].mean()), "loss_gripper": float(per_dim[3])}
+        if self.cfg.head == "hybrid":
+            out["loss_f_target"] = float(per_dim[4:10].mean())
+            out["loss_s"] = float(per_dim[10])
+        if fv2_aux is not None:  # mean gate weight of the force expert per token group
+            for group, w in fv2_aux["gate_groups"].items():
+                out[f"gate_force_{group}"] = float(w[:, 2].mean())
         moe_aux = self.net.force.last_aux  # set by the LIMoE routes during the forward
         if moe_aux is not None:
             out["moe_fraction_dropped"] = float(moe_aux["fraction_dropped"])
@@ -187,7 +221,8 @@ class Policy(nn.Module):
         """One Obs + instruction -> the ActionChunk contract (plan §interfaces), via the EMA.
 
         Returns {"dp": f32 [H, 3] (env units, clamped), "gripper": f32 [H] in [0, 1],
-        "f_target": None, "s": None (both land with the lesson-18 hybrid head),
+        "f_target": f32 [H, 6] (N, Nm) and "s": f32 [H] in [0, 1] with head="hybrid", else
+        None (the position head), plus with ForceVLA2 aux["gate_groups"],
         "aux": attention snapshots (trunk last layer + the final Euler step's expert maps)}.
         The executor is expected to run the first cfg.n_exec of the H steps.
 
@@ -217,8 +252,10 @@ class Policy(nn.Module):
         if w != 1.0:  # the CFG blank branch, encoded once per decision (before the cond pass)
             e_b, e_mask_b, _ = self.ema.prefix(rgb_s, rgb_w, self.ema.blank_text, wrench)
             feats_add_b = self.ema.force.expert_add(e_b, wrench, cfg.chunk)
+            e_b, e_mask_b, _ = self.ema.condition(e_b, e_mask_b, state, wrench)
         e, e_mask, trunk_attns = self.ema.prefix(rgb_s, rgb_w, text, wrench)
         feats_add = self.ema.force.expert_add(e, wrench, cfg.chunk)  # fvlmoe or None
+        e, e_mask, fv2_aux = self.ema.condition(e, e_mask, state, wrench)  # ForceVLA2 memory
         last_attn: dict[str, torch.Tensor] = {}
 
         def velocity(x_tau, tau):
@@ -234,14 +271,24 @@ class Policy(nn.Module):
         x = self.flow.sample(
             velocity, (1, cfg.chunk, cfg.act_dim), cfg.euler_steps, dev, generator=generator
         )  # [1, H, A] in model units
-        dp, gripper = actions_from_model(x)  # env units
         aux = {"trunk_attn": attn_snapshot(trunk_attns[-1])}
         aux.update({k: attn_snapshot(v) for k, v in last_attn.items()})
+        if fv2_aux is not None:  # gate weights [visual, state, force] per token group
+            aux["gate_groups"] = {k: v[0].tolist() for k, v in fv2_aux["gate_groups"].items()}
+            aux["fv2_cross_attn"] = attn_snapshot(fv2_aux["cross_attn"])
+        f_target = s = None
+        if cfg.head == "hybrid":
+            parts = hybrid_from_model(x[0])  # env units, clamped
+            dp, gripper = parts["dp"][None], parts["gripper"][None]
+            f_target = parts["f_target"].cpu().numpy().astype(np.float32)  # [H, 6] N, Nm
+            s = parts["s"].cpu().numpy().astype(np.float32)  # [H] progress in [0, 1]
+        else:
+            dp, gripper = actions_from_model(x)  # env units
         return {
             "dp": dp[0].cpu().numpy().astype(np.float32),  # [H, 3]
             "gripper": gripper[0].cpu().numpy().astype(np.float32),  # [H]
-            "f_target": None,
-            "s": None,
+            "f_target": f_target,
+            "s": s,
             "aux": aux,
         }
 
@@ -261,6 +308,7 @@ def param_table(policy: Policy) -> dict[str, int]:
         "expert": count(net.expert),
         "head": count(net.head),
         "force": count(net.force),  # 0 for force_in="none"
+        "fusion": count(net.fv2) if net.fv2 is not None else 0,  # ForceVLA2 (lesson 18)
     }
     table["total"] = sum(table.values())
     return table

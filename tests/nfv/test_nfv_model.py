@@ -105,18 +105,16 @@ def test_vocab_covers_tasks_zero_unks():
             assert subtask in VOCAB, f"subtask word {subtask!r} missing from VOCAB"
 
 
-def test_build_refuses_unlanded_flags():
-    """Lesson-18 switches exist in the config but refuse to build until their lesson.
+def test_build_refuses_inconsistent_flags():
+    """Every lesson-17/18 switch is implemented; combinations that would ignore one refuse.
 
-    (The five lesson-17 force_in routes landed with nfv.model.force_in — covered in
-    tests/nfv/test_nfv_limoe_routes.py; forcevla2 is the one force_in still gated.)
+    (The five lesson-17 force_in routes: tests/nfv/test_nfv_limoe_routes.py; ForceVLA2's
+    modules and wiring: tests/nfv/test_nfv_forcevla2.py.)
     """
-    with pytest.raises(NotImplementedError, match="lesson 18"):
-        build(ModelConfig(force_in="forcevla2"))
-    with pytest.raises(NotImplementedError, match="lesson 18"):
-        build(ModelConfig(head="hybrid", act_dim=11))
-    with pytest.raises(NotImplementedError, match="lesson 18"):
-        build(ModelConfig(force_prompt=True))
+    with pytest.raises(ValueError, match="11-D"):
+        build(ModelConfig(head="hybrid"))  # act_dim left at the position head's 4
+    with pytest.raises(ValueError, match="expert_inputs"):
+        build(ModelConfig(expert_inputs="none"))  # no ForceVLA2 fusion to ablate
     with pytest.raises(ValueError, match="force_in"):
         build(ModelConfig(force_in="bogus"))
 
