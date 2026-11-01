@@ -6,9 +6,10 @@ contain behaviour a camera-only policy cannot reproduce without reading the forc
 
 Experts are small FSMs emitting one 10 Hz :class:`~nfv.sim.env.Action` per call, in the
 patterns the plan names: two-speed approach everywhere (fast > 5 cm from the goal, slow
-below), press-and-back-off on T1 (hybrid press at threshold + margin, stop right after the
-click), wipe with the hybrid controller holding the commanded force on T2, and a spiral
-search on a missed insertion on T3.
+below), a position-mode press on T1 (1 mm/step descent carried entirely by the dp labels —
+the wrench is the only observable stop cue; back off after the click), wipe with the hybrid
+controller holding the commanded force on T2, and a spiral search on a missed insertion
+on T3.
 
 Per step each expert also emits (``ExpertStep``):
   * ``subtask_id`` — its FSM phase mapped into the task's SUBTASKS (the demo label; the env's
@@ -168,16 +169,23 @@ class ReachGraspExpert(Expert):
 
 
 class PressButtonExpert(Expert):
-    """T1: approach the instructed button, hybrid press to threshold + margin, back off.
+    """T1: approach the instructed button, press in POSITION mode (1 mm/step), back off.
 
-    Privileged: reads the hidden threshold, commands f_z = −(threshold + PRESS_MARGIN) and
-    stops right after the task latches the click — the peak stays near the threshold, far
-    under the 1.5x-threshold success bound.
+    Privileged: reads the hidden threshold (for the progress labels) and the click latch
+    (its stop signal). The press itself never touches the hybrid controller: every press
+    step is ``Action(dp=(0, 0, -PRESS_DP))``, so the demos carry the whole descent in the
+    dp labels and a position-head policy has a press to clone. When to STOP is observable
+    only through the wrench: the quasi-static force ramps at K_eff * PRESS_DP ≈ 0.38 N per
+    step (K_p, pad and cap spring in series) and the click comes at the hidden threshold.
+    The slow descent bounds the post-click overshoot to under one step of ramp plus the cap
+    weight, so the episode peak stays well below the 1.5x-threshold success bound even at
+    the lowest threshold (3 N) — measured, see tests/nfv/measure_t1_overshoot.py.
     """
 
     PHASES = ("approach", "descend", "press", "back_off")
     PHASE_SUBTASK = (0, 0, 1, 2)  # task SUBTASKS: approach, press, done
-    PRESS_MARGIN = 0.8  # N commanded past the click force
+    HOVER_M = 0.006  # m, descend target: tip this far above the cap top (still free space)
+    PRESS_DP = 0.001  # m per 10 Hz step = 1 cm/s position-mode press descent
 
     def __init__(self, env: Env):
         super().__init__(env)
@@ -194,8 +202,8 @@ class PressButtonExpert(Expert):
                 self.to_phase(1)
             else:
                 return self.step(Action(dp=self.dp_to(tgt)), float(np.linalg.norm(tgt - cur)))
-        if self._phase == 1:  # descend: tip 15 mm above the cap top
-            jz_t = self.tool_z_for(task.CAP_TOP_Z + 0.015 - TIP_TIP_Z)
+        if self._phase == 1:  # descend: tip HOVER_M above the cap top, still free of contact
+            jz_t = self.tool_z_for(task.CAP_TOP_Z + self.HOVER_M - TIP_TIP_Z)
             tgt = np.array([bxy[0], bxy[1], jz_t])
             if abs(jz_t - cur[2]) < 0.002:
                 self.to_phase(2)
@@ -203,15 +211,17 @@ class PressButtonExpert(Expert):
                 return self.step(
                     Action(dp=self.dp_to(tgt, SPEED_SLOW)), float(np.linalg.norm(tgt - cur))
                 )
-        if self._phase == 2:  # press: hybrid, force on z only
+        if self._phase == 2:  # press: position-mode descent, PRESS_DP per step, no f_target
             if task.clicked[task.target]:
                 self.to_phase(3)
             else:
-                ft = np.array([0.0, 0.0, -(thr + self.PRESS_MARGIN), 0.0, 0.0, 0.0])
                 d_rem = max(0.0, thr / task.K_SPRING - task.depression(self.env, task.target))
                 f_now = abs(float(self.env.wrench[2]))
-                return self.step(Action(dp=np.zeros(3), f_target=ft), d_rem, f_now, 0.0, thr)
-        # back off (usually unreached: the env latches success on the click step)
+                return self.step(
+                    Action(dp=np.array([0.0, 0.0, -self.PRESS_DP])), d_rem, f_now, 0.0, thr
+                )
+        # back off: position-mode retreat (in practice unreached: the env latches the episode
+        # verdict — success or over_force — at the end of the step the click fired in)
         return self.step(Action(dp=np.array([0.0, 0.0, 0.02])), 0.0, 0.0, 0.0, thr)
 
 

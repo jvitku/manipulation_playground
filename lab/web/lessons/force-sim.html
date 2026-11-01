@@ -254,8 +254,8 @@ any policy could react. Click a block's &#9432; for its purpose, shapes and upda
 
 <h3>What to watch</h3>
 <p>All numbers below were measured in this image (the M0 gate run and this task's own eval scenarios, eval seed 0).
-<b>Train</b> records the demo datasets: at the defaults (4 tasks &times; 200 demos, 0.5 mm noise) about 6&ndash;7
-minutes &mdash; measured 0.30/0.29/0.80/0.47 s per stored demo for T0/T1/T2/T3, ~0.2 MB each compressed &mdash; into
+<b>Train</b> records the demo datasets: at the defaults (4 tasks &times; 200 demos, 0.5 mm noise) about 7
+minutes &mdash; measured 0.30/0.59/0.80/0.47 s per stored demo for T0/T1/T2/T3, ~0.2 MB each compressed &mdash; into
 <code>lab/data/nfv/demos/&lt;task&gt;/</code>, the canonical location lessons 16&ndash;19 read. The charts show per-task
 progress and the expert's success-of-tries (failed episodes are re-drawn, not stored).</p>
 <p><b>Evaluate</b> is the showcase, and the <b>claims board</b> at the top of the viewer is how to read it. Each
@@ -285,8 +285,13 @@ error dictates &mdash; 0.7 N on a nominal-height plate, 6.8 N on a +8 mm one, no
 <p>In the <b>trace panel</b>, the blue line is measured F<sub>z</sub>, the dashed red line the commanded force
 (both negative when pressing &mdash; the sign convention), the green/grey strip the z-axis controller mode per step,
 and the markers show click / abort / seated events; scrub to read values and the expert's subtask label. T1 episodes
-are worth a scrub: the press force ramps to just past the hidden threshold (commanded threshold + 0.8 N) and stops
-right at the click &mdash; peaks stay well under the 1.5&times; bound.</p>
+are worth a scrub: the press is a pure <em>position-mode</em> descent at 1 mm per step &mdash; the mode strip stays
+grey and F<sub>z</sub> climbs a &asymp;0.38 N-per-step staircase (\(K_{\mathrm{eff}} \times 1\) mm) until the episode
+ends at the click. The slowness is deliberate, twice over: the demos must carry the press in their <em>dp labels</em>
+(lesson 16's claims board caught an earlier hybrid-press expert whose press steps stored dp = 0, leaving a
+position-head policy nothing to clone), and the 10 Hz stop granularity must keep the post-click overshoot inside the
+success bound &mdash; measured with the threshold forced to its worst case 3 N over 100 seeds: peak/threshold at most
+<b>1.13</b>, mean 1.00 (<code>tests/nfv/measure_t1_overshoot.py</code>), well under the 1.5&times; bound.</p>
 <p><b>Exercises.</b> (1) Run <em>expert_rollouts</em> at 100 episodes and watch c1 flip from INCONCLUSIVE to
 CONFIRMED &mdash; then try episodes = 5 and see how wide a 5/5 interval really is. (2) Run
 <em>kp_wipe_150_vs_800</em> and read the two arms' tables and traces against \(F = K_{\mathrm{eff}}\,\delta\):

@@ -56,3 +56,16 @@ def test_record_and_dataset_roundtrip(tmp_path):
     tail = ds.sample_batch(1, np.random.default_rng(1), chunk=8)
     assert bool(tail["pad_mask"][0, 0]) and not bool(tail["pad_mask"][0, 1])
     assert float(tail["dp"][0, 1:].abs().sum()) == 0.0
+
+
+def test_t1_demo_press_lives_in_dp(tmp_path):
+    """The lesson-16 defect guard: a T1 demo's press must live in the dp LABELS — every
+    press-phase step descends in position mode (dp_z < 0) and the episode never commands a
+    wrench. A press hidden in f_target leaves a position-head policy nothing to clone."""
+    index = record_demos("t1", n=2, out_dir=tmp_path, noise_mm=0.5)
+    for ep in index["episodes"]:
+        with np.load(tmp_path / "t1" / ep["file"]) as z:
+            press = z["subtask"] == 1  # the expert's press phase, mapped into task SUBTASKS
+            assert press.any(), "no press phase was recorded"
+            assert (z["dp"][press, 2] < 0).all(), "a press-phase dp label does not descend"
+            assert not z["f_target"].any(), "T1 demos must never command a wrench"
