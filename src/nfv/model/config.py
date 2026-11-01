@@ -23,10 +23,17 @@ Course flags (lessons 17-19; defaults = nanoVLA, i.e. everything off):
     force_prompt   ForceVLA2: append the running subtask's words to the instruction
     head           position (Δp + gripper) | hybrid (+ f_target 6 + progress 1, lesson 18)
     force_noise    eval-time twin/FACT checks: off | zero | shuffle | gaussian
+    text_dropout   train-time: per sample, replace the instruction with the constant blank
+                   text (nfv.model.text.BLANK_INSTRUCTION) with this probability — the
+                   conditioning dropout that classifier-free guidance needs (lesson 17 r2)
+    cfg_w          act-time classifier-free guidance weight on the instruction: each Euler
+                   step evaluates v = v_blank + w · (v_cond − v_blank). 1.0 is exactly the
+                   conditioned model (the blank branch is skipped entirely)
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from nfv.model.text import MAX_TEXT, VOCAB_SIZE
@@ -74,6 +81,8 @@ class ModelConfig:
     force_prompt: bool = False
     head: str = "position"
     force_noise: str = "off"  # eval-time only: the twin / FACT checks
+    text_dropout: float = 0.0  # train-time: P(instruction -> the blank text) per sample
+    cfg_w: float = 1.0  # act-time CFG weight on the instruction (1.0 = today's model)
 
 
 def _check(value: str, allowed: tuple[str, ...], name: str) -> None:
@@ -94,6 +103,10 @@ def build(cfg: ModelConfig):
     _check(cfg.expert_inputs, EXPERT_INPUTS, "expert_inputs")
     _check(cfg.head, HEAD, "head")
     _check(cfg.force_noise, FORCE_NOISE, "force_noise")
+    if not 0.0 <= cfg.text_dropout < 1.0:
+        raise ValueError(f"text_dropout={cfg.text_dropout!r} not in [0, 1)")
+    if not math.isfinite(cfg.cfg_w) or cfg.cfg_w < 0.0:
+        raise ValueError(f"cfg_w={cfg.cfg_w!r} must be a finite weight >= 0")
     if cfg.force_in == "forcevla2":
         raise NotImplementedError("force_in='forcevla2' lands in lesson 18")
     if cfg.force_prompt:

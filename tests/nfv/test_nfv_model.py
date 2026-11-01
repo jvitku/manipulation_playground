@@ -5,13 +5,15 @@ The random batch below follows the dataset contract (nfv/data/dataset.py legend)
 "text" ids nfv.train adds; B = batch, H = chunk (16), T = max_text (12).
 """
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
 
 from nfv.model import ModelConfig, build
-from nfv.model.build import actions_from_model, actions_to_model, param_table
-from nfv.model.text import PAD, UNK, VOCAB, tokenize
+from nfv.model.build import actions_from_model, actions_to_model, cfg_velocity, param_table
+from nfv.model.text import BLANK_INSTRUCTION, PAD, UNK, VOCAB, tokenize
 from nfv.seeds import eval_seeds
 from nfv.sim import tasks
 from nfv.train import fit, sample_batch_with_text
@@ -196,3 +198,148 @@ def test_fit_determinism_same_seed_same_losses():
     l2 = [row["loss"] for row in h2 if "loss" in row]
     assert len(l1) == 3
     assert l1 == pytest.approx(l2, abs=1e-9)
+
+
+# ---- lesson 17 round 2: instruction dropout + classifier-free guidance ----------------------
+
+
+def _small_cfg(**kw) -> ModelConfig:
+    """A CPU-cheap config for the CFG act() tests (1+1 layers, chunk 4, 2 Euler steps)."""
+    return ModelConfig(trunk_layers=1, expert_layers=1, chunk=4, n_exec=2, euler_steps=2, **kw)
+
+
+def _fake_obs(seed: int = 7) -> SimpleNamespace:
+    rng = np.random.default_rng(seed)
+    return SimpleNamespace(
+        rgb_static=rng.integers(0, 256, (96, 96, 3), dtype=np.uint8),
+        rgb_wrist=rng.integers(0, 256, (96, 96, 3), dtype=np.uint8),
+        state=rng.standard_normal(8).astype(np.float32),
+        wrench=rng.standard_normal(6).astype(np.float32),
+        wrench_window=np.zeros((20, 6), np.float32),
+        subtask_id=0,
+        t=0.0,
+    )
+
+
+def _count_prefix_calls(policy) -> list:
+    calls = []
+    orig = policy.ema.prefix
+
+    def spy(rgb_s, rgb_w, text, wrench=None):
+        calls.append(text.detach().clone())
+        return orig(rgb_s, rgb_w, text, wrench)
+
+    policy.ema.prefix = spy  # instance attribute shadows the bound method
+    return calls
+
+
+def test_cfg_velocity_hand_values():
+    """The CFG combination v = v_blank + w (v_cond - v_blank), checked by hand."""
+    v_c = torch.tensor([2.0, -1.0])
+    v_b = torch.tensor([1.0, 1.0])
+    assert torch.equal(cfg_velocity(v_c, v_b, 1.0), v_c)  # w = 1: the conditioned model
+    assert torch.equal(cfg_velocity(v_c, v_b, 0.0), v_b)  # w = 0: the blank model
+    assert torch.equal(cfg_velocity(v_c, v_b, 3.0), torch.tensor([4.0, -5.0]))  # extrapolates
+    assert torch.equal(cfg_velocity(v_c, v_b, 0.5), torch.tensor([1.5, 0.0]))  # interpolates
+
+
+def test_cfg_w_one_skips_the_blank_branch():
+    """At the default w = 1.0, act() encodes exactly ONE prefix - the conditioned one."""
+    torch.manual_seed(0)
+    policy = build(_small_cfg()).eval()
+    calls = _count_prefix_calls(policy)
+    policy.act(_fake_obs(), "press the red button", generator=torch.Generator().manual_seed(0))
+    assert len(calls) == 1
+    assert torch.equal(calls[0][0], torch.from_numpy(tokenize("press the red button")))
+
+
+def test_cfg_w_encodes_blank_before_cond_and_moves_the_action():
+    """w != 1 encodes the blank prefix FIRST (aux stays the cond pass's) and changes dp."""
+    torch.manual_seed(0)
+    p1 = build(_small_cfg()).eval()
+    torch.manual_seed(0)  # identical weights: only the CFG combination differs
+    p3 = build(_small_cfg(cfg_w=3.0)).eval()
+    obs = _fake_obs()
+    a1 = p1.act(obs, "press the red button", generator=torch.Generator().manual_seed(5))
+    calls = _count_prefix_calls(p3)
+    a3 = p3.act(obs, "press the red button", generator=torch.Generator().manual_seed(5))
+    assert len(calls) == 2
+    blank = torch.from_numpy(tokenize(BLANK_INSTRUCTION))
+    assert torch.equal(calls[0][0], blank)  # blank first ...
+    assert torch.equal(calls[1][0], torch.from_numpy(tokenize("press the red button")))  # cond
+    assert not np.array_equal(a1["dp"], a3["dp"])  # the guidance moved the sampled chunk
+
+
+def test_cfg_on_the_blank_instruction_is_the_identity():
+    """Conditioning ON the blank text makes v_cond == v_blank, so any w is a bit-exact no-op
+    (lesson 16's arm C under CFG - the documented no-op by construction)."""
+    torch.manual_seed(0)
+    p1 = build(_small_cfg()).eval()
+    torch.manual_seed(0)
+    p3 = build(_small_cfg(cfg_w=3.0)).eval()
+    obs = _fake_obs()
+    a1 = p1.act(obs, BLANK_INSTRUCTION, generator=torch.Generator().manual_seed(5))
+    a3 = p3.act(obs, BLANK_INSTRUCTION, generator=torch.Generator().manual_seed(5))
+    assert np.array_equal(a1["dp"], a3["dp"]) and np.array_equal(a1["gripper"], a3["gripper"])
+
+
+def test_text_dropout_zero_draws_no_rng(policy):
+    """p = 0 never enters the dropout branch: loss() works with torch.rand forbidden, so the
+    default training consumes exactly the pre-round-2 RNG stream."""
+    batch = random_batch(policy.cfg)  # built before torch.rand is forbidden
+
+    def boom(*a, **k):
+        raise AssertionError("text_dropout=0 must not draw from torch.rand")
+
+    orig = torch.rand
+    torch.rand = boom
+    try:
+        loss, _ = policy.loss(batch)
+    finally:
+        torch.rand = orig
+    assert torch.isfinite(loss)
+
+
+def test_text_dropout_swaps_the_drawn_rows_for_the_blank_text():
+    """With the draw pinned, exactly the rows below p train on the blank ids."""
+    torch.manual_seed(0)
+    policy = build(_small_cfg(text_dropout=0.5))
+    batch = random_batch(policy.cfg, b=4)
+    seen = {}
+    orig_prefix = policy.net.prefix
+
+    def spy(rgb_s, rgb_w, text, wrench=None):
+        seen["text"] = text.detach().clone()
+        return orig_prefix(rgb_s, rgb_w, text, wrench)
+
+    policy.net.prefix = spy
+    orig_rand = torch.rand
+    torch.rand = lambda *a, **k: torch.tensor([0.0, 0.9, 0.1, 0.9])  # rows 0 and 2 drop
+    try:
+        policy.loss(batch)
+    finally:
+        torch.rand = orig_rand
+    blank = torch.from_numpy(tokenize(BLANK_INSTRUCTION, policy.cfg.max_text))
+    assert torch.equal(seen["text"][0], blank) and torch.equal(seen["text"][2], blank)
+    assert torch.equal(seen["text"][1], batch["text"][1])
+    assert torch.equal(seen["text"][3], batch["text"][3])
+
+
+def test_blank_text_buffer_is_constant_and_absent_from_checkpoints(policy):
+    """The blank ids live on the module (device-safe) but never in a state_dict - round-1
+    checkpoints load into the round-2 model strictly, and vice versa."""
+    assert torch.equal(policy.net.blank_text[0], torch.from_numpy(tokenize(BLANK_INSTRUCTION)))
+    assert "blank_text" not in policy.net.state_dict()
+    fresh = build(ModelConfig())
+    fresh.net.load_state_dict(policy.net.state_dict())  # strict=True by default
+
+
+def test_build_validates_round2_flags():
+    with pytest.raises(ValueError, match="text_dropout"):
+        build(ModelConfig(text_dropout=1.0))
+    with pytest.raises(ValueError, match="text_dropout"):
+        build(ModelConfig(text_dropout=-0.1))
+    with pytest.raises(ValueError, match="cfg_w"):
+        build(ModelConfig(cfg_w=-1.0))
+    with pytest.raises(ValueError, match="cfg_w"):
+        build(ModelConfig(cfg_w=float("inf")))

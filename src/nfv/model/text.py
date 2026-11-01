@@ -41,6 +41,14 @@ WORD_ID = {w: i for i, w in enumerate(VOCAB)}
 VOCAB_SIZE = len(VOCAB)
 assert VOCAB_SIZE <= 64, "the plan caps the course vocabulary at 64 words"
 
+# The no-language text: ONE constant <unk> token — text that exists but says nothing. An
+# all-<pad> text would mask every key of the text encoder's self-attention (softmax over
+# -inf = NaN), so "blank" is a real token carrying no information. Lesson 16's arm C trains
+# and rolls out on it; lesson 17's instruction dropout (ModelConfig.text_dropout) swaps it in
+# per training sample, and classifier-free guidance (ModelConfig.cfg_w) evaluates the blank
+# branch against the conditioned one at act time.
+BLANK_INSTRUCTION = "<unk>"
+
 
 def tokenize(text: str, max_text: int = MAX_TEXT) -> np.ndarray:
     """One instruction -> int64 ids [max_text]: lowercase, split, look up, pad with <pad>."""

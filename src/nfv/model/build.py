@@ -33,7 +33,7 @@ from nfv.model.config import ModelConfig
 from nfv.model.expert import ActionExpert
 from nfv.model.flow import FlowMatching
 from nfv.model.force_in import BALANCE_LOSS_COEF, ForceInput, apply_force_noise
-from nfv.model.text import TextEncoder, tokenize
+from nfv.model.text import BLANK_INSTRUCTION, TextEncoder, tokenize
 from nfv.model.trunk import Trunk, attn_snapshot
 from nfv.model.vision import VisionEncoder
 from nfv.sim.controllers import DP_MAX  # ±0.05 m: the env's per-axis dp clamp
@@ -53,6 +53,15 @@ def actions_from_model(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     return dp, gripper
 
 
+def cfg_velocity(v_cond: torch.Tensor, v_blank: torch.Tensor, w: float) -> torch.Tensor:
+    """Classifier-free guidance combination: v = v_blank + w * (v_cond - v_blank).
+
+    w = 1 returns v_cond exactly; w = 0 the unconditioned velocity; w > 1 extrapolates past
+    the conditioned prediction along the direction the instruction adds (Ho & Salimans 2022).
+    """
+    return v_blank + w * (v_cond - v_blank)
+
+
 class NanoVLA(nn.Module):
     """The ≈ 7 M-parameter network; blocks named after the plan's table (param_table keys)."""
 
@@ -68,6 +77,13 @@ class NanoVLA(nn.Module):
         )
         self.head = nn.Linear(cfg.d_model, cfg.act_dim)  # chunk features -> velocity
         self.force = ForceInput(cfg)  # the force_in route (no parameters for "none")
+        # The blank text's token ids [1, T] (text_dropout / cfg_w read them); non-persistent:
+        # a constant of the vocabulary, deliberately absent from every checkpoint state_dict.
+        self.register_buffer(
+            "blank_text",
+            torch.from_numpy(tokenize(BLANK_INSTRUCTION, cfg.max_text))[None],
+            persistent=False,
+        )
 
     def prefix(self, rgb_static, rgb_wrist, text_ids, wrench=None):
         """[image ; text (; force tokens)] -> (E [B, S, D], key_mask [B, S], attns list).
@@ -136,14 +152,19 @@ class Policy(nn.Module):
         when force_in is on (the dataset serves it; force_noise corrupts it here, the same
         place act() does). With cfg.balance_loss the LIMoE's load-balancing aux is ADDED
         (coef BALANCE_LOSS_COEF) — the reference only computes it (force_in.py docstring).
+        With cfg.text_dropout > 0, each sample's instruction is replaced by the blank text
+        with that probability (the CFG conditioning dropout); at 0 the branch is never
+        entered, so the default training consumes exactly the pre-round-2 RNG stream.
         """
         x0 = actions_to_model(batch["dp"], batch["gripper"])  # [B, H, A] in model units
+        text = batch["text"]
+        if self.cfg.text_dropout > 0:
+            drop = torch.rand(text.shape[0], device=text.device) < self.cfg.text_dropout
+            text = torch.where(drop[:, None], self.net.blank_text, text)  # [B, T]
         wrench = None
         if self.net.force.needs_wrench:
             wrench = apply_force_noise(batch["wrench"], self.cfg.force_noise)
-        e, e_mask, _ = self.net.prefix(
-            batch["rgb_static"], batch["rgb_wrist"], batch["text"], wrench
-        )
+        e, e_mask, _ = self.net.prefix(batch["rgb_static"], batch["rgb_wrist"], text, wrench)
         feats_add = self.net.force.expert_add(e, wrench, self.cfg.chunk)  # fvlmoe or None
 
         def velocity(x_tau, tau):
@@ -169,6 +190,13 @@ class Policy(nn.Module):
         "f_target": None, "s": None (both land with the lesson-18 hybrid head),
         "aux": attention snapshots (trunk last layer + the final Euler step's expert maps)}.
         The executor is expected to run the first cfg.n_exec of the H steps.
+
+        With cfg.cfg_w != 1 a second, blank-instruction prefix is encoded and every Euler
+        step combines the two velocities: v = v_blank + w * (v_cond - v_blank)
+        (:func:`cfg_velocity`). The blank branch runs FIRST so force.last_aux and the aux
+        attention maps stay the conditioned pass's; at w = 1.0 it is skipped entirely, so the
+        default act() is bit-identical to the pre-round-2 model (same RNG stream: the eval-mode
+        forwards draw nothing).
         """
         cfg = self.cfg
         dev = next(self.ema.parameters()).device
@@ -184,6 +212,11 @@ class Policy(nn.Module):
             wrench = torch.from_numpy(np.asarray(obs.wrench, dtype=np.float32))[None].to(dev)
             wrench = apply_force_noise(wrench, cfg.force_noise, generator=generator)
 
+        w = float(cfg.cfg_w)
+        e_b = e_mask_b = feats_add_b = None
+        if w != 1.0:  # the CFG blank branch, encoded once per decision (before the cond pass)
+            e_b, e_mask_b, _ = self.ema.prefix(rgb_s, rgb_w, self.ema.blank_text, wrench)
+            feats_add_b = self.ema.force.expert_add(e_b, wrench, cfg.chunk)
         e, e_mask, trunk_attns = self.ema.prefix(rgb_s, rgb_w, text, wrench)
         feats_add = self.ema.force.expert_add(e, wrench, cfg.chunk)  # fvlmoe or None
         last_attn: dict[str, torch.Tensor] = {}
@@ -193,7 +226,10 @@ class Policy(nn.Module):
                 x_tau, tau, state, e, e_mask, return_attn=True, feats_add=feats_add
             )
             last_attn.update(attn)  # keep the final Euler step's maps for aux
-            return v
+            if e_b is None:
+                return v
+            v_b = self.ema.velocity(x_tau, tau, state, e_b, e_mask_b, feats_add=feats_add_b)
+            return cfg_velocity(v, v_b, w)
 
         x = self.flow.sample(
             velocity, (1, cfg.chunk, cfg.act_dim), cfg.euler_steps, dev, generator=generator
