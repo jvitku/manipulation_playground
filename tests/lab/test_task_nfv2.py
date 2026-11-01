@@ -18,7 +18,9 @@ TINY_ARCH = {"chunk": 8, "n_exec": 4, "euler_steps": 5, "trunk_layers": 2, "expe
 TINY_COMMON = {"moe": "top1_capacity", "n_experts": 2, "balance_loss": False, "task": "t1",
                "lr": 1e-3, "batch": 16, "demos": 12, "seed": 0}  # fmt: skip
 TINY_SUITE = {"preset": "claims_suite", "force_in": "fvlmoe", "steps": 120, **TINY_COMMON}
-TINY_SINGLE = {"preset": "single", "force_in": "none", "steps": 200, **TINY_COMMON}
+# the single arm doubles as the text_dropout train check (round 2's one training knob)
+TINY_SINGLE = {"preset": "single", "force_in": "none", "steps": 200, "text_dropout": 0.25,
+               **TINY_COMMON}  # fmt: skip
 SUITE_LABELS = ["none", "prefix_linear", "prefix_moe", "concat_after", "fvlmoe"]
 NOISE_LABELS = ["fvlmoe [zero]", "fvlmoe [gaussian]"]
 
@@ -74,10 +76,15 @@ def test_spec_shape():
     assert spec.order == 17 and spec.viewer == "fvrollout" and spec.vecgrids is False
     assert spec.lesson == "nano-force-vla.html"
     assert {"preset", "force_in", "moe", "n_experts", "balance_loss", "task", "steps", "lr",
-            "batch", "demos", "seed"} == {p.name for p in spec.params}  # fmt: skip
-    assert {"episodes", "eval_seed", "video", "force_noise", "ckpt_b"} == {
-        p.name for p in spec.eval_params
-    }
+            "batch", "demos", "text_dropout", "seed"} == {p.name for p in spec.params}  # fmt: skip
+    assert {"episodes", "eval_seed", "video", "force_noise", "ckpt_b", "cfg_w",
+            "n_exec_override"} == {p.name for p in spec.eval_params}  # fmt: skip
+    td = next(p for p in spec.params if p.name == "text_dropout")
+    assert td.kind == "float" and td.default == 0.0 and (td.min, td.max) == (0.0, 0.5)
+    cw = next(p for p in spec.eval_params if p.name == "cfg_w")
+    assert cw.kind == "float" and cw.default == 1.0 and (cw.min, cw.max) == (0.5, 5.0)
+    ne = next(p for p in spec.eval_params if p.name == "n_exec_override")
+    assert ne.kind == "int" and ne.default == 0 and (ne.min, ne.max) == (0, 16)
     preset = next(p for p in spec.params if p.name == "preset")
     assert preset.choices == ["single", "claims_suite"] and preset.default == "single"
     fi = next(p for p in spec.params if p.name == "force_in")
@@ -92,7 +99,12 @@ def test_spec_shape():
     assert ckb.ckpt_task == "nano-force-vla"
     assert [c["id"] for c in spec.charts] == ["loss", "eval", "speed", "lr"]
     assert {s["key"] for s in spec.charts[0]["series"]} == {
-        "loss", "a_loss", "b_loss", "c_loss", "d_loss", "e_loss"
+        "loss",
+        "a_loss",
+        "b_loss",
+        "c_loss",
+        "d_loss",
+        "e_loss",
     }
     assert spec.estimate(registry.validate_params(spec, {}, which="train")) > 0
 
@@ -137,12 +149,16 @@ def test_suite_eval_result_schema(suite_result):
     assert r["scenario"] == "claims_suite" and r["video"] is None
     assert r["episodes"] == 2 and r["n_episodes"] == 16  # 5 arms + 2 noise rows + ckpt_b
     assert set(r["arms"]) == {*SUITE_LABELS, *NOISE_LABELS, "B: single"}
+    assert r["cfg_w"] == 1.0 and r["n_exec_override"] == 0  # the default act-time recipe
     for s in r["arms"].values():
         assert s["n"] == 2 and 0.0 <= s["success"] <= 1.0
         lo, hi = s["wilson95"]
         assert 0.0 <= lo <= hi <= 1.0
         assert s["peak_force"]["max"] >= s["peak_force"]["mean"] >= 0
         assert "pressed_counts" in s and "per_instruction" in s  # every group is t1
+        bm = s["button_match"]  # instruction following, separated from press control
+        assert bm["matched"] <= bm["pressed"] <= s["n"]
+        assert bm["rate"] is None if bm["pressed"] == 0 else 0.0 <= bm["rate"] <= 1.0
     assert r["arms"]["fvlmoe"]["force_noise"] == "off"
     assert r["arms"]["fvlmoe [zero]"]["force_noise"] == "zero"
     assert r["arms"]["fvlmoe [gaussian]"]["force_noise"] == "gaussian"
@@ -212,6 +228,22 @@ def test_single_train_loss_drops_and_payload(single_trained):
     ck = torch.load(single_trained.dir / "ckpt" / "last.pt", weights_only=False)
     assert {"model", "ema", "norm", "arch", "params", "gen"} <= set(ck)
     assert ck["arch"]["force_in"] == "none" and ck["params"]["preset"] == "single"
+    assert ck["arch"]["text_dropout"] == 0.25  # the round-2 training knob reached the config
+
+
+def test_eval_knobs_roundtrip(suite_trained, tmp_path):
+    """cfg_w / n_exec_override reach every rebuilt policy and are echoed in result.json."""
+    ev = make_ctx(
+        tmp_path / "eval",
+        {"ckpt": str(suite_trained.dir / "ckpt" / "last.pt"), "episodes": 1, "eval_seed": 0,
+         "video": False, "force_noise": "off", "cfg_w": 2.0, "n_exec_override": 2},
+    )  # fmt: skip
+    tn.evaluate(ev)
+    r = json.loads((ev.dir / "result.json").read_text())
+    assert r["cfg_w"] == 2.0 and r["n_exec_override"] == 2
+    assert {*SUITE_LABELS, *NOISE_LABELS} == set(r["arms"])
+    for s in r["arms"].values():
+        assert s["n"] == 1 and 0.0 <= s["success"] <= 1.0
 
 
 def test_verdict_nonpositive_gap_form():
@@ -234,8 +266,12 @@ def test_estimate_uses_calib(monkeypatch):
     monkeypatch.setattr(
         registry,
         "calib",
-        lambda tid: {"steps_per_s": 100.0, "load_s_per_demo": 0.0, "ep_s": 0.0,
-                     "overhead_s": 0.0},  # fmt: skip
+        lambda tid: {
+            "steps_per_s": 100.0,
+            "load_s_per_demo": 0.0,
+            "ep_s": 0.0,
+            "overhead_s": 0.0,
+        },  # fmt: skip
         raising=True,
     )
     assert spec.estimate({**p, "steps": 1000, "preset": "single"}) == pytest.approx(10.0)

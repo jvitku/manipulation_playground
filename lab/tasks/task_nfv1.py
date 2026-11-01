@@ -24,13 +24,22 @@ RunContext. ``preset`` picks the shape of the run:
 knob); ``chunk``/``n_exec``/``euler_steps`` go straight into ModelConfig. BLANK_INSTRUCTION is
 a single constant ``<unk>`` token rather than the all-``<pad>`` text: with every text key
 masked, the text encoder's self-attention softmax is NaN (all keys -inf), so "no language" is
-implemented as text that exists but says nothing - an arm flag in this wrapper, no model
-change. The env still samples its real instruction (it defines which button is correct); only
+implemented as text that exists but says nothing. The constant lives in the MODEL since
+lesson 17 round 2 (nfv.model.text.BLANK_INSTRUCTION - instruction dropout and CFG condition
+on the same blank text); arm C stays a flag in this wrapper that swaps the instruction for
+it. The env still samples its real instruction (it defines which button is correct); only
 what the POLICY reads is blanked.
 
 EVAL rolls the checkpoint closed-loop on held-out seeds (`nfv.seeds.eval_seeds`, shifted by
 ``eval_seed * episodes``), executing the first n_exec steps of each predicted chunk (arch
-values, not the form's). A suite checkpoint evaluates every arm on its own task - arm C on T1
+values, not the form's). Two pure act-time knobs override the checkpoint's recipe - the
+levers lesson 17 round 2 measured: ``cfg_w`` (classifier-free guidance on the instruction,
+v = v_blank + w·(v_cond − v_blank) per Euler step; 1.0 = the plain conditioned model, and on
+arm C both branches read the same blank text so CFG is a no-op by construction) and
+``n_exec_override`` (0 = the checkpoint's trained value, else execute 1..16 steps of each
+chunk before re-planning, clamped to the chunk length). Both land in the rebuilt ModelConfig
+only - the checkpoint weights are untouched - and are echoed in result.json ("cfg_w",
+"n_exec_override"). A suite checkpoint evaluates every arm on its own task - arm C on T1
 with BOTH buttons pooled (the env's 50/50 target draw), reported per instruction plus which
 buttons it actually pressed; a single checkpoint evaluates its ``params["task"]``. Claims
 (nfv.claims.M1_CLAIMS) are filled from whatever arms the checkpoint provides: m1 c4 needs a
@@ -86,6 +95,7 @@ from lab.tasks.task_nfv0 import (
 from nfv.claims import M1_CLAIMS, NOT_MEASURED, verdict
 from nfv.data.dataset import DemoDataset
 from nfv.model import ModelConfig, build
+from nfv.model.text import BLANK_INSTRUCTION
 from nfv.seeds import TASK_NAMES, eval_seeds
 from nfv.sim.env import Action, Env
 from nfv.sim.gantry_xml import GantryParams
@@ -98,9 +108,9 @@ SUITE = (
     ("b", "B t1 default", "t1", False),
     ("c", "C t1 no-language", "t1", True),
 )
-# The no-language text: ONE constant <unk> token. An all-<pad> text would mask every key of
-# the text encoder's self-attention (softmax over -inf = NaN), so "blank" = present but empty.
-BLANK_INSTRUCTION = "<unk>"
+# The no-language text (ONE constant <unk> token) is the model's own constant now:
+# nfv.model.text.BLANK_INSTRUCTION, imported above - round 2 of lesson 17 promoted it there
+# so instruction dropout and CFG condition on the same blank text arm C uses.
 CB_SEEDS = 20  # held-out seeds of the single preset's periodic closed-loop evaluation
 CB_SEED_OFFSET = 9_000  # top of the eval block - disjoint from the eval job's offsets
 EVAL_EVERY = 5_000  # steps between evaluation points (fit also fires at the final step)
@@ -264,9 +274,7 @@ def train(ctx) -> None:
                     **captured, "params": dict(P),
                 }  # fmt: skip
                 label = "final" if i == len(arms) - 1 else f"{arm.label} trained"
-                metrics = {
-                    f"{a.key}_loss": round(arm_losses[a.label], 4) for a in arms[: i + 1]
-                }
+                metrics = {f"{a.key}_loss": round(arm_losses[a.label], 4) for a in arms[: i + 1]}
                 ctx.save_ckpt((i + 1) * steps, payload, label=label, metrics=metrics)
             if not ctx.should_continue():
                 ctx.set_status(state="stopped")
@@ -331,7 +339,7 @@ def _episode(job: _Job):
 
         rend.update_scene(env.data, camera="static")
         img = np.vstack([rend.render().copy(), _strip(fz_v, ft_v, tmax)])
-        txt = f"t {env.t:4.1f} s  Fz {float(env.wrench[2]):+6.2f} N  \"{instr}\""
+        txt = f't {env.t:4.1f} s  Fz {float(env.wrench[2]):+6.2f} N  "{instr}"'
         cv2.rectangle(img, (0, 0), (VW, 18), (255, 255, 255), -1)
         cv2.putText(img, txt, (4, 13), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (20, 20, 20), 1,
                     cv2.LINE_AA)  # fmt: skip
@@ -394,26 +402,36 @@ def _episode(job: _Job):
 
 
 # ---------------------------------------------------------------------------------- evaluate
-def _policy_from(payload: dict, device: str):
-    """Rebuild a Policy from one fit payload (arch + model + ema), ready to act on device."""
-    cfg = ModelConfig(**payload["arch"])
+def _policy_from(payload: dict, device: str, cfg_w: float = 1.0, n_exec: int = 0):
+    """Rebuild a Policy from one fit payload (arch + model + ema), ready to act on device.
+
+    ``cfg_w`` / ``n_exec`` (0 = keep the trained value) are the act-time overrides: they go
+    into the rebuilt ModelConfig only — the checkpoint weights are untouched.
+    """
+    arch = dict(payload["arch"])
+    arch["cfg_w"] = float(cfg_w)
+    if n_exec:
+        arch["n_exec"] = min(int(n_exec), int(arch["chunk"]))
+    cfg = ModelConfig(**arch)
     policy = build(cfg)
     policy.net.load_state_dict(payload["model"])
     policy.ema.load_state_dict(payload["ema"])
     return policy.to(device).eval()
 
 
-def _eval_arms(ck: dict, device: str) -> list[tuple[_Arm, object]]:
+def _eval_arms(
+    ck: dict, device: str, cfg_w: float = 1.0, n_exec: int = 0
+) -> list[tuple[_Arm, object]]:
     """(arm, policy) pairs of a checkpoint: every suite arm, or the one single model."""
     if "arms" in ck:  # the claims_suite payload
         out = []
         for label in ck["arms"]:
             pl = ck[label]
             arm = _Arm("", str(label), str(pl["task"]), bool(pl.get("blank_text")))
-            out.append((arm, _policy_from(pl, device)))
+            out.append((arm, _policy_from(pl, device, cfg_w, n_exec)))
         return out
     task = str(ck.get("params", {}).get("task", "t1"))
-    return [(_Arm("", "single", task, False), _policy_from(ck, device))]
+    return [(_Arm("", "single", task, False), _policy_from(ck, device, cfg_w, n_exec))]
 
 
 def _arm_summary(arm: _Arm, rows: list[dict]) -> dict:
@@ -492,9 +510,7 @@ def _fill_claims(arms: list[tuple[_Arm, object]], summaries: dict[str, dict]) ->
         filled["m1.language_is_load_bearing"] = {
             "measured": f"T1 default {kn(t1d)} vs no-language {kn(t1b)} "
             f"(gap {gap:.0%}, CI {ci[0]:.1%}-{ci[1]:.1%})",
-            "verdict": verdict(
-                "a-b >= 0.2", {"a": t1d["success"], "b": t1b["success"]}, ci=ci
-            ),
+            "verdict": verdict("a-b >= 0.2", {"a": t1d["success"], "b": t1b["success"]}, ci=ci),
         }
     return filled
 
@@ -502,10 +518,12 @@ def _fill_claims(arms: list[tuple[_Arm, object]], summaries: dict[str, dict]) ->
 def evaluate(ctx) -> None:
     P = ctx.params
     episodes, eseed, video = int(P["episodes"]), int(P["eval_seed"]), bool(P["video"])
+    cfg_w = float(P.get("cfg_w", 1.0))
+    n_exec_override = int(P.get("n_exec_override", 0))
     device = "cuda" if torch.cuda.is_available() else "cpu"
     ctx.set_status(message="loading the checkpoint and rebuilding the policies")
     ck = torch.load(P["ckpt"], map_location="cpu", weights_only=False)
-    arms = _eval_arms(ck, device)
+    arms = _eval_arms(ck, device, cfg_w, n_exec_override)
     scenario = "claims_suite" if "arms" in ck else "single"
     offset = eseed * episodes
     env = Env(task=arms[0][0].task, render=True,
@@ -591,6 +609,7 @@ def evaluate(ctx) -> None:
     result: dict = {
         "scenario": scenario, "episodes": episodes, "n_episodes": len(jobs), "fps": FPS,
         "video": video_name,
+        "cfg_w": cfg_w, "n_exec_override": n_exec_override,  # the act-time recipe knobs
         "arms": summaries,
         "outcomes": {
             "success": round(k / max(1, len(rows)), 4),
@@ -617,8 +636,7 @@ def evaluate(ctx) -> None:
     verdicts = "; ".join(f"{r['id'].split('.')[-1]}: {r['verdict']}" for r in result["claims"]
                          if r["verdict"] != NOT_MEASURED)  # fmt: skip
     ctx.done(
-        f"{scenario}: {arm_txt} over {len(rows)} episodes"
-        + (f" - {verdicts}" if verdicts else "")
+        f"{scenario}: {arm_txt} over {len(rows)} episodes" + (f" - {verdicts}" if verdicts else "")
     )
 
 
@@ -675,6 +693,15 @@ SPEC = TaskSpec(
         Param("eval_seed", "Eval seed", "int", 0, min=0, max=99,
               help="shifts the window inside the task's eval-seed block"),
         Param("video", "Render a rollout video", "bool", True),
+        Param("cfg_w", "CFG weight on the instruction", "float", 1.0, min=0.5, max=5.0,
+              help="act-time classifier-free guidance: each Euler step combines "
+                   "v_blank + w*(v_cond - v_blank); 1.0 = the plain conditioned model. "
+                   "Lesson 17 round 2 measures the cure; on arm C it is a no-op (both "
+                   "branches read the blank text)"),
+        Param("n_exec_override", "Executed steps override", "int", 0, min=0, max=16,
+              help="act-time only: 0 = the checkpoint's trained n_exec; 1..16 = execute this "
+                   "many steps of each chunk before re-planning (clamped to the chunk "
+                   "length) - the reactivity lever from lesson 4"),
     ],  # fmt: skip
     charts=[
         {"id": "loss", "title": "Flow-matching loss",

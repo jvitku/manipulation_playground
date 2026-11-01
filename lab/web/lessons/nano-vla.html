@@ -66,7 +66,9 @@ an EMA copy (decay 0.999) that is what acts and what the checkpoint evaluates &m
 <p><b>The no-language arm.</b> The claims suite's arm C trains and evaluates the <em>identical</em> config on T1
 with every instruction replaced by a constant <code>&lt;unk&gt;</code> token &mdash; text that exists but says
 nothing. (Not the all-&lt;pad&gt; text: with every key masked, the text encoder's self-attention softmax is NaN.
-It is an arm flag in the task wrapper, not a model change; the env still draws its real target button.)</p>
+Arm C is a flag in the task wrapper that swaps the instruction for the model's own blank constant
+&mdash; <code>nfv.model.text.BLANK_INSTRUCTION</code>, the same text lesson 17's instruction dropout and
+classifier-free guidance condition on; the env still draws its real target button.)</p>
 
 <details class="theory"><summary>Motivation &mdash; why each choice is in this experiment</summary>
 <p><b>From scratch at d = 256, not a pretrained VLM.</b> A real VLA inherits a web-scale VLM because its scenes are
@@ -276,7 +278,13 @@ round 2 &mdash; the T0 demos unchanged, the arm retrained &mdash; <b>92/100</b> 
 <b>INCONCLUSIVE</b>: the CI now straddles the 95% gate. Unaffected by the T1 repair, as expected. The misses keep
 the same shape both rounds: 7 force-aborts + 1 timeout &mdash; with no force sense, a missed grasp becomes a 25 N
 dig-in, and the testbed scores that as failure by design (peak |F| mean 8.1 N, max 25.3 N). Levers before
-re-judging: the full 20 k schedule and more demos.</li>
+re-judging: the full 20 k schedule and more demos. Those levers were then pulled &mdash; full 20 k singles on 200
+demos (run <code>261101-010614-2081</code>) and 400 demos (run <code>261101-024340-4389</code>) &mdash; and the
+point estimate clears the bar at every n (97/100, 195/200, 481/500, finally <b>484/500 = 96.8%</b>, CI
+94.9&ndash;98.0%, eval <code>261101-030700-3b72</code>), yet the verdict still reads INCONCLUSIVE: even at n = 500
+the Wilson interval grazes the 95% bar by 0.1 pt. The course accepts that as the honest closing reading and the
+row's real lesson in CI semantics &mdash; the gate sits <em>inside</em> the model's own confidence band, a model
+this close to its bar would need thousands of episodes to separate from it, and no further retrain is owed.</li>
 <li><b>c5 &mdash; hidden_threshold_blinds_vla:</b> the bug the board caught, now in past tense. Round 1 measured T1
 <b>3/100</b> (CI 1.0&ndash;8.5%) &mdash; far below the 30&ndash;70% window &mdash; and the diagnosis was sharper
 than the designed blindness. Lesson 15's T1 expert pressed through the <em>hybrid controller</em>
@@ -304,7 +312,14 @@ hoped the fixed data would fix this too by making the tie expensive (a wrong-but
 and in round 2 it does, 45 times); it did not: an eval-time cost creates no training-time gradient, because the
 flow objective only ever asks the model to continue a chunk that already chose. The board stays red here &mdash;
 a real finding about flow-matching VLAs at this scale, and lesson 17 inherits it: its force arms train on these
-same demos.</li>
+same demos. Round 2 of lesson 17 then put the textbook cure on trial &mdash; instruction dropout (p = 0.1) plus
+classifier-free guidance on the instruction, with a re-plan-cadence override; the same two act-time knobs (CFG
+weight, executed-steps override) are on this task's evaluate form too, so any lesson-16 checkpoint can be re-rolled
+under them &mdash; and measured it <em>null at this scale</em>: button match stayed at chance (45&ndash;48.5%)
+across the full w &times; n_exec grid, because the words move only ~3.4% of the velocity field and dropout training
+halved even that (the leak starves the words of gradient, and guidance can only amplify what training left). The
+numbers, the mechanism probe and the next levers live in lesson 17's Round&nbsp;2 section; this board's claims and
+bars stay as they are.</li>
 </ul>
 <p>In the <b>trace panel</b>, a round-2 T1 episode finally reads like T1: approach, a position-mode descent,
 F<sub>z</sub> climbing a &asymp;0.4 N-per-step staircase to the click &mdash; SUCCESS &mdash; or the same confident
@@ -326,6 +341,15 @@ companion surprise: <b>euler_steps = 1</b> degrades T0 barely (<b>87/100</b>) &m
 near-unimodal flow field is nearly straight, so one Euler step almost suffices when the scene has a single visible
 target; it is not a license for K = 1 where real multimodality lives.</p>
 
+<details class="techdev"><summary>Tech development &mdash; what broke, how it was found, what changed</summary>
+<p class="ref">Every change that was needed to make this lesson's experiments and claims work, in the order it was found: symptom, how it was found, cause, change, take-away. Master copy: <code>docs/force_vla_school_techdev.md</code>.</p>
+<p><b>16.1 — an all-padding instruction produced NaN.</b> Blanking the text (the no-language arm) made the text self-attention softmax over an all-masked row. Change: "blank" = one constant <code>&lt;unk&gt;</code> token.</p>
+<p><b>16.2 — round 1: T1 at 3/100 instead of the designed 30–70 %.</b> Found by: the claims board (c5 red, <em>below</em> the window). Investigation: the policy cloned the demos perfectly (loss 0.0037) and hovered 15 mm above the cap until timeout (92/100 timeouts; it touched a button in 8/100). Cause: entry 15.7. After the fix: T1 45/100 (CI 35.6–54.8) → c5 CONFIRMED, and the failure mix finally looks like T1 (45 wrong button, 10 force aborts, 0 timeouts). Take-away: the board's job is exactly this — a red verdict is a measurement, and this one found a data bug.</p>
+<p><b>16.3 — the instruction is ignored (c6).</b> With pressing fixed, the language arm and the blanked arm tie (45 vs 46/100); button choice is at chance; their training losses are equal (0.0042 vs 0.0040). Mechanism: in flow matching the noisy interpolant x_τ already leaks which mode the demo took, so the words reduce no loss; and a wrong button costs nothing at training time. Round-2 lever (instruction dropout + classifier-free guidance) is measured in lesson 17.</p>
+<p><b>16.4 — the claim c4 sits inside its own confidence band.</b> T0: 88/100 on CPU and 92/100 on GPU for the same seeds (per-device noise streams in the flow sampler); 20 k steps → 97/100; then a "500-episode" eval reported 200 episodes — the form's <code>episodes</code> cap (200) silently clipped the request. Change: cap raised to 1000. With 400 demos: 484/500 = 96.8 %, CI 94.9–98.0 — the bar (0.95) lies inside the band by 0.1 pt, so the verdict stays INCONCLUSIVE, accepted as honest. Take-away: read back what actually ran, not what you asked for.</p>
+<p><b>16.5 — a test failure that only existed in suite order.</b> Importing the <code>nfv.model.build</code> <em>submodule</em> rebound the package attribute <code>build</code> (the function) → <code>TypeError: 'module' object is not callable</code>, only when another test imported the submodule first. Change: the package <code>__init__</code> loads the submodule, then rebinds the name.</p>
+<p><b>16.6 — wall time is not GPU time.</b> The suite took 86 min instead of ~33 because another job had the host at load 60–74: the batcher is CPU-bound. Change: none needed — but budgets now quote "idle box" and the calibration records the measured rate.</p>
+</details>
 <h3>Knobs</h3>
 <ul>
 <li><b>Preset</b>: <em>single</em> trains one nanoVLA on <b>Task</b>'s demos (with the eval-points series);

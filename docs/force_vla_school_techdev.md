@@ -145,8 +145,49 @@ check printed it, but the shell chain did not gate on it). The training was unaf
 own `done()` repaired the status. Change: restarts only behind a probe that exits non-zero on
 any active job.
 
-**17.7 — round 2 (instruction dropout + CFG, reactive re-planning):** results pending — filled
-in when the re-run lands.
+**17.7 — round 2's grid stalled on its own job.** The 8-cell evaluation grid stopped after two
+cells: "refusing: 1 compute process on the GPU". The driver's idle check counted the agent's own
+5-arm suite, launched in parallel to save wall time. Change: overlapping one's own jobs became an
+explicit opt-in (`ALLOW_SHARED=1`). Take-away: an idle check cannot tell your jobs from someone
+else's — overlap must be explicit, never the default.
+
+**17.8 — new knobs could not run through the live lab.** The running server imports task modules
+at startup, so its forms rejected the new parameters (HTTP 422), and restarts are gated. Change:
+a driver writes a standard job directory and runs the same job entry point in a fresh container,
+so the runs still appear in the app's lists; after the next gated restart the forms carry the
+knobs.
+
+**17.9 — faster re-planning fixed the presses, not the score.** Re-planning every 2 steps instead
+of 8 took force failures from 45 to 7 to 0 out of 700 episodes, yet fvlmoe moved only 45 → 47 →
+48 and the twin gap stayed at −1. Cause: the aborts were real chunk staleness, but stopping a
+press only needs fresher *camera* frames, not the wrench — and the binding constraint was always
+the button choice (match 45–56 %, chance). Take-away: separate failure modes before crediting a
+lever; removing failures that never bound the score leaves the score flat.
+
+**17.10 — classifier-free guidance had nothing to amplify.** Across guidance weight {1, 3} ×
+re-plan {8, 2}, button match stayed at 45–48.5 %. Found by measuring the gap guidance works on:
+‖v_cond − v_blank‖ / ‖v_cond‖ was 3.4 % before instruction dropout and **1.6 %** after it (cosine
+≥ 0.996). Cause: the flow interpolant already reveals which button the demo pressed, so the target
+is predictable without the words, and training with blanked instructions converges toward
+ignoring them even harder. Take-away: guidance amplifies a difference the training objective
+paid for; it cannot create one — measure the conditional-minus-blank gap before tuning w.
+
+**17.11 — the training curve overstated success.** The periodic 20-seed closed-loop points ended
+at 70 % and 65 %; the 100-episode held-out evals measured 46 % and 44 %. A 20-seed estimate
+carries a ±20-point interval and used a different seed window. The board reads only the
+100-episode evals.
+
+**17.12 — an unexplained collapse, honestly left open.** In round 3 the MoE-before-the-trunk arm
+fell to 1/100 (88 timeouts, 11 aborts) — confirming the paper's "MoE before the VLM collapses"
+row — after scoring 52 in round 1. Two things changed at once for that arm (the dropout retrain
+and guidance weight 3), and the one evaluation that would separate them was blocked by a busy
+GPU. Take-away: when a pre-registered recipe changes two things, budget the separating
+diagnostic up front.
+
+**17.13 — a mechanism quantity was never stored.** Round 1's instruction-following rate could not
+be recomputed afterwards: results stored success per instruction and press counts, never the
+target per episode. Change: evals now store `button_match`. Take-away: store the quantity a
+claim's mechanism depends on, not just the headline rate.
 
 ## Lesson 18 — ForceVLA2 (M3)
 

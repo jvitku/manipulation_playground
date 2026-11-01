@@ -20,7 +20,11 @@ Table-3 rows + ForceBench's prompt_bins) on lesson 15's canonical demos and trai
 
 The architecture knobs (chunk 16, n_exec 8, 10 Euler steps, 4+4 layers) are deliberately NOT
 on this form: the Table-3 suite compares WHERE force enters on one canonical architecture.
-``ARCH_OVERRIDES`` is the test hook that shrinks it (tests/lab/test_task_nfv2.py).
+``ARCH_OVERRIDES`` is the test hook that shrinks it (tests/lab/test_task_nfv2.py). The ONE
+training knob round 2 added is ``text_dropout`` (ModelConfig.text_dropout): per sample,
+replace the instruction with the model's blank text (nfv.model.text.BLANK_INSTRUCTION) with
+this probability - the conditioning dropout classifier-free guidance needs. 0.0 (the default)
+trains exactly the round-1 model.
 
 EVAL rolls checkpoint arms closed-loop on SHARED held-out seeds (`nfv.seeds.eval_seeds`,
 shifted by ``eval_seed * episodes`` - every arm sees the same episodes, so gaps are paired).
@@ -32,6 +36,14 @@ exercise) / gaussian (FACT's force-to-noise). It applies to every evaluated arm;
 / "fvlmoe [gaussian]") - the twin/FACT claim rows reuse the one checkpoint, no retrain.
 ``ckpt_b`` (optional, kind "ckpt") rolls a second nano-force-vla checkpoint on the same seeds;
 its arms appear as "B: <label>" groups (rendered, never in claims).
+
+Two more pure act-time knobs (round 2's levers; both echoed in result.json and applied to
+every evaluated group, the checkpoint weights untouched): ``cfg_w`` - classifier-free
+guidance on the instruction, v = v_blank + w·(v_cond − v_blank) per Euler step (1.0 = the
+plain conditioned model, the blank branch skipped) - and ``n_exec_override`` - 0 = the
+checkpoint's trained n_exec, else execute 1..16 steps of each predicted chunk before
+re-planning (clamped to the chunk length): the reactivity lever that decides how stale the
+one wrench sample each decision reads can get.
 
 Routing instrumentation (the plan's "which expert fires in contact vs free space"): for the
 LIMoE routes (fvlmoe, prefix_moe) every act() decision reads the port's aux (expert counts,
@@ -51,10 +63,13 @@ interval from the two arms' Wilsons (the house idiom).
 result.json (viewer `fvrollout`; every field optional there):
     {"scenario": "single"|"claims_suite", "episodes" (per group), "n_episodes", "fps",
      "video": "rollout.mp4"|null,
+     "cfg_w": w, "n_exec_override": n,  # the act-time recipe the whole eval ran under
      "arms": {group: {"task", "force_in", "force_noise", "n", "success", "wilson95",
                       "outcomes": {o: n}, "peak_force": {"mean", "max"},
                       "per_instruction": {instr: {n, success}},   # t1 groups only
-                      "pressed_counts": {"red": n, "blue": n}}},  # t1 groups only
+                      "pressed_counts": {"red": n, "blue": n},    # t1 groups only
+                      "button_match": {"pressed", "matched", "rate"}},  # t1: of the episodes
+                      # that pressed any button, how many pressed the instructed one
      "outcomes": {"success", "counts", "wilson95", "per_task": {group: row}},
      "peak_force": {"mean", "max"},
      "routing": {group: {"n_experts", "contact"/"free": {"decisions", "expert_frac": [E],
@@ -153,6 +168,7 @@ def _model_cfg(P: dict, force_in: str) -> ModelConfig:
         moe=str(P["moe"]),
         n_experts=int(P["n_experts"]),
         balance_loss=bool(P["balance_loss"]),
+        text_dropout=float(P.get("text_dropout", 0.0)),
         **ARCH_OVERRIDES,
     )
 
@@ -234,9 +250,7 @@ def train(ctx) -> None:
                     **captured, "params": dict(P),
                 }  # fmt: skip
                 label = "final" if i == len(arms) - 1 else f"{arm.label} trained"
-                metrics = {
-                    f"{a.key}_loss": round(arm_losses[a.label], 4) for a in arms[: i + 1]
-                }
+                metrics = {f"{a.key}_loss": round(arm_losses[a.label], 4) for a in arms[: i + 1]}
                 if train_moe is not None:
                     metrics[f"{arm.key}_drop"] = train_moe["train_fraction_dropped"]
                 ctx.save_ckpt((i + 1) * steps, payload, label=label, metrics=metrics)
@@ -291,8 +305,9 @@ class _RoutingAcc:
             out[k] = {
                 "decisions": n,
                 "expert_frac": [round(c / tot, 4) if tot else 0.0 for c in b["expert"]],
-                "force_token_expert_frac": [round(c / n, 4) if n else 0.0
-                                            for c in b["force_expert"]],  # fmt: skip
+                "force_token_expert_frac": [
+                    round(c / n, 4) if n else 0.0 for c in b["force_expert"]
+                ],  # fmt: skip
                 "fraction_dropped": round(b["dropped_sum"] / n, 4) if n else 0.0,
                 "force_token_kept_frac": round(b["force_kept"] / n, 4) if n else 0.0,
             }
@@ -408,13 +423,19 @@ def _episode(job: _Job):
 
 
 # ---------------------------------------------------------------------------------- evaluate
-def _policy_from(payload: dict, device: str, force_noise: str = "off"):
-    """Rebuild a Policy from one fit payload with the act-time wrench corruption dialled in.
+def _policy_from(
+    payload: dict, device: str, force_noise: str = "off", cfg_w: float = 1.0, n_exec: int = 0
+):
+    """Rebuild a Policy from one fit payload with the act-time knobs dialled in.
 
-    ``force_noise`` goes into the rebuilt ModelConfig, so apply_force_noise runs inside
-    act()/loss() exactly where the raw wrench is read - the checkpoint itself is untouched.
+    ``force_noise``, ``cfg_w`` and ``n_exec`` (0 = keep the trained value) go into the
+    rebuilt ModelConfig, so the corruption, the CFG combination and the re-plan cadence run
+    inside act() exactly where they belong - the checkpoint itself is untouched.
     """
-    cfg = ModelConfig(**{**payload["arch"], "force_noise": force_noise})
+    arch = {**payload["arch"], "force_noise": force_noise, "cfg_w": float(cfg_w)}
+    if n_exec:
+        arch["n_exec"] = min(int(n_exec), int(arch["chunk"]))
+    cfg = ModelConfig(**arch)
     policy = build(cfg)
     policy.net.load_state_dict(payload["model"])
     policy.ema.load_state_dict(payload["ema"])
@@ -447,13 +468,14 @@ class _Group:
     claims: bool  # False for ckpt_b ("B:") groups - rendered, never measured
 
 
-def _make_groups(ck: dict, ckb: dict | None, form_noise: str, device: str) -> list[_Group]:
+def _make_groups(
+    ck: dict, ckb: dict | None, form_noise: str, device: str,
+    cfg_w: float = 1.0, n_exec: int = 0,
+) -> list[_Group]:  # fmt: skip
     def grp(arm: _Arm, pl: dict, noise: str, prefix: str = "", claims: bool = True) -> _Group:
         label = prefix + arm.label + (f" [{noise}]" if noise != "off" else "")
-        policy = _policy_from(pl, device, noise)
-        routing = (
-            _RoutingAcc(int(policy.cfg.n_experts)) if arm.force_in in LIMOE_ROUTES else None
-        )
+        policy = _policy_from(pl, device, noise, cfg_w, n_exec)
+        routing = _RoutingAcc(int(policy.cfg.n_experts)) if arm.force_in in LIMOE_ROUTES else None
         return _Group(arm, noise, label, policy, routing, claims)
 
     groups = [grp(arm, pl, form_noise) for arm, pl in _eval_arms(ck)]
@@ -486,6 +508,15 @@ def _group_summary(g: _Group, rows: list[dict]) -> dict:
                 per[instr] = {"n": len(sub), "success": round(kk / len(sub), 4)}
         out["per_instruction"] = per
         out["pressed_counts"] = dict(Counter(c for r in rows for c in r.get("pressed", ())))
+        # Button match: of the episodes that pressed ANY button, how many pressed the
+        # instructed one - the instruction-following rate, separated from press control
+        # (round 2's recipe is chosen on the none arm's rate, never on the gated arm).
+        pressed = [r for r in rows if r.get("pressed")]
+        matched = sum(1 for r in pressed if r.get("target") in r["pressed"])
+        out["button_match"] = {
+            "pressed": len(pressed), "matched": matched,
+            "rate": round(matched / len(pressed), 4) if pressed else None,
+        }  # fmt: skip
     return out
 
 
@@ -533,9 +564,7 @@ def _fill_claims(groups: list[_Group], summaries: dict[str, dict]) -> dict:
         filled["m2.force_in_beats_none"] = {
             "measured": f"fvlmoe {kn(fv)} vs none {kn(none)} "
             f"(gap {fv['success'] - none['success']:+.0%}, CI {ci[0]:.1%}-{ci[1]:.1%})",
-            "verdict": verdict(
-                "a-b >= 0.15", {"a": fv["success"], "b": none["success"]}, ci=ci
-            ),
+            "verdict": verdict("a-b >= 0.15", {"a": fv["success"], "b": none["success"]}, ci=ci),
         }
     for cid, noise, expect in (
         ("m2.twin_gap", "zero", "a-b >= 0.20"),
@@ -547,9 +576,7 @@ def _fill_claims(groups: list[_Group], summaries: dict[str, dict]) -> dict:
             filled[cid] = {
                 "measured": f"fvlmoe off {kn(fv)} vs {noise} {kn(cor)} "
                 f"(drop {fv['success'] - cor['success']:+.0%}, CI {ci[0]:.1%}-{ci[1]:.1%})",
-                "verdict": verdict(
-                    expect, {"a": fv["success"], "b": cor["success"]}, ci=ci
-                ),
+                "verdict": verdict(expect, {"a": fv["success"], "b": cor["success"]}, ci=ci),
             }
     pm, ca = find("prefix_moe", "off"), find("concat_after", "off")
     if pm and ca:
@@ -557,9 +584,7 @@ def _fill_claims(groups: list[_Group], summaries: dict[str, dict]) -> dict:
         filled["m2.moe_before_vlm_collapses"] = {
             "measured": f"prefix_moe {kn(pm)} vs concat_after {kn(ca)} "
             f"(gap {pm['success'] - ca['success']:+.0%}, CI {ci[0]:.1%}-{ci[1]:.1%})",
-            "verdict": verdict(
-                "a-b <= 0", {"a": pm["success"], "b": ca["success"]}, ci=ci
-            ),
+            "verdict": verdict("a-b <= 0", {"a": pm["success"], "b": ca["success"]}, ci=ci),
         }
     return filled
 
@@ -568,13 +593,15 @@ def evaluate(ctx) -> None:
     P = ctx.params
     episodes, eseed, video = int(P["episodes"]), int(P["eval_seed"]), bool(P["video"])
     form_noise = str(P["force_noise"])
+    cfg_w = float(P.get("cfg_w", 1.0))
+    n_exec_override = int(P.get("n_exec_override", 0))
     device = "cuda" if torch.cuda.is_available() else "cpu"
     ctx.set_status(message="loading the checkpoint(s) and rebuilding the policies")
     ck = torch.load(P["ckpt"], map_location="cpu", weights_only=False)
     ckb = None
     if str(P.get("ckpt_b") or ""):
         ckb = torch.load(P["ckpt_b"], map_location="cpu", weights_only=False)
-    groups = _make_groups(ck, ckb, form_noise, device)
+    groups = _make_groups(ck, ckb, form_noise, device, cfg_w, n_exec_override)
     scenario = "claims_suite" if "arms" in ck else "single"
     offset = eseed * episodes
     env = Env(task=groups[0].arm.task, render=True,
@@ -636,9 +663,7 @@ def evaluate(ctx) -> None:
                     if g.routing is not None:
                         g.routing = _RoutingAcc(g.routing.n_experts)
                 for job in jobs:
-                    job.routing = next(
-                        (g.routing for g in groups if g.label == job.group), None
-                    )
+                    job.routing = next((g.routing for g in groups if g.label == job.group), None)
                 for job in rendered:
                     job.render = False
                     run_one(job)
@@ -666,6 +691,7 @@ def evaluate(ctx) -> None:
     result: dict = {
         "scenario": scenario, "episodes": episodes, "n_episodes": len(jobs), "fps": FPS,
         "video": video_name,
+        "cfg_w": cfg_w, "n_exec_override": n_exec_override,  # the act-time recipe knobs
         "arms": summaries,
         "outcomes": {
             "success": round(k / max(1, len(rows)), 4),
@@ -698,8 +724,7 @@ def evaluate(ctx) -> None:
     verdicts = "; ".join(f"{r['id'].split('.')[-1]}: {r['verdict']}" for r in result["claims"]
                          if r["verdict"] != NOT_MEASURED)  # fmt: skip
     ctx.done(
-        f"{scenario}: {arm_txt} over {len(rows)} episodes"
-        + (f" - {verdicts}" if verdicts else "")
+        f"{scenario}: {arm_txt} over {len(rows)} episodes" + (f" - {verdicts}" if verdicts else "")
     )
 
 
@@ -750,6 +775,10 @@ SPEC = TaskSpec(
         Param("demos", "Demos (first n episodes)", "int", 200, min=8, max=400, step=4,
               help="subset of the canonical set by episode order; clamped to what lesson 15 "
                    "recorded"),
+        Param("text_dropout", "Instruction dropout p", "float", 0.0, min=0.0, max=0.5,
+              help="train-time: per sample, replace the instruction with the blank text "
+                   "with this probability - the conditioning dropout classifier-free "
+                   "guidance needs (round 2; 0.0 = the round-1 model exactly)"),
         Param("seed", "Seed", "int", 0, min=0, max=9999,
               help="init + batch sampling + flow noise; suite arms use seed + 101*i"),
     ],  # fmt: skip
@@ -768,6 +797,14 @@ SPEC = TaskSpec(
               ckpt_task="nano-force-vla",
               help="a second nano-force-vla checkpoint rolled on the same seeds; its arms "
                    "appear as 'B: ...' rows (rendered, never in claims)"),
+        Param("cfg_w", "CFG weight on the instruction", "float", 1.0, min=0.5, max=5.0,
+              help="act-time classifier-free guidance: each Euler step combines "
+                   "v_blank + w*(v_cond - v_blank); 1.0 = the plain conditioned model (the "
+                   "blank branch is skipped). Applies to every evaluated group; no retrain"),
+        Param("n_exec_override", "Executed steps override", "int", 0, min=0, max=16,
+              help="act-time only: 0 = the checkpoint's trained n_exec; 1..16 = execute this "
+                   "many steps of each chunk before re-planning (clamped to the chunk "
+                   "length) - how stale the one wrench sample per decision can get"),
     ],  # fmt: skip
     charts=[
         {"id": "loss", "title": "Flow-matching loss",

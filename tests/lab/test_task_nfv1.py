@@ -70,13 +70,17 @@ def test_spec_shape():
     assert spec.lesson == "nano-vla.html"
     assert {"preset", "task", "steps", "lr", "batch", "demos", "chunk", "n_exec",
             "euler_steps", "seed"} == {p.name for p in spec.params}  # fmt: skip
-    assert {"episodes", "eval_seed", "video"} == {p.name for p in spec.eval_params}
+    assert {"episodes", "eval_seed", "video", "cfg_w", "n_exec_override"} == {
+        p.name for p in spec.eval_params
+    }
+    cw = next(p for p in spec.eval_params if p.name == "cfg_w")
+    assert cw.kind == "float" and cw.default == 1.0 and (cw.min, cw.max) == (0.5, 5.0)
+    ne = next(p for p in spec.eval_params if p.name == "n_exec_override")
+    assert ne.kind == "int" and ne.default == 0 and (ne.min, ne.max) == (0, 16)
     preset = next(p for p in spec.params if p.name == "preset")
     assert preset.choices == ["single", "claims_suite"] and preset.default == "single"
     assert [c["id"] for c in spec.charts] == ["loss", "eval", "speed", "lr"]
-    assert {s["key"] for s in spec.charts[0]["series"]} == {
-        "loss", "a_loss", "b_loss", "c_loss"
-    }
+    assert {s["key"] for s in spec.charts[0]["series"]} == {"loss", "a_loss", "b_loss", "c_loss"}
     assert spec.estimate(registry.validate_params(spec, {}, which="train")) > 0
     with pytest.raises(ValueError):  # the cross-param check: n_exec must be <= chunk
         registry.validate_params(spec, {"chunk": 8, "n_exec": 16}, which="train")
@@ -114,7 +118,9 @@ def test_suite_one_checkpoint_three_labelled_arms(suite_trained):
         assert arm["arch"]["chunk"] == 8  # identical config across arms (C differs by text)
     index = json.loads((suite_trained.dir / "ckpt" / "index.json").read_text())
     assert [row["label"] for row in index] == [
-        "A t0 default trained", "B t1 default trained", "final",
+        "A t0 default trained",
+        "B t1 default trained",
+        "final",
     ]
     assert "c_loss" in index[-1]["metrics"]
 
@@ -176,6 +182,26 @@ def test_suite_eval_traces(suite_result):
         assert isinstance(tr["events"], list)
 
 
+def test_suite_eval_default_recipe_recorded(suite_result):
+    # the act-time knobs default off and are echoed (old eval configs lack them: .get path)
+    assert suite_result["cfg_w"] == 1.0 and suite_result["n_exec_override"] == 0
+
+
+def test_eval_knobs_roundtrip(suite_trained, tmp_path):
+    """cfg_w / n_exec_override reach the rebuilt policies and are echoed in result.json."""
+    ev = make_ctx(
+        tmp_path / "eval",
+        {"ckpt": str(suite_trained.dir / "ckpt" / "last.pt"), "episodes": 1, "eval_seed": 0,
+         "video": False, "cfg_w": 2.0, "n_exec_override": 2},
+    )  # fmt: skip
+    tn.evaluate(ev)
+    r = json.loads((ev.dir / "result.json").read_text())
+    assert r["cfg_w"] == 2.0 and r["n_exec_override"] == 2
+    assert set(r["arms"]) == set(SUITE_LABELS)
+    for arm in r["arms"].values():
+        assert arm["n"] == 1 and 0.0 <= arm["success"] <= 1.0
+
+
 def test_verdict_window_form():
     # the window form added for the M1 T1 gate: lo <= a <= hi
     assert verdict("0.30 <= a <= 0.70", {"a": 0.5}) == "CONFIRMED"
@@ -204,8 +230,12 @@ def test_estimate_uses_calib(monkeypatch):
     monkeypatch.setattr(
         registry,
         "calib",
-        lambda tid: {"steps_per_s": 100.0, "load_s_per_demo": 0.0, "ep_s": 0.0,
-                     "overhead_s": 0.0},  # fmt: skip
+        lambda tid: {
+            "steps_per_s": 100.0,
+            "load_s_per_demo": 0.0,
+            "ep_s": 0.0,
+            "overhead_s": 0.0,
+        },  # fmt: skip
         raising=True,
     )
     assert spec.estimate({**p, "steps": 1000, "preset": "single"}) == pytest.approx(10.0)
