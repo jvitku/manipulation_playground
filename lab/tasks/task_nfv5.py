@@ -86,9 +86,10 @@ POLL_S = 2.0
 N_TRACE = 3  # per arm (3 arms -> 9 traces <= MAX_TRACES)
 D_LIMIT_GB = 9.5  # m5.full_ft_does_not_fit: "OOM or > 9.5 GB"
 GPU_GB = 10.0  # the RTX 3080's 10 GB; an OOM counts as "needed at least this"
-# calib.json fallbacks (measured 2026-11-01, pilot, RTX 3080, batch 16): samples/s per mode
-FALLBACK_SAMPLES_PER_S = {"head": 52.8, "lora": 49.1, "expert_full": 49.3}
-FALLBACK_LOAD_S, FALLBACK_PROBE_S, FALLBACK_EP_S, OVERHEAD_S = 25.0, 60.0, 6.0, 30.0
+# calib.json fallbacks (measured 2026-11-01, RTX 3080, batch 16, the two 5000-step suites):
+# samples/s per mode (steps/s x batch), worker load, one D probe; the suites took 81 min
+FALLBACK_SAMPLES_PER_S = {"head": 52.1, "lora": 48.4, "expert_full": 48.9}
+FALLBACK_LOAD_S, FALLBACK_PROBE_S, OVERHEAD_S = 10.0, 8.0, 10.0
 
 
 def _repo() -> Path:
