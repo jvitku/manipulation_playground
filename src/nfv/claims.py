@@ -17,9 +17,11 @@ CI logic is interval-against-interval: a CI entirely inside the window is CONFIR
 disjoint from it is NOT CONFIRMED, any overlap across a bound is INCONCLUSIVE. A scenario that
 cannot measure a claim marks its row :data:`NOT_MEASURED` instead of calling :func:`verdict`.
 
-``M0_CLAIMS`` are the testbed's own three claims (module ``force-sim``, lesson 15) and
-``M1_CLAIMS`` the nanoVLA module's (``nano-vla``, lesson 16); later modules append theirs
-(fv.table3.*, the twin gap, ...) in the same registry style.
+``M0_CLAIMS`` are the testbed's own three claims (module ``force-sim``, lesson 15),
+``M1_CLAIMS`` the nanoVLA module's (``nano-vla``, lesson 16) and ``M2_CLAIMS`` the
+nanoForceVLA module's (``nano-force-vla``, lesson 17: the ForceVLA Table-3 mini, the twin and
+FACT force-to-noise checks and the plan's M2 gate); later modules append theirs in the same
+registry style.
 """
 
 from __future__ import annotations
@@ -212,5 +214,95 @@ M1_CLAIMS: tuple[Claim, ...] = (
         expect="a-b >= 0.2",
         source="course plan §7, lesson-16 row ('language needed on two-button T1'); "
         "the v1 plan's module 1",
+    ),
+)
+
+
+# ---- the nanoForceVLA module's claims (module "nano-force-vla", lesson 17) ------------------
+
+M2_CLAIMS: tuple[Claim, ...] = (
+    Claim(
+        id="m2.force_in_beats_none",
+        statement="A force input beats no force on T1: the FVLMoE route gains at least "
+        "15 points over the force-blind baseline trained on the same demos — the headline "
+        "of ForceVLA's Table 3, scaled to mini",
+        module="nano-force-vla",
+        task="t1",
+        arms={
+            "a": {"arm": "fvlmoe", "force_in": "fvlmoe", "task": "t1", "force_noise": "off"},
+            "b": {"arm": "none", "force_in": "none", "task": "t1", "force_noise": "off"},
+        },
+        metric="T1 success on shared held-out seeds, fvlmoe minus none",
+        expect="a-b >= 0.15",
+        source="ForceVLA Table 3 (plug insertion: FVLMoE 80% vs no-force 45%), "
+        "arXiv 2505.22159",
+        url="https://arxiv.org/abs/2505.22159",
+    ),
+    Claim(
+        id="m2.twin_gap",
+        statement="The force input is load-bearing: the SAME fvlmoe checkpoint evaluated "
+        "with its wrench zeroed (the force-blind twin) loses at least 20 points — the model "
+        "uses force, it does not merely carry the parameters",
+        module="nano-force-vla",
+        task="t1",
+        arms={
+            "a": {"arm": "fvlmoe", "force_noise": "off"},
+            "b": {"arm": "fvlmoe", "force_noise": "zero",
+                  "note": "one checkpoint, no retrain — act-time corruption"},
+        },
+        metric="T1 success of one fvlmoe checkpoint, raw wrench minus zeroed wrench",
+        expect="a-b >= 0.20",
+        source="course plan §8, M2 gate (docs/plans/force_vla_school_plan.md); the twin "
+        "protocol of the v1 plan",
+    ),
+    Claim(
+        id="m2.noise_drop",
+        statement="Replacing the wrench with Gaussian noise at act time drops T1 by at "
+        "least 10 points — FACT's force-to-noise test: a model that truly reads force is "
+        "hurt by a lying sensor, not just by a silent one",
+        module="nano-force-vla",
+        task="t1",
+        arms={
+            "a": {"arm": "fvlmoe", "force_noise": "off"},
+            "b": {"arm": "fvlmoe", "force_noise": "gaussian",
+                  "note": "N(0, 1 N) added per component at act time"},
+        },
+        metric="T1 success of one fvlmoe checkpoint, raw wrench minus noise-corrupted wrench",
+        expect="a-b >= 0.10",
+        source="FACT (force-to-noise dropped ForceVLA's key insertion 42.5% to 15%), "
+        "arXiv 2608.01402",
+        url="https://arxiv.org/abs/2608.01402",
+    ),
+    Claim(
+        id="m2.moe_before_vlm_collapses",
+        statement="The MoE placed BEFORE the VLM does not beat the plain concat-after "
+        "baseline: ForceVLA's Table 3 measured that row at 0% — force must not enter the "
+        "VLM pathway. Reported either way: a mini-scale surprise here is a finding",
+        module="nano-force-vla",
+        task="t1",
+        arms={
+            "a": {"arm": "prefix_moe", "force_in": "prefix_moe", "task": "t1"},
+            "b": {"arm": "concat_after", "force_in": "concat_after", "task": "t1"},
+        },
+        metric="T1 success, prefix_moe minus concat_after (expected non-positive)",
+        expect="a-b <= 0",
+        source="ForceVLA Table 3 (MoE before the VLM: 0% vs concat-after 60%), "
+        "arXiv 2505.22159",
+        url="https://arxiv.org/abs/2505.22159",
+    ),
+    Claim(
+        id="m2.fvlmoe_gate",
+        statement="The full FVLMoE route reaches 80% on T1 — the plan's M2 gate, scaled "
+        "from the paper's plug-insertion 80%. The bar is fixed: a red row here is the "
+        "course's honest result, not a reason to move the bar",
+        module="nano-force-vla",
+        task="t1",
+        arms={"a": {"arm": "fvlmoe", "force_in": "fvlmoe", "task": "t1",
+                    "force_noise": "off"}},
+        metric="T1 success on held-out seeds",
+        expect="a >= 0.80",
+        source="course plan §8, M2 gate (docs/plans/force_vla_school_plan.md); "
+        "ForceVLA Table 3's 80%",
+        url="https://arxiv.org/abs/2505.22159",
     ),
 )

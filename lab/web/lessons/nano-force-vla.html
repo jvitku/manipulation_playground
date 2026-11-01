@@ -1,0 +1,458 @@
+<h3>The question</h3>
+<p>What is a force token worth when the camera cannot see the quantity that decides success &mdash; and <em>where</em>
+must it enter the model? Lesson 16 left nanoVLA at <b>45/100</b> on T1 (CI 35.6&ndash;54.8%): it presses competently
+but cannot feel the hidden click threshold (10 force-aborts) and reads the instruction at chance (45 wrong-button
+presses). This lesson feeds the 6-D wrench <em>in</em> &mdash; through five different doors &mdash; and lets the
+claims board grade ForceVLA's central ablation (Table&nbsp;3) in miniature: a linear token before the VLM, an MoE
+before the VLM (the paper's 0% row), a plain concat after it, and the paper's answer, the <b>FVLMoE</b> &mdash; a
+ported LIMoE block whose output is <em>added</em> to the action expert's features right before the head. Two more
+claims ask the question every force-VLA paper must answer: is the force actually <em>used</em> (the zeroed twin),
+and does the model notice when the sensor <em>lies</em> (FACT's force-to-noise)?</p>
+
+<h3>The task</h3>
+<p>T1 press-until-click, unchanged from lessons 15/16: two buttons, sides swapped per episode, "press the red/blue
+button", a per-button click threshold \(\sim U(3, 9)\) N that never touches the pixels, and success demands peak
+|F| &lt; 1.5&times; threshold &mdash; pressing blindly harder loses. All arms train on the same re-recorded T1
+demos (200 episodes, position-mode press, run <code>261101-002511-7bc4</code>) and evaluate on the same held-out
+seeds, so every gap below is paired. The bar to beat is lesson 16's <b>45/100</b>, and its failure split frames
+what a force input can and cannot buy:</p>
+<table class="out">
+<tr><th>lesson-16 failure</th><th>count</th><th>can a force <em>input</em> fix it?</th></tr>
+<tr><td>wrong_button &mdash; confident press on the wrong cap</td><td>45</td><td>no &mdash; which button is in the
+<em>words</em>, and lesson 16 measured the instruction at chance (c6). The wrench says nothing about colour</td></tr>
+<tr><td>force_abort &mdash; dug in past 25 N beside or on the cap</td><td>10</td><td>yes &mdash; the staircase of
+F<sub>z</sub> is exactly what the camera cannot see and the wrench streams at every step</td></tr>
+</table>
+<p class="ref">The arithmetic this implies is the honest pre-registration of this lesson: if force fixes
+<em>when to stop</em> but the words stay at chance, the ceiling sits near the ~50% the button lottery allows plus
+the pressing gains &mdash; well short of the plan's <b>fvlmoe &ge; 80%</b> gate (M2), unless completed presses make
+wrong_button the dominant, <em>fixable</em> outcome and an instruction gradient finally materialises. The gate bar
+is fixed either way; a red row is a result, not an embarrassment.</p>
+
+<h3>The method</h3>
+<p><b>The force token &phi;<sub>F</sub>.</b> The env's compensated, filtered wrench (sign convention: pressing on a
+surface reads negative F<sub>z</sub>) enters as one linear token: <code>force_in_proj</code> = Linear(6 &rarr; 256),
+the reference's own name and shape (in <code>pi0_force.py</code> it is Linear(6 &rarr; 2048) applied to
+<code>state[7:13]</code> &mdash; the 13-D state carries the wrench in its tail, and the state token itself sees it
+zeroed). E<sub>F</sub> = &phi;<sub>F</sub>(wrench) is a [B, 1, 256] token at the trunk width.</p>
+<p><b>The FVLMoE, ported not re-derived.</b> <code>src/nfv/model/limoe_port.py</code> is a PyTorch port of the
+released <code>LIMoEBlock</code> (ft-robotic/ForceVLA at 79de88f, Apache-2.0, reference names kept; parity against
+the real JAX block is pinned by fixture to max&nbsp;|&Delta;|&nbsp;&lt;&nbsp;1e-5). The block is three stages:</p>
+<p>1. <b>Encoder block</b> &mdash; one pre-norm ViT layer over the fused sequence: LayerNorm &rarr; 8-head
+self-attention &rarr; dropout 0.1 &rarr; residual &rarr; LayerNorm &rarr; MLP (GELU, tanh approximation &mdash;
+the flax default) &rarr; residual. This is where the force token first <em>reads the scene</em>.</p>
+<p>2. <b>Top-1 tokens-choose router with capacity</b> &mdash; flaxformer's
+<code>TokensChooseScatterRouter</code>, kept mechanic by mechanic. Each token gets expert probabilities and its
+arg-max expert:</p>
+<p>$$p_i = \mathrm{softmax}(W_r\, \tilde{x}_i) \in \mathbb{R}^{E}, \qquad e_i = \arg\max_m p_{i,m}, \qquad
+g_i = p_{i, e_i},$$</p>
+<p>where \(\tilde{x}_i\) is the token times multiplicative jitter noise \(\mathcal U(0.99, 1.01)\) &mdash;
+<b>train only</b>, and only the router sees it; the experts read the raw token. Tokens are flattened over (batch,
+sequence) and split into <b>groups of &le; 16</b> (the reference's <code>_num_groups</code> rule); each expert's
+buffer per group holds</p>
+<p>$$C = \max\big(\mathrm{round}(1.0 \cdot g / E),\; 4\big)$$</p>
+<p>slots (capacity factor 1.0, floor 4 &mdash; at g = 16 and E = 4 experts that is 4 slots). Buffers fill in order
+of router confidence (batch-prioritized: tokens sorted by \(g_i\)), and a token that overflows its expert's buffer
+gets <b>zero</b> expert output &mdash; silently. The port logs the fraction left behind precisely because this
+failure is invisible otherwise. The experts are flaxformer MLPs (wi &rarr; ReLU &rarr; wo, 256 &rarr; 512 &rarr;
+256 here); then residual and an output projection:
+\(y = W_o(x + g_i\,\mathrm{Expert}_{e_i}(x_i)\,[\text{slot}_i &lt; C])\).</p>
+<p>3. <b>The injection: last-H ADD.</b> The block runs over [E ; E<sub>F</sub>] &mdash; the trunk's output plus the
+force token, force LAST &mdash; and its last H positions are <em>added to the action expert's chunk features</em>
+right before the velocity head:</p>
+<p>$$v = W_{\mathrm{head}}\big(\,f + m\,\big), \qquad m = \mathrm{LIMoE}([E\,;\,E_F])_{[:, -H:]},$$</p>
+<p>the reference's <code>action_out_proj(limoe_out[:, -H:] + suffix_out[:, -H:])</code>. A parallel branch summed
+at the end &mdash; not conditioning, not an input token. Note the kept quirk: the last H positions of
+[E ; E<sub>F</sub>] are text/pad tokens plus the force token, aligned to the H action steps <em>by position
+only</em>; it works anyway, and that it works is part of the lesson.</p>
+<p><b>Reference-code facts the paper omits</b> (reading a codebase against its paper): the router's load-balancing
+and z-losses are <em>computed and never added</em> to any training loss &mdash; the capacity cap is the only
+balancing (the course exposes <code>balance_loss</code> as a switch, coefficient 0.01, Switch Transformer's
+value); the released <code>sample_actions</code> concatenates a <code>None</code> prefix into the LIMoE call while
+the cached <code>prefix_out_fix</code> sits computed and unused &mdash; the inference path needs a one-line fix
+before it runs, so the paper's numbers come from <code>compute_loss</code>-consistent training while inference as
+shipped is broken; the port gives <code>act()</code> and <code>loss()</code> one shared definition. The reference
+rounds router logits and expert inputs to bf16 (a TPU choice); this course is fp32 end-to-end and the parity
+fixture pins those dtypes &mdash; a documented deviation, not a silent one.</p>
+<p><b>Where each ablation route enters</b> &mdash; the five arms of the claims suite, each one door in the
+schematic below:</p>
+<p><b>none</b> is lesson 16's nanoVLA bit-identically (the ForceInput module holds no parameters and every hook is
+the identity) &mdash; retrained here so the baseline shares the suite's seeds and schedule.
+<b>prefix_linear</b> appends the one &phi;<sub>F</sub> token to the trunk <em>input</em> [image ; text ; force]:
+force enters the "VLM" as a 257th word and self-attention may bind it to anything &mdash; Table 3 measured 55%,
+a 10-point gain over none.
+<b>prefix_moe</b> runs the whole LIMoE block over that same prefix <em>before</em> the trunk &mdash; Table 3's 0%
+row and the course's built-in expected collapse: the capacity cap zeroes scene tokens before the trunk ever reads
+them, and the router decides with no instruction context.
+<b>concat_after</b> broadcasts E<sub>F</sub> feature-wise onto every trunk <em>output</em> token and fuses with one
+Linear(2d &rarr; d), no MoE &mdash; Table 3's "w/o MoE" row, 60%: late fusion already helps; the MoE is the rest.
+<b>fvlmoe</b> is the full mechanism above &mdash; 80% in the paper, the M2 gate here. A sixth route,
+<b>prompt_bins</b> (ForceBench's numeric prompt: each wrench axis clamped to &plusmn;25 N / &plusmn;2.5 Nm and
+quantised to 32 bins, six embedding-table tokens appended to the text), is on the single-preset form as the
+cheapest reference point; it is not a Table-3 row, so the suite does not train it.</p>
+<p><b>The twin and the noise rows cost no retrain.</b> ``force_noise`` corrupts the wrench <em>where act() reads
+it</em> (same place the loss does): zero = the force-blind twin, gaussian = FACT's force-to-noise
+(\(\mathcal N(0, 1\,\mathrm{N})\) per component), shuffle = permute the batch &mdash; which at act time has batch
+size 1 and is therefore a no-op by construction (exercise 3 measures exactly that trap). The suite evaluation rolls
+the one fvlmoe checkpoint three times (off / zero / gaussian) on the same seeds.</p>
+
+<details class="theory"><summary>Motivation &mdash; why each choice is in this experiment</summary>
+<p><b>Why a port, not a re-derivation.</b> The paper's prose and the released code disagree in two load-bearing
+places (the injection point reads "to the expert's input" but the code adds to its <em>output</em>; the balance
+loss is described and never applied). A re-derivation from the paper would silently test a different model.
+Porting with names kept, pinning parity by fixture against the real JAX block, and documenting every deviation
+(fp32, aux returned) is the reproducible-research half of this lesson &mdash; the force half is the other.</p>
+<p><b>Why the twin and the noise are claims, not extras.</b> This repo has already been burned: at image scale a
+torque token was simply ignored (TA-SmolVLA 53% vs its zeroed twin 66% &mdash; the twin <em>won</em>), and FACT
+found ForceVLA itself leans on force in only one of five tasks. "Is the force used" therefore ships as two default
+claims (m2.twin_gap, m2.noise_drop) that every suite eval fills from the one checkpoint &mdash; a force lesson
+that cannot show its input is load-bearing has measured nothing.</p>
+<p><b>Why top-1-with-capacity vs top1 vs soft is a switch.</b> The reference's sparse scatter router and
+ForceVLA2's dense softmax blend (lesson 18) are different objects that the papers' prose both call "MoE". Keeping
+``moe = top1_capacity | top1 | soft`` on one config makes the difference measurable rather than rhetorical, and
+isolates the capacity cap (the only part that destroys information) from the routing idea itself.</p>
+<p><b>Why the capacity-drop fraction is logged.</b> An overflowing expert buffer zeroes tokens with no error, no
+NaN, no loss spike &mdash; the only symptom is a number nobody computed. The port returns it in aux; training
+stores the last batch's value per arm in the checkpoint; the eval reports it per decision. At act time it is 0 by
+construction (batch 1 gives 85 tokens &rarr; groups of 1, where the floor of 4 never binds &mdash; the reference's
+own degenerate-grouping rule), which is itself a finding worth a sentence: the cap is a <em>training-time</em>
+regulariser here.</p>
+</details>
+<details class="theory"><summary>Theory &mdash; MoE routing in 200 words, and the late-fusion rule</summary>
+<p><b>Mixture of experts.</b> Replace one MLP with E of them plus a tiny router that assigns tokens to experts.
+With top-1 routing each token runs through exactly one expert, so parameters grow E-fold while compute per token
+stays constant &mdash; the scaling trick of Switch Transformer. Two classic failure modes drive the machinery:
+<em>collapse</em> (the router sends everything to one expert; its gradient-rich expert improves, the gap widens)
+and <em>load imbalance</em> on parallel hardware. Switch adds an auxiliary balance loss; the LIMoE lineage adds
+per-group <em>capacity</em>: each expert accepts at most C tokens per group of 16, filled in confidence order,
+overflow dropped to zero. Jitter on the router input decorrelates assignments early in training. ForceVLA inherits
+all of it via flaxformer &mdash; then computes the balance losses and applies none, so capacity alone disciplines
+the router. At this lesson's scale the MoE is not for throughput: it is a <em>gating hypothesis</em> &mdash; that
+contact and free-space tokens want different processing, which the routing statistics below test directly.</p>
+<p><b>The late-fusion rule.</b> Both ForceVLA (Table 3: MoE before the VLM = 0%) and ForceVLA2 (force into the VLM
+pathway = 5%) measured the same cliff: force must join <em>after</em> the pretrained vision-language trunk, as a
+parallel branch or conditioning &mdash; never as an input the VLM must survive. nanoVLA's trunk is trained from
+scratch, so whether the rule transfers to a 2.6 M-parameter "VLM" is a real question, and
+m2.moe_before_vlm_collapses reports it either way.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2505.22159" target="_blank" rel="noopener">Yue et&nbsp;al., "ForceVLA" (2025)</a>
+&mdash; the paper this lesson miniaturises; code at
+<a href="https://github.com/ft-robotic/ForceVLA" target="_blank" rel="noopener">ft-robotic/ForceVLA</a>
+(Apache-2.0, pinned at 79de88f in <code>third_party/forcevla</code>).</li>
+<li><a href="https://arxiv.org/abs/2608.01402" target="_blank" rel="noopener">FACT (2026)</a> &mdash; the
+force-to-noise test; found ForceVLA relies on force in key insertion only (42.5% &rarr; 15% under noise).</li>
+<li><a href="https://arxiv.org/abs/2101.03961" target="_blank" rel="noopener">Fedus et&nbsp;al., "Switch
+Transformers" (2021)</a> &mdash; top-1 routing, the balance loss and its 0.01 coefficient.</li>
+<li><a href="https://arxiv.org/abs/2206.02770" target="_blank" rel="noopener">Mustafa et&nbsp;al., "LIMoE"
+(2022)</a> &mdash; the multimodal MoE lineage the reference block is named after.</li>
+<li>Lessons 5 (a force token on the gantry), 10 (TA-VLA: the twin that won), 15 (what a wrench measures),
+16 (nanoVLA and the 45% bar) &mdash; the course context this lesson plugs into.</li>
+</ul>
+</details>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 780 560" role="img" aria-label="nanoForceVLA: the nanoVLA spine unchanged (cameras and words through the trunk to prefix E, suffix through the action expert to chunk features), the wrench through a linear force token; the FVLMoE runs an encoder block over E concatenated with the force token, routes tokens top-1 into four experts under a capacity cap, and its last H output tokens are added to the chunk features before the velocity head; markers show where the ablation routes prefix_linear, prefix_moe, concat_after and prompt_bins enter instead" style="width:100%;max-width:780px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="nfA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+    <marker id="nfG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+  </defs>
+  <text x="14" y="18" fill="var(--muted)">lesson-16 spine, untouched &#8594;</text>
+  <!-- nanoVLA spine -->
+  <rect x="10" y="28" width="118" height="54" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="cams"/>
+  <text x="69" y="45" text-anchor="middle" fill="var(--ink)" font-weight="700">cameras+words</text>
+  <text x="69" y="60" text-anchor="middle" fill="var(--muted)">72 img tokens</text>
+  <text x="69" y="75" text-anchor="middle" fill="var(--muted)">+ &#8804;12 text</text>
+  <line x1="128" y1="55" x2="158" y2="55" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <rect x="160" y="28" width="104" height="54" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="trunk"/>
+  <text x="212" y="45" text-anchor="middle" fill="var(--ink)" font-weight="700">trunk</text>
+  <text x="212" y="60" text-anchor="middle" fill="var(--muted)">4x self-attn</text>
+  <text x="212" y="75" text-anchor="middle" fill="var(--muted)">force-free</text>
+  <line x1="264" y1="55" x2="294" y2="55" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <rect x="296" y="28" width="96" height="54" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="prefixE"/>
+  <text x="344" y="45" text-anchor="middle" fill="var(--ink)" font-weight="700">prefix E</text>
+  <text x="344" y="60" text-anchor="middle" fill="var(--muted)">[B,&#8804;84,256]</text>
+  <text x="344" y="75" text-anchor="middle" fill="var(--muted)">+ key mask</text>
+  <!-- route markers on the spine -->
+  <rect x="150" y="100" width="124" height="22" rx="6" fill="var(--chip)" stroke="var(--warn)" stroke-dasharray="4 3" data-i="r_lin"/>
+  <text x="212" y="115" text-anchor="middle" fill="var(--muted)">prefix_linear in</text>
+  <polyline points="212,100 212,86" fill="none" stroke="var(--warn)" stroke-dasharray="4 3" marker-end="url(#nfA)"/>
+  <rect x="150" y="130" width="124" height="22" rx="6" fill="var(--chip)" stroke="var(--warn)" stroke-dasharray="4 3" data-i="r_moe"/>
+  <text x="212" y="145" text-anchor="middle" fill="var(--muted)">prefix_moe in</text>
+  <rect x="10" y="100" width="118" height="22" rx="6" fill="var(--chip)" stroke="var(--warn)" stroke-dasharray="4 3" data-i="r_bins"/>
+  <text x="69" y="115" text-anchor="middle" fill="var(--muted)">prompt_bins in</text>
+  <polyline points="69,100 69,86" fill="none" stroke="var(--warn)" stroke-dasharray="4 3" marker-end="url(#nfA)"/>
+  <rect x="296" y="100" width="96" height="22" rx="6" fill="var(--chip)" stroke="var(--warn)" stroke-dasharray="4 3" data-i="r_cat"/>
+  <text x="344" y="115" text-anchor="middle" fill="var(--muted)">concat_after</text>
+  <polyline points="344,100 344,86" fill="none" stroke="var(--warn)" stroke-dasharray="4 3" marker-end="url(#nfA)"/>
+  <!-- wrench path -->
+  <rect x="10" y="170" width="118" height="54" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="wrench"/>
+  <text x="69" y="187" text-anchor="middle" fill="var(--ink)" font-weight="700">wrench</text>
+  <text x="69" y="202" text-anchor="middle" fill="var(--muted)">[B, 6] N / Nm</text>
+  <text x="69" y="217" text-anchor="middle" fill="var(--muted)">10 Hz sample</text>
+  <line x1="128" y1="197" x2="158" y2="197" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <rect x="160" y="170" width="104" height="54" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="phi"/>
+  <text x="212" y="187" text-anchor="middle" fill="var(--ink)" font-weight="700">&#966;_F linear</text>
+  <text x="212" y="202" text-anchor="middle" fill="var(--muted)">6 &#8594; 256</text>
+  <text x="212" y="217" text-anchor="middle" fill="var(--muted)">force_in_proj</text>
+  <line x1="264" y1="197" x2="294" y2="197" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <rect x="296" y="170" width="96" height="54" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="ef"/>
+  <text x="344" y="187" text-anchor="middle" fill="var(--ink)" font-weight="700">E_F token</text>
+  <text x="344" y="202" text-anchor="middle" fill="var(--muted)">[B, 1, 256]</text>
+  <text x="344" y="217" text-anchor="middle" fill="var(--muted)">one reading</text>
+  <!-- concat into FVLMoE -->
+  <polyline points="344,82 420,82 420,116" fill="none" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#nfG)"/>
+  <polyline points="392,197 420,197 420,162" fill="none" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#nfG)"/>
+  <rect x="398" y="118" width="44" height="42" rx="6" fill="var(--chip)" stroke="var(--line)" data-i="cat"/>
+  <text x="420" y="135" text-anchor="middle" fill="var(--muted)">[E ;</text>
+  <text x="420" y="150" text-anchor="middle" fill="var(--muted)">E_F]</text>
+  <line x1="442" y1="139" x2="472" y2="139" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <!-- FVLMoE box -->
+  <rect x="474" y="28" width="296" height="296" rx="10" fill="none" stroke="var(--accent)"/>
+  <text x="488" y="46" fill="var(--accent)" font-weight="700">FVLMoE (ported LIMoEBlock)</text>
+  <rect x="488" y="56" width="128" height="54" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="enc"/>
+  <text x="552" y="73" text-anchor="middle" fill="var(--ink)" font-weight="700">encoder block</text>
+  <text x="552" y="88" text-anchor="middle" fill="var(--muted)">pre-norm ViT</text>
+  <text x="552" y="103" text-anchor="middle" fill="var(--muted)">8 heads, drop .1</text>
+  <polyline points="552,110 552,128" fill="none" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <rect x="488" y="130" width="128" height="68" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="router"/>
+  <text x="552" y="147" text-anchor="middle" fill="var(--ink)" font-weight="700">top-1 router</text>
+  <text x="552" y="162" text-anchor="middle" fill="var(--muted)">jitter .01 train</text>
+  <text x="552" y="177" text-anchor="middle" fill="var(--muted)">groups &#8804;16</text>
+  <text x="552" y="192" text-anchor="middle" fill="var(--muted)">capacity 4/exp</text>
+  <polyline points="616,164 648,164" fill="none" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <rect x="650" y="130" width="108" height="68" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="experts"/>
+  <text x="704" y="147" text-anchor="middle" fill="var(--ink)" font-weight="700">4 experts</text>
+  <text x="704" y="162" text-anchor="middle" fill="var(--muted)">wi 256&#8594;512</text>
+  <text x="704" y="177" text-anchor="middle" fill="var(--muted)">ReLU, wo&#8594;256</text>
+  <text x="704" y="192" text-anchor="middle" fill="var(--muted)">overflow = 0</text>
+  <polyline points="704,198 704,226" fill="none" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <rect x="610" y="228" width="148" height="40" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="resout"/>
+  <text x="684" y="245" text-anchor="middle" fill="var(--ink)" font-weight="700">x + moe_out</text>
+  <text x="684" y="260" text-anchor="middle" fill="var(--muted)">out_proj 256&#8594;256</text>
+  <polyline points="610,248 552,248 552,268" fill="none" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <rect x="488" y="270" width="128" height="40" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="lastH"/>
+  <text x="552" y="287" text-anchor="middle" fill="var(--ink)" font-weight="700">last H tokens</text>
+  <text x="552" y="302" text-anchor="middle" fill="var(--muted)">out[:, -16:, :]</text>
+  <!-- suffix row -->
+  <rect x="10" y="360" width="150" height="70" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="suffix"/>
+  <text x="85" y="379" text-anchor="middle" fill="var(--ink)" font-weight="700">action expert</text>
+  <text x="85" y="394" text-anchor="middle" fill="var(--muted)">suffix 1+16 tok</text>
+  <text x="85" y="409" text-anchor="middle" fill="var(--muted)">cross-attn &#8594; E</text>
+  <text x="85" y="424" text-anchor="middle" fill="var(--muted)">K = 10 passes</text>
+  <polyline points="344,224 344,340 85,340 85,358" fill="none" stroke="var(--accent)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#nfG)"/>
+  <text x="120" y="334" fill="var(--muted)">E is still the cross-attention memory (unchanged)</text>
+  <line x1="160" y1="395" x2="196" y2="395" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <rect x="198" y="360" width="112" height="70" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="feats"/>
+  <text x="254" y="379" text-anchor="middle" fill="var(--ink)" font-weight="700">chunk feats</text>
+  <text x="254" y="394" text-anchor="middle" fill="var(--muted)">f [B, 16, 256]</text>
+  <text x="254" y="409" text-anchor="middle" fill="var(--muted)">after ln_out</text>
+  <line x1="310" y1="395" x2="352" y2="395" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <circle cx="376" cy="395" r="20" fill="var(--accent-soft)" stroke="var(--accent)" data-i="add"/>
+  <text x="376" y="400" text-anchor="middle" fill="var(--ink)" font-weight="700">+</text>
+  <polyline points="552,310 552,340 376,340 376,373" fill="none" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#nfG)"/>
+  <text x="392" y="356" fill="var(--accent)">the injection: feats + limoe_out[:, -H:]</text>
+  <line x1="396" y1="395" x2="432" y2="395" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <rect x="434" y="360" width="112" height="70" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="head"/>
+  <text x="490" y="379" text-anchor="middle" fill="var(--ink)" font-weight="700">velocity head</text>
+  <text x="490" y="394" text-anchor="middle" fill="var(--muted)">256 &#8594; 4</text>
+  <text x="490" y="409" text-anchor="middle" fill="var(--muted)">v [B, 16, 4]</text>
+  <line x1="546" y1="395" x2="582" y2="395" stroke="var(--muted)" marker-end="url(#nfA)"/>
+  <rect x="584" y="360" width="186" height="70" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="exec"/>
+  <text x="677" y="379" text-anchor="middle" fill="var(--ink)" font-weight="700">Euler x10, execute 8</text>
+  <text x="677" y="394" text-anchor="middle" fill="var(--muted)">dp [16,3] grip [16]</text>
+  <text x="677" y="409" text-anchor="middle" fill="var(--muted)">no f_target: force is</text>
+  <text x="677" y="424" text-anchor="middle" fill="var(--muted)">an INPUT only (L18)</text>
+  <polyline points="677,430 677,470 69,470 69,228" fill="none" stroke="var(--muted)" stroke-dasharray="4 3" marker-end="url(#nfA)"/>
+  <text x="120" y="488" fill="var(--muted)">0.8 s later: fresh cameras, state AND wrench &#8594; next decision</text>
+  <text x="14" y="520" fill="var(--muted)">routing stats: every act() decision files the router's aux (expert counts, the force</text>
+  <text x="14" y="536" fill="var(--muted)">token's expert, drop fraction) under contact (|F| &gt; 0.5 N) or free space &#8594; result.routing</text>
+</svg>
+<p class="ref">Parameters (measured, EMA excluded): the fvlmoe route adds <b>+1.78 M</b> on top of nanoVLA's
+7.52 M &mdash; &phi;<sub>F</sub> 1.8 k &middot; encoder block 0.66 M &middot; router 1.0 k &middot; 4 experts
+1.05 M &middot; out_proj 66 k, all inside the <code>force</code> module &mdash; total <b>9.30 M</b> (plan &sect;4
+budgeted &asymp;8.9 M). Every other block is architecture-identical to lesson 16, and <code>force_in="none"</code>
+is the lesson-16 model exactly (a parameterless ForceInput whose hooks are the identity). Click a block's &#9432;
+for its purpose, shapes and update frequency; the dashed amber chips are the doors the other suite arms use
+instead.</p>
+
+<details class="code"><summary>The injection: LIMoE over [E ; E_F], last H tokens added to the chunk features</summary><pre><code class="language-python" data-src="src/nfv/model/force_in.py">    def expert_add(
+        self, e: torch.Tensor, wrench: torch.Tensor | None, chunk: int
+    ) -&gt; torch.Tensor | None:
+        """fvlmoe: LIMoE over [E ; E_F], last ``chunk`` tokens -&gt; add to the chunk features."""
+        if self.route != "fvlmoe":
+            return None
+        limoe_in = torch.cat([e, self._force_token(wrench)], dim=1)  # [B, S+1, D], force LAST
+        out, self.last_aux = self.limoe(limoe_in)
+        return out[:, -chunk:, :]  # [B, H, D] &mdash; the reference's limoe_out[:, -H:]</code></pre></details>
+<details class="code"><summary>The router: jitter on its input (train only), padding down-weighted, top-1</summary><pre><code class="language-python" data-src="src/nfv/model/limoe_port.py">        # Router probabilities (reference _compute_router_probabilities): jitter noise is
+        # multiplicative on the router INPUT, train only; the experts see the raw tokens.
+        router_in = xg
+        if self.training and self.jitter_noise &gt; 0:
+            lo, hi = 1.0 - self.jitter_noise, 1.0 + self.jitter_noise
+            router_in = xg * torch.empty_like(xg).uniform_(lo, hi)
+        logits = self.router(router_in)  # [G, g, E]
+        # ignore_padding_tokens=True: all-zero tokens are down-weighted (never fully excluded)
+        padding = (xg.abs().sum(-1) &gt; 0).to(x.dtype)  # [G, g], 1 = real token
+        probs = logits.softmax(-1) * padding.unsqueeze(-1)  # [G, g, E]
+        gate, index = probs.max(-1)  # top-1 (ties -&gt; first expert, like jax.lax.top_k)</code></pre></details>
+<details class="code"><summary>The capacity cap: buffers fill in confidence order, overflow gets zero</summary><pre><code class="language-python" data-src="src/nfv/model/limoe_port.py">            if self.moe == "top1_capacity":
+                # Batch-prioritized routing: fill expert buffers in order of router confidence.
+                order = torch.argsort(-gate, dim=-1, stable=True)  # [G, g]
+                idx_sorted = index.gather(-1, order)
+                one_hot = F.one_hot(idx_sorted, self.num_experts)  # [G, g, E]
+                priority_sorted = (one_hot.cumsum(1) * one_hot).sum(-1) - 1  # buffer slot
+                priority = priority_sorted.gather(-1, torch.argsort(order, dim=-1))
+                kept = priority &lt; capacity  # overflow tokens get ZERO expert output
+            else:
+                kept = torch.ones_like(gate, dtype=torch.bool)
+            combine = gate * kept</code></pre></details>
+<details class="code"><summary>The whole block: encoder, MoE, residual, out projection &mdash; and the aux it returns</summary><pre><code class="language-python" data-src="src/nfv/model/limoe_port.py">    def forward(self, x: torch.Tensor) -&gt; tuple[torch.Tensor, dict]:
+        x = self.encoderblock(x)
+        moe_out, aux = self.moe_layer(x)
+        return self.out_proj(x + moe_out), aux</code></pre></details>
+<details class="code"><summary>The twin and the FACT test: one function, applied where act() and loss() read the wrench</summary><pre><code class="language-python" data-src="src/nfv/model/force_in.py">def apply_force_noise(
+    wrench: torch.Tensor, mode: str, generator: torch.Generator | None = None
+) -&gt; torch.Tensor:
+    """The twin / FACT wrench corruptions on a [B, 6] wrench (see the module docstring)."""
+    if mode == "off":
+        return wrench
+    if mode == "zero":
+        return torch.zeros_like(wrench)
+    if mode == "shuffle":
+        perm = torch.randperm(wrench.shape[0], generator=generator, device=wrench.device)
+        return wrench[perm]
+    if mode == "gaussian":
+        noise = torch.empty_like(wrench).normal_(0.0, FORCE_NOISE_SIGMA, generator=generator)
+        return wrench + noise
+    raise ValueError(f"force_noise={mode!r}")</code></pre></details>
+
+<h3>What to watch</h3>
+<p>All numbers below were measured in this image on the RTX 3080 and live in the lab's own run records: the
+five-arm claims suite trained as run <code>261101-022500-7f2a</code> (25 k steps/arm &mdash; the form default is
+20 k; the schedule was raised toward the gate within the evening budget, and the choice is on the record) and
+evaluated at 100 episodes/group on shared held-out seeds (eval <code>261101-eval-main</code>, 700 episodes,
+9.8 min). <b>Training:</b> 125 k steps in 75.8 min wall &mdash; ~31 steps/s alone, ~23&ndash;24 steps/s while a
+concurrent lesson-16 eval shared the GPU (the box is shared; the honest rate is the loaded one). Process VRAM
+1.16 GiB on the linear arms, <b>1.44 GiB</b> on the LIMoE arms &mdash; the suite fits the 10 GB card seven times
+over. Final flow losses: none 0.0028, prefix_linear 0.0027, prefix_moe 0.0027, concat_after 0.0025,
+<b>fvlmoe 0.0020</b> &mdash; hold that 29% gap in mind while reading the board. And the capacity cap at training
+batch size (64 &times; 85 tokens &rarr; groups of 16, 4 slots/expert): the last batch dropped <b>66.9%</b> of
+tokens in prefix_moe and <b>62.4%</b> in fvlmoe &mdash; a balanced router could keep every token (4 experts
+&times; 4 slots = the whole group), so two thirds dropped means the router piles most tokens onto one or two
+experts and the cap silently zeroes the overflow. That number existing at all is the point of logging it.</p>
+<p><b>The claims board &mdash; five rows, none green, and the board is doing exactly its job</b> (100
+episodes/group, Wilson 95% CIs, gap CIs conservative from the two arms' intervals):</p>
+<table class="out">
+<tr><th>arm (all T1)</th><th>success</th><th>95% CI</th><th>wrong_button</th><th>force_abort</th><th>peak |F|
+mean</th></tr>
+<tr><td>none</td><td>51/100</td><td>41.3&ndash;60.6%</td><td>43</td><td>6</td><td>7.2 N</td></tr>
+<tr><td>prefix_linear</td><td>44/100</td><td>34.7&ndash;53.8%</td><td>55</td><td>0</td><td>5.8 N</td></tr>
+<tr><td>prefix_moe</td><td>43/100</td><td>33.7&ndash;52.8%</td><td>41</td><td><b>16</b></td><td><b>9.1 N</b></td></tr>
+<tr><td>concat_after</td><td>56/100</td><td>46.2&ndash;65.3%</td><td>40</td><td>3</td><td>6.6 N</td></tr>
+<tr><td>fvlmoe</td><td>45/100</td><td>35.6&ndash;54.8%</td><td>50</td><td>4</td><td>6.5 N</td></tr>
+<tr><td>fvlmoe [zero] &mdash; the twin</td><td>44/100</td><td>34.7&ndash;53.8%</td><td>48</td><td>7</td><td>7.1 N</td></tr>
+<tr><td>fvlmoe [gaussian] &mdash; FACT</td><td>46/100</td><td>36.6&ndash;55.7%</td><td>49</td><td>4</td><td>6.9 N</td></tr>
+</table>
+<ul>
+<li><b>m2.fvlmoe_gate &mdash; NOT CONFIRMED:</b> fvlmoe <b>45/100</b> (CI 35.6&ndash;54.8%) against the fixed
+80% bar &mdash; and, pointedly, against lesson 16's force-blind 45/100. The bar does not move; the analysis
+below says why the number did not.</li>
+<li><b>m2.force_in_beats_none &mdash; NOT CONFIRMED:</b> fvlmoe &minus; none = <b>&minus;6 pts</b>
+(CI &minus;25.0&ndash;13.4%). The paper's 80-vs-45 headline gap did not survive the trip to mini scale: all five
+arms sit in one statistical clump (43&ndash;56) dominated by wrong_button (40&ndash;55 per arm).</li>
+<li><b>m2.twin_gap &mdash; INCONCLUSIVE</b> at +1 pt and <b>m2.noise_drop &mdash; INCONCLUSIVE</b> at
+&minus;1 pt: the same checkpoint with its wrench zeroed or replaced by noise performs <em>identically</em>. This
+is the deepest row of the board: the model carries 1.78 M parameters of force machinery, trains to a 29% lower
+loss with them &mdash; and uses the wrench for <em>nothing</em> at act time. The repo has seen this before
+(TA-SmolVLA's zeroed twin at image scale), FACT measured it on ForceVLA itself (force load-bearing in one of
+five tasks); now it reproduces on a task built to hide the decisive quantity from the camera. Hiding it was
+necessary; it was not sufficient.</li>
+<li><b>m2.moe_before_vlm_collapses &mdash; INCONCLUSIVE</b>, and the direction is the paper's: prefix_moe
+&minus; concat_after = <b>&minus;13 pts</b> (CI &minus;31.6&ndash;6.6%). The paper's 0% did not transfer &mdash;
+unsurprisingly, since nanoVLA's trunk is trained <em>with</em> the MoE in front of it rather than frozen under
+one &mdash; but the degradation mechanism is visible anyway: prefix_moe has 16 force-aborts (every other arm:
+&le; 7) and the highest peak force (9.1 N mean), i.e. mangling the scene tokens before the trunk costs exactly
+press control.</li>
+</ul>
+<p><b>Why the gate is red &mdash; the pre-registered arithmetic, confirmed.</b> (1) The language ceiling held:
+fvlmoe pressed red 49 / blue 47 across its episodes and scored ~44&ndash;46% under <em>both</em> instructions
+&mdash; lesson 16's c6 finding (the flow interpolant leaks the mode, so an eval-time wrong-button cost creates no
+training-time gradient for reading the words) is untouched by adding force, and it caps every arm near the ~50%
+button lottery. (2) The hoped-for second gain &mdash; force fixing <em>when to stop</em> &mdash; did not
+materialise either: aborts were already rare (6/100 for the blind baseline), one 10 Hz wrench sample per 0.8 s
+re-plan arrives too late to stop an 8-step open-loop press segment, and behaviour cloning gives no incentive to
+consult a sensor the demos' velocities barely need (given pixels and depth, the press is almost deterministic
+&mdash; everywhere except the click step itself). (3) More steps is not the lever: 25 k/arm already sits on the
+loss plateau. The fvlmoe loss row is the sharpest statement of the whole lesson: the force branch demonstrably
+helps <em>fit the demonstrations</em> (0.0020 vs 0.0028 &mdash; it can read where in the press the label is) and
+that fit buys <em>zero</em> closed-loop behaviour &mdash; the loss is not the metric, in its purest form yet.
+What would move the number, in order: fix the instruction pathway (the lesson-16 follow-up), close the force loop
+faster than the chunk (shorter n_exec, or a wrench history), or a task where force decides the <em>majority</em>
+of episodes &mdash; which is T2, and lesson 18's opening.</p>
+<p><b>The routing stats &mdash; the plumbing works even though the signal is unused</b> (result.routing; every
+act() decision filed under contact |F| &gt; 0.5 N vs free space): in free space the fvlmoe router spreads tokens
+20 / 40 / 30 / 10% over its four experts; in contact it concentrates <b>89%</b> of all tokens onto expert 1 &mdash;
+the router genuinely learned a contact-vs-free split (prefix_moe's router, by contrast, parks ~87&ndash;90% on one
+expert in <em>both</em> regimes). The force token itself goes to experts 2/1 in contact (57/36%); zero the wrench
+and the <em>same decisions</em> re-route it to expert 3 (64%) while outcomes do not move &mdash; the router reads
+the force; nothing downstream needs it. And fraction_dropped is 0.0000 in every row: at act time a batch of one
+(85 tokens) has no viable group-of-16 split, the reference grouping degenerates to groups of 1 and the capacity
+floor of 4 never binds &mdash; the 62&ndash;67% train-time drops and the 0% act-time drops are the same mechanism
+seen from its two sides.</p>
+<p>In the <b>trace panel</b>, an fvlmoe episode is indistinguishable from lesson 16's: approach, the position-mode
+descent, the F<sub>z</sub> staircase to the click &mdash; and the mode strip stays all grey, because this model
+<em>feels</em> force and still cannot <em>command</em> one. The video's force strip shows no orange command line
+for the same reason. That grey strip survived a lesson that was entirely about force &mdash; which is precisely
+lesson 18's argument.</p>
+<p><b>Exercises.</b> (1) <em>Sparse vs dense routing:</em> train <em>single</em> with moe = soft (every expert,
+probability-weighted &mdash; ForceVLA2's flavour) on t1, then evaluate it with <b>Compare checkpoint</b> set to
+this suite's checkpoint: the "B:" rows roll on the same seeds, and result.routing shows what dense mixing does to
+the contact tilt (soft cannot drop tokens by construction). (2) <em>Apply the loss the reference never applied:</em>
+retrain the fvlmoe single with balance_loss on and watch two numbers &mdash; the checkpoint's
+train_fraction_dropped (here 0.62) should fall as the balance term spreads the router, and the eval's contact
+tilt says whether the learned contact/free split survives being balanced. (3) <b>The deliberately wrong one:</b>
+"corrupt" the wrench with force_noise = shuffle at evaluation and expect a FACT-style drop. Measured (eval
+<code>261101-eval-shuffle</code>, 100 episodes/arm, same seeds): fvlmoe <b>47/100</b> vs 45/100 at off; none
+51/100, outcome-for-outcome <em>identical</em> to its off row; the other arms &plusmn;2&ndash;3 episodes. The
+lesson is two traps deep. First, shuffle permutes the <em>batch</em> dimension, act() evaluates one observation at
+a time, and a permutation of one row is the identity &mdash; the wrench reaches the model untouched, so nothing
+about force reliance was tested. Second, the &plusmn;3 is not corruption either: on CUDA, torch.randperm(1)
+still consumes one draw from the per-episode generator (on CPU it does not &mdash; both measured), so the flow-noise
+stream shifts and a few borderline episodes land differently &mdash; which is why the none arm, the only one that
+never calls apply_force_noise, is the only bit-identical one. A "corruption" that leaves the input untouched
+measures only RNG displacement; zero and gaussian are the act-time tests, and shuffle only bites where batches are
+real (training-time ablations). Read the knob's help text &mdash; and the port's docstring &mdash; before trusting
+a knob.</p>
+
+<h3>Knobs</h3>
+<ul>
+<li><b>Preset</b>: <em>single</em> trains one model with the chosen force route on <b>Task</b>'s demos (with the
+eval-points series); <em>claims_suite</em> trains the five Table-3 arms (none / prefix_linear / prefix_moe /
+concat_after / fvlmoe, all on t1) sequentially into ONE checkpoint whose evaluation fills the whole M2 board.</li>
+<li><b>Force route</b> (single preset): the six doors, prompt_bins included &mdash; the suite always trains its
+five fixed rows.</li>
+<li><b>MoE router</b>: top1_capacity is the reference; top1 removes only the capacity cap; soft is a dense mix
+(every expert, probability-weighted) &mdash; ForceVLA2's flavour, here for contrast.</li>
+<li><b>Experts</b>: 2 / 4 / 8 (the reference uses 4). Capacity per group-of-16 is round(16/E) with a floor of 4,
+so 8 experts means every buffer is floor-sized.</li>
+<li><b>Add the balance loss</b>: ADDs the Switch load-balancing aux (coef 0.01) that the reference computes and
+never applies &mdash; exercise 2's knob.</li>
+<li><b>Steps / Learning rate / Batch / Demos / Seed</b>: the fit() schedule, as in lesson 16; suite arms use
+seed + 101&middot;i.</li>
+<li><b>Episodes / Eval seed / video</b> (evaluate): held-out episodes per group, shared across groups so gaps are
+paired; the claims want 100.</li>
+<li><b>Wrench at act time</b> (evaluate): off / zero / shuffle / gaussian, applied to every evaluated arm with no
+retrain; while <em>off</em>, an fvlmoe arm is additionally rolled at zero and gaussian &mdash; the twin and FACT
+claim rows.</li>
+<li><b>Compare checkpoint</b> (evaluate, optional): a second nano-force-vla checkpoint rolled on the same seeds;
+its arms render as "B: ..." rows (never in claims) &mdash; the cross-checkpoint hook exercise 1 uses.</li>
+</ul>
+
+<p class="ref">The suite checkpoint holds all five arms labelled (kind "nfv-suite", the lesson-16 pattern), so one
+evaluate sees every arm, adds the twin and noise rows from the fvlmoe arm without retraining, and files every
+act() decision's routing under contact or free space. The claims board stays the referee: the bars came from
+ForceVLA's Table 3 and the plan's M2 gate before the runs, and the measured column says what a 9 M-parameter model
+on a 96&times;96 testbed actually did with a sense of touch.</p>
+
+<script type="application/json" class="blkinfo">{"cams": {"t": "cameras + words — the lesson-16 prefix inputs, unchanged", "html": "<p><b>Purpose:</b> the vision/language half is lesson 16 verbatim: two 96×96 cameras through the shared conv stem (72 tokens) and the instruction through the tiny text encoder (≤12 tokens, pad-masked). Nothing force-related touches them, in any route.</p><p><b>Shapes:</b> [B, 72, 256] + [B, ≤12, 256] → the trunk input [B, S ≤ 84, 256] with its key mask.</p><p><b>Updated:</b> once per decision (every 0.8 s at n_exec = 8).</p>"}, "trunk": {"t": "trunk — the \"VLM\", force-free by both papers' rule", "html": "<p><b>Purpose:</b> 4 pre-norm self-attention layers (4 heads, FFN 768) over [image ; text]. The late-fusion rule both papers measured (MoE before the VLM: 0%; force into the VLM pathway: 5%) says force must NOT enter here — the fvlmoe and concat_after routes leave it untouched, and the prefix_linear / prefix_moe / prompt_bins arms exist to test the rule at this scale.</p><p><b>Shapes:</b> [B, S, 256] → E [B, S, 256]; with a prefix route, S grows by the appended force token(s).</p><p><b>Updated:</b> weights every optimizer step; one forward per decision.</p>"}, "prefixE": {"t": "prefix E — the trunk output, read twice", "html": "<p><b>Purpose:</b> the encoded scene-plus-command. It is read twice in the fvlmoe route: as the action expert's cross-attention memory (lesson 16's path, unchanged) AND as the FVLMoE's input, concatenated with the force token. The two reads share the same tensor — the fusion block costs one extra pass over 85 tokens.</p><p><b>Shapes:</b> E [B, ≤84, 256] + key mask [B, ≤84].</p><p><b>Updated:</b> once per decision.</p>"}, "r_lin": {"t": "route prefix_linear — one force token INTO the trunk", "html": "<p><b>Purpose (ablation arm b):</b> the φ_F token is appended to the trunk INPUT: [image ; text ; force], a 257-dimensional word among words. Self-attention may bind it to anything — Table 3 measured 55% (vs none 45%): a modest gain, half of what the late-fusion route buys.</p><p><b>Shapes:</b> prefix grows to [B, S+1, 256]; the force token's key-mask entry is True.</p><p><b>Updated:</b> once per decision (the wrench is the newest 10 Hz sample).</p>"}, "r_moe": {"t": "route prefix_moe — the whole LIMoE BEFORE the trunk (the 0% row)", "html": "<p><b>Purpose (ablation arm c, the built-in expected collapse):</b> the full LIMoE block runs over [image ; text ; force] BEFORE the trunk. Table 3 measured this at 0%: the capacity cap zeroes scene tokens before the trunk ever reads them, and the router routes with no task context. The claims board reports the mini-scale outcome either way (m2.moe_before_vlm_collapses).</p><p><b>Shapes:</b> [B, S+1, 256] → LIMoE → [B, S+1, 256] → trunk.</p><p><b>Updated:</b> once per decision; its routing aux also feeds result.routing.</p>"}, "r_bins": {"t": "route prompt_bins — the wrench as six quantised words", "html": "<p><b>Purpose (single-preset route, not a Table-3 arm):</b> ForceBench's numeric prompt — each wrench axis clamped to its fixed range (±25 N forces — the abort bound — ±2.5 Nm torques), quantised to 32 uniform bins, and appended as 6 tokens from a learned 192-row embedding table. The cheapest force input; a useful third reference point.</p><p><b>Shapes:</b> [B, 6] wrench → int64 ids [B, 6] → [B, 6, 256] appended to the prefix.</p><p><b>Updated:</b> once per decision.</p>"}, "r_cat": {"t": "route concat_after — late fusion with no MoE", "html": "<p><b>Purpose (ablation arm d):</b> E_F is broadcast feature-wise onto EVERY trunk output token and fused by one Linear(512 → 256) — Table 3's \"w/o MoE\" row, 60%. It shares fvlmoe's fusion POINT (after the VLM) without the encoder block or the router, so the fvlmoe − concat_after gap prices the MoE itself.</p><p><b>Shapes:</b> [E ; E_F·1] [B, S, 512] → [B, S, 256].</p><p><b>Updated:</b> once per decision.</p>"}, "wrench": {"t": "wrench — what the tool feels right now", "html": "<p><b>Purpose:</b> the env's compensated, low-pass-filtered 6-D wrench at the wrist site, newest 10 Hz sample, raw Newtons / Newton-metres (course sign: pressing on a surface reads negative F_z). This is the only new observation of lesson 17 — and the only channel that carries T1's hidden threshold. The eval knob force_noise corrupts it exactly here (zero = twin, gaussian = FACT, shuffle = batch-of-1 no-op).</p><p><b>Shapes:</b> float32 [B, 6].</p><p><b>Updated:</b> every decision; the sensor itself streams at 200 Hz underneath.</p>"}, "phi": {"t": "φ_F — the force projection, the reference's force_in_proj", "html": "<p><b>Purpose:</b> Linear(6 → 256), the reference's own name kept (pi0_force.py: force_in_proj on state[7:13], Linear(6 → 2048) at paper scale). No normalisation, no MLP: one affine map from Newtons to token space. Shared by every φ_F-using route (prefix_linear, prefix_moe, concat_after, fvlmoe).</p><p><b>Shapes:</b> [B, 6] → [B, 1, 256]; 1.8 k parameters.</p><p><b>Updated:</b> weights every step; one call per decision.</p>"}, "ef": {"t": "E_F — one force token, one current reading", "html": "<p><b>Purpose:</b> the single token the wrench becomes. One reading, no history — the paper's choice, kept: the model must infer \"the staircase is rising\" from chunk context and repeated decisions, not from a force buffer.</p><p><b>Shapes:</b> [B, 1, 256].</p><p><b>Updated:</b> once per decision.</p>"}, "cat": {"t": "[E ; E_F] — the fusion sequence, force LAST", "html": "<p><b>Purpose:</b> the FVLMoE's input: the trunk's output tokens plus the force token, concatenated with force LAST. The position matters: the injection later slices the LAST H tokens, so the force token is always inside the slice — the other H−1 slots are whatever text/pad tokens sit at the sequence tail, aligned to action steps by position only (the kept quirk).</p><p><b>Shapes:</b> [B, S+1, 256] = [B, 85, 256] at full prefix.</p><p><b>Updated:</b> once per decision.</p>"}, "enc": {"t": "encoder block — where force first reads the scene", "html": "<p><b>Purpose:</b> one pre-norm ViT layer (limoe_simple.Encoder1DBlock): LayerNorm(1e-6) → 8-head self-attention → dropout 0.1 → residual → LayerNorm → MLP 256→768→256 (GELU, tanh approximation — the flax default) → residual. Attention lets the force token gather scene context and every scene token read the force before any routing happens.</p><p><b>Shapes:</b> [B, 85, 256] → [B, 85, 256]; 0.66 M parameters.</p><p><b>Updated:</b> weights every step; one forward per decision (train: per loss step).</p>"}, "router": {"t": "top-1 router — tokens choose experts, under jitter and capacity", "html": "<p><b>Purpose:</b> the ported TokensChooseScatterRouter. Per token: softmax over E expert logits (Linear 256 → E), top-1 expert + gate probability. Jitter noise (multiplicative U(0.99, 1.01)) perturbs the ROUTER's input only, train only — the experts see raw tokens. All-zero padding tokens are down-weighted to probability 0 but still occupy capacity slots (the reference's documented behaviour). Tokens are flattened over (batch, seq) and grouped by _num_groups (groups ≤ 16); buffers fill in confidence order (batch-prioritized, stable sort).</p><p><b>Capacity:</b> max(round(1.0 · g / E), 4) slots per expert per group — 4 at g=16, E=4. Overflow tokens get ZERO expert output, silently; the aux reports the dropped fraction. At act time (batch 1 → 85 tokens → groups of 1) the floor of 4 can never bind: the cap is a training-time mechanism.</p><p><b>Shapes:</b> [G, g, 256] → probs [G, g, E], expert index + gate [G, g]; 1.0 k parameters.</p><p><b>Updated:</b> weights every step; one routing per LIMoE call.</p>"}, "experts": {"t": "4 experts — flaxformer MLPs, one per token", "html": "<p><b>Purpose:</b> E independent MLPs (wi: 256 → 512 → ReLU → wo: → 256, dropout masks broadcast over tokens — one mask per expert call, the reference's broadcast_dims=(-2,)). Each kept token runs through exactly ONE expert and is scaled by its gate probability. The gating hypothesis under test: contact tokens and free-space tokens want different processing — result.routing says whether the router actually learned that split.</p><p><b>Shapes:</b> kept tokens [M, 256] → [M, 256] per expert; 1.05 M parameters total.</p><p><b>Updated:</b> weights every step (an expert that receives no tokens gets no gradient that step — the collapse risk the usage stats watch).</p>"}, "resout": {"t": "residual + out projection — the block's exit", "html": "<p><b>Purpose:</b> y = out_proj(x + moe_out): the encoder output plus the (gate-scaled, capacity-masked) expert outputs, through one Linear(256 → 256) — the reference's final Dense_0 (2048 → 1024 at paper scale). A dropped token still exits via the residual; what it loses is only its expert's contribution.</p><p><b>Shapes:</b> [B, 85, 256] → [B, 85, 256]; 66 k parameters.</p><p><b>Updated:</b> weights every step; once per LIMoE call.</p>"}, "lastH": {"t": "last-H slice — the reference's limoe_out[:, -H:]", "html": "<p><b>Purpose:</b> take the LAST H = 16 tokens of the block's 85-token output as the per-action-step force message m. Position 85 is the force token; positions 69–84 are text/pad tails. There is no learned alignment between these positions and action steps — the kept quirk of the reference, documented in force_in.py's docstring.</p><p><b>Shapes:</b> [B, 85, 256] → m [B, 16, 256].</p><p><b>Updated:</b> once per decision.</p>"}, "suffix": {"t": "action expert — lesson 16's suffix, untouched", "html": "<p><b>Purpose:</b> the 4-layer decoder over [state token ; 16 noisy action tokens + τ], causal self-attention, cross-attention into E — architecture and wiring identical to lesson 16. The force branch never enters it; it only perturbs its OUTPUT features. That is what \"a parallel branch, not conditioning\" means.</p><p><b>Shapes:</b> x_τ [B, 16, 4], τ [B], state [B, 256], E [B, S, 256] → features [B, 16, 256].</p><p><b>Updated:</b> weights every step; K = 10 forwards per decision.</p>"}, "feats": {"t": "chunk features — the expert's output, pre-head", "html": "<p><b>Purpose:</b> the 16 per-step features after the expert's final LayerNorm — lesson 16 fed these straight to the head; lesson 17 adds m first. Computed fresh at every Euler step (they depend on x_τ).</p><p><b>Shapes:</b> f [B, 16, 256].</p><p><b>Updated:</b> every Euler step (10× per decision).</p>"}, "add": {"t": "the injection — a pure ADD before the head", "html": "<p><b>Purpose:</b> v = head(f + m): the reference's action_out_proj(limoe_out[:, -H:] + suffix_out[:, -H:]). m is computed ONCE per decision (it depends on E and the wrench, not on x_τ or τ) and re-added at every Euler step. Zero the LIMoE's out_proj and the model is bit-identical to force_in=\"none\" — the unit-tested statement that the route touches nothing else. The reference's own sample_actions bungles this call (a None prefix concatenated in, the cached prefix unused); the port gives act() and loss() one shared definition.</p><p><b>Shapes:</b> f [B, 16, 256] + m [B, 16, 256] → [B, 16, 256].</p><p><b>Updated:</b> m once per decision; the add 10× per decision.</p>"}, "head": {"t": "velocity head — unchanged, but fed a perturbed feature", "html": "<p><b>Purpose:</b> Linear(256 → 4) to the flow velocity, exactly lesson 16's head. The force branch reaches the actions only through the 256 numbers it adds upstream of this projection.</p><p><b>Shapes:</b> [B, 16, 256] → v [B, 16, 4]; 1 k parameters.</p><p><b>Updated:</b> every Euler step.</p>"}, "exec": {"t": "integrate + execute — force stays an input", "html": "<p><b>Purpose:</b> 10 Euler steps from noise to the chunk, execute the first 8 at 10 Hz, re-plan. f_target stays None: this lesson's model can FEEL force but cannot COMMAND one — the z-axis mode strip in the trace panel stays grey, and holding a set force on an unknown surface remains impossible (lesson 15's measured claim). That is lesson 18's opening.</p><p><b>Shapes:</b> dp float32 [16, 3] (env units), gripper [16].</p><p><b>Updated:</b> one chunk per decision, 8 env steps per chunk (0.8 s); the next decision reads a fresh wrench.</p>"}}</script>
