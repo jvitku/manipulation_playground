@@ -1,0 +1,331 @@
+<h3>The question</h3>
+<p>Lessons 16&ndash;18 trained every policy by imitation, and imitation has one blind spot this course has measured
+over and over: it copies <em>what</em> the expert did, never <em>why</em>. Nothing in a behaviour-cloning loss rewards
+stopping when the force says stop, or searching when the peg lands on the rim. This lesson keeps a trained nanoVLA
+<b>frozen</b> and lets a small <b>residual</b> learn on top of it, online, in the simulator, from a sparse reward
+&mdash; the ForceRFT recipe at nano scale. Can a few thousand parameters that read only the wrench and the base's
+own next action buy what the 7&nbsp;M-parameter imitator could not &mdash; and where does that headroom actually
+live?</p>
+
+<h3>The task</h3>
+<p><b>T3 peg insertion</b> is the gate task (plan &sect;8 M4). The hole sits up to &plusmn;4&nbsp;mm away from the
+visible green marker on each axis &mdash; a sub-pixel offset at 96&times;96 &mdash; so a camera-driven base aims at
+the marker and lands on the rim. The information that would fix it is in the wrench: a peg sitting on the rim reads
+a vertical load with no depth progress, and a peg sliding into the chamfer reads the lateral push toward the hole.
+That is exactly the input a residual reads. Success = the peg tip seated below the hole top inside the opening
+within 20&nbsp;s; |F| &gt; 25&nbsp;N aborts the episode.</p>
+<p><b>Why not T1 (a measured result, kept on this page).</b> Lesson 17 told the "BC never learns to stop" story on
+T1, so T1 was the first target. Before any RL we evaluated two frozen T1 bases on 40 held-out seeds and split the
+failures:</p>
+<table class="out">
+<tr><th>frozen T1 base (40 seeds)</th><th>success</th><th>wrong_button</th><th>over_force + force_abort</th></tr>
+<tr><td>fvlmoe (lesson 17)</td><td>17</td><td>22</td><td>0 + 1</td></tr>
+<tr><td>none (lesson 17)</td><td>14</td><td>23</td><td>1 + 2</td></tr>
+</table>
+<p class="ref">55&ndash;58% of all episodes are lost to the <em>wrong button</em>. A residual that sees no image and
+no instruction cannot know which button is right (the sides swap at random), so its ceiling on T1 is the
+force-failure share: 1&ndash;3 episodes in 40, i.e. 2.5&ndash;7.5 points &mdash; below the +10 bar before a single
+gradient step. Two 5&nbsp;k-step pilot runs confirmed it (success flat at 25%, while the residual already grew 4&times;
+larger in contact than in free space). The evaluation now reports <code>success_cond</code> &mdash; success among
+episodes not lost to a non-force task failure &mdash; which is the number a force residual can move. T1 stays a
+parameter; the gate moved to T3, the plan's original choice.</p>
+
+<h3>The method</h3>
+<p><b>Residual composition.</b> Every 8 env steps the frozen base plans a 16-step chunk from the cameras, the words
+and the state, exactly as in lesson 16 (its flow noise seeded per episode, so the base alone reproduces its own
+evaluation). At each 10&nbsp;Hz step the residual reads the base's <em>next</em> action and adds a bounded
+correction:</p>
+<p>$$dp_t = dp^{\text{base}}_t + \Delta_{\max}\,\tanh\!\big(\pi_\theta(o_t)\big),\qquad
+o_t = \big[s_t,\ F_t/10,\ (F_t - F_{t-1})/5,\ dp^{\text{base}}_t/0.01,\ g^{\text{base}}_t,\ \mathbb 1_{\text{task}}\big]
+\in\mathbb R^{28}.$$</p>
+<p>No images: the base already looked; the residual reads what changes at contact and what the base intends. The
+gripper is never corrected. The base keeps re-planning from the real, residual-perturbed state &mdash; the residual
+corrects a closed loop, not a replay.</p>
+<details class="code"><summary>The composition: base action + bounded residual (bit-exact base at r = 0)</summary><pre><code class="language-python" data-src="src/nfv/rl/residual.py">    r = np.asarray(r, dtype=np.float64)
+    dp = np.asarray(base_dp, dtype=np.float64) + dp_res * r[:3]
+    ft = None if base_f_target is None else np.asarray(base_f_target, dtype=np.float64).copy()
+    if residual_force:
+        if ft is None:
+            raise ValueError("residual_force needs a base whose chunk carries f_target")
+        ft[:3] = ft[:3] + F_RES * r[3:6]
+    return dp, float(base_gripper), ft</code></pre></details>
+<p><b>Bounds scaled to step &times; stiffness.</b> v1 of the plan bounded the residual at &plusmn;5&nbsp;mm per step.
+On the button the base presses at about 1&nbsp;mm/step into a 1000&nbsp;N/m spring: 1&nbsp;mm is 1&nbsp;N, so one
+exploratory &plusmn;5&nbsp;mm step adds 5&nbsp;N on top of a 3&ndash;9&nbsp;N threshold and jumps straight through the
+1.5&times; band. &Delta;<sub>max</sub> = <b>2&nbsp;mm</b> is enough to cancel the press and back off at 1&nbsp;mm/step,
+and enough to cover T3's &plusmn;4&nbsp;mm offset in two steps, while every step stays a bounded deviation
+(&le; 2&nbsp;N into a spring). A residual on the force target (&plusmn;2&nbsp;N) exists behind
+<code>residual_force</code> for a hybrid-head base; today's bases are position-head, so the flag refuses them
+rather than learning a correction nothing applies.</p>
+<p><b>Zero start.</b> The actor's last layer is scaled by 0.01 and its bias zeroed (lesson 13's recipe), so at step
+0 the residual is &lt; 5% of its bound (&lt; 0.1&nbsp;mm) and the policy <em>is</em> the base; with the last layer
+fully zeroed the executed actions equal the base's bit for bit &mdash; a unit test.</p>
+<p><b>TD3 + BC toward zero, with a floor.</b> The learner is lesson 11's TD3 unchanged (<code>fvb.policy.td3</code>:
+twin critics, the minimum of the two as target, delayed actor updates, target-policy smoothing). The stored action
+is the residual. The actor loss adds lesson 12's BC term, but its target is <em>residual = 0</em> on the states the
+policy visits: "behave like the base unless the critic says otherwise". Its weight anneals from 2.5 to a floor of
+1.0 and never further &mdash; lesson 12 measured what happens at zero (the actor drifts off the prior as soon as the
+critic is wrong, which early on it is), and the code refuses floors below 1.0.</p>
+<details class="code"><summary>The BC schedule: anneal, never to zero</summary><pre><code class="language-python" data-src="src/nfv/rl/residual.py">    if floor &lt; BC_FLOOR_MIN:
+        raise ValueError(f"bc floor {floor} &lt; {BC_FLOOR_MIN}: the BC term must never anneal away")
+    if start &lt; floor:
+        raise ValueError("bc start must be &gt;= the floor (the schedule only decays)")
+    return floor + (start - floor) * max(0.0, 1.0 - t / max(int(decay_steps), 1))</code></pre></details>
+<p><b>Reward.</b> Sparse, as v1 specified: +1 on success, &minus;1 on a force abort (or T1's over-force), &minus;0.01
+per step, and an optional peak-force penalty paid as the episode's peak |F| rises (summed over an episode it is
+exactly k&middot;peak/25&nbsp;N &mdash; "gentler" stated as a goal). A timeout bootstraps: the features carry no clock,
+so running out of time is not a property of the state. An optional, privileged <em>hole shaping</em> term (lesson
+13's potential toward the true hole, off by default) is the one deviation tried on this page, and it is analysed
+below.</p>
+<details class="code"><summary>The reward of one step</summary><pre><code class="language-python" data-src="src/nfv/rl/residual.py">    r = -step_cost
+    if peak_force_penalty:
+        r -= peak_force_penalty * max(0.0, float(info["peak_force"]) - peak_prev) / F_ABORT
+    out = info.get("outcome")
+    if info.get("done"):
+        if info.get("success"):
+            r += 1.0
+        elif info.get("force_abort") or out == "over_force":
+            r -= 1.0
+        elif out not in (None, "timeout"):
+            r -= fail_penalty
+    terminal = bool(info.get("done")) and out != "timeout"
+    return r, terminal</code></pre></details>
+<p><b>The loop.</b> Four envs per seed, stepped round-robin (each with its own episode, chunk and noise stream),
+UTD 0.5 after a 1&nbsp;k-step warm-up, Gaussian exploration of 0.2&times; the bound around the actor's output,
+evaluation every 4&nbsp;k env steps on 20 fixed held-out seeds with the residual deterministic. Five RL seeds run as
+five one-thread processes in parallel; the final 100-seed evaluation rolls the frozen base and every residual on
+the <em>same</em> seeds.</p>
+<p><b>Lazy rendering &mdash; the throughput lever.</b> A profiled CPU step was ~33&nbsp;ms, of which the two
+96&times;96 osmesa renders took 26&nbsp;ms, physics 0.9&nbsp;ms and a TD3 update 6&ndash;9&nbsp;ms. Only the base reads
+images, and only every 8th step &mdash; so the env renders only on the steps the base will plan from. Throughput
+went from 33.7 to 66.5 env steps/s, and the physics is provably untouched (outcomes and peak forces identical with
+it on and off).</p>
+<details class="code"><summary>Rendering only when the base will re-plan</summary><pre><code class="language-python" data-src="src/nfv/rl/loop.py">        env = slot.env
+        render0 = env.render_enabled
+        if self.lazy_render:  # render only if the base re-plans from this step's obs
+            env.render_enabled = render0 and slot.j + 1 &gt;= self.n_exec
+        try:
+            obs, info = env.step(Action(dp=dp, gripper=g, f_target=ft))
+        finally:
+            env.render_enabled = render0  # reset() always renders (the first plan)</code></pre></details>
+
+<details class="theory"><summary>Motivation &mdash; why each choice is in this experiment</summary>
+<p><b>Why a residual and not fine-tuning.</b> The base is a flow model whose actions come out of a 10-step ODE;
+pushing RL gradients through it is expensive and destabilising, and it can unlearn what imitation got right. A
+residual leaves the base intact (its evaluation is reproducible bit for bit), learns in a 28-D input space where a
+few thousand transitions are enough, and fails safe: its worst case is bounded by &Delta;<sub>max</sub>.</p>
+<p><b>Why the BC term points at zero, and has a floor.</b> In TD3+BC (lesson 12) the BC target is the
+demonstrator's action; for a residual the demonstrator is the base, whose residual is zero by definition. The floor
+is lesson 12's hardest-won number: annealing BC to zero let the actor follow an immature critic off a cliff.</p>
+<p><b>Why the wrench and its change are inputs.</b> They are what the base cannot use well: lesson 17 fed force into
+the VLA and it barely moved the needle at this scale; the residual reads it directly, at every step, with a
+reward that says what to do with it.</p>
+<p><b>Why five seeds, reported one by one.</b> Lessons 11&ndash;13 measured RL convergence as a seed lottery &mdash; a
+bimodal set of finals where the mean curve describes no seed. The board's last row lists every seed's final.</p>
+<p><b>Why the T1 headroom table is on this page.</b> A claim bar fixed before the run is only honest if the run can
+reach it. Splitting the base's failures first showed that it could not on T1, and the gate moved to the task whose
+missing information is in the wrench.</p>
+</details>
+<details class="theory"><summary>Theory &mdash; ForceRFT, and DSRL as the black-box alternative</summary>
+<p><b>ForceRFT</b> (<a href="https://arxiv.org/abs/2609.22840">arXiv 2609.22840</a>) refines a frozen
+force-conditioned VLA on hardware with a bounded 6-D pose residual and twin critics, reporting large gains in
+contact-rich insertion from ~20&nbsp;k interaction steps. This lesson is its nano version: same structure (frozen base,
+bounded residual on the next action, twin-critic off-policy learner, a prior that pulls the residual home), fewer
+dimensions (3-D position residual; the force-target residual is wired but needs lesson 18's hybrid head).</p>
+<p><b>Why TD3 is the right learner here.</b> Deterministic actor, off-policy replay (every transition reused ~0.5
+times per step at UTD 0.5), clipped double-Q against the overestimation that sparse rewards invite, and delayed actor
+updates so the actor chases a critic that has had time to settle (Fujimoto et al. 2018).</p>
+<p><b>DSRL</b> (<a href="https://arxiv.org/abs/2506.15799">arXiv 2506.15799</a>) is the cleanest alternative: learn a
+policy over the flow model's <em>input noise</em> &epsilon; with SAC and never touch the base's output at all &mdash;
+the base becomes a black box that maps noise to actions, and RL steers which of its own modes it samples. It cannot
+produce an action the base could not, which is both its safety argument and its ceiling (no offset correction the
+base never demonstrated). <b>Not implemented in this lesson</b>: the base already exposes &epsilon; through
+<code>act(generator=...)</code>, so it is a natural extension, but every number on this page is the residual.</p>
+</details>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 780 470" role="img" aria-label="Runtime residual RL: the frozen nanoVLA plans a chunk from cameras, words and state every 8 steps; at each 10 Hz step the residual actor reads the state, wrench, wrench change, the base's next action and the task one-hot, outputs a tanh residual scaled by the 2 mm bound, which is added to the base's next dp and executed in the gantry env; transitions go to a replay buffer, twin critics learn Q of the residual, and the actor is updated with the TD3 objective plus a BC term toward zero whose weight anneals from 2.5 to a floor of 1.0" style="width:100%;max-width:780px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="frA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+    <marker id="frG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+  </defs>
+  <text x="14" y="18" fill="var(--muted)">acting (every 10 Hz step) &#8594;</text>
+  <rect x="10" y="30" width="130" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="obs"/>
+  <text x="75" y="52" text-anchor="middle" fill="var(--ink)" font-weight="700">observation</text>
+  <text x="75" y="68" text-anchor="middle" fill="var(--muted)">cams · words · state</text>
+  <text x="75" y="81" text-anchor="middle" fill="var(--muted)">wrench [6]</text>
+  <rect x="180" y="30" width="150" height="58" rx="9" fill="var(--chip)" stroke="var(--line)" data-i="base"/>
+  <text x="255" y="52" text-anchor="middle" fill="var(--ink)" font-weight="700">frozen nanoVLA</text>
+  <text x="255" y="68" text-anchor="middle" fill="var(--muted)">EMA, no gradient</text>
+  <text x="255" y="81" text-anchor="middle" fill="var(--muted)">chunk every 8 steps</text>
+  <rect x="370" y="30" width="130" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="next"/>
+  <text x="435" y="52" text-anchor="middle" fill="var(--ink)" font-weight="700">base next action</text>
+  <text x="435" y="68" text-anchor="middle" fill="var(--muted)">dp[j], gripper[j]</text>
+  <rect x="10" y="130" width="130" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="feat"/>
+  <text x="75" y="152" text-anchor="middle" fill="var(--ink)" font-weight="700">features o_t</text>
+  <text x="75" y="168" text-anchor="middle" fill="var(--muted)">28-D, fixed scales</text>
+  <rect x="180" y="130" width="150" height="58" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="actor"/>
+  <text x="255" y="152" text-anchor="middle" fill="var(--ink)" font-weight="700">residual actor</text>
+  <text x="255" y="168" text-anchor="middle" fill="var(--muted)">MLP 256×2, tanh</text>
+  <text x="255" y="181" text-anchor="middle" fill="var(--muted)">last layer ×0.01</text>
+  <rect x="370" y="130" width="130" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="bound"/>
+  <text x="435" y="152" text-anchor="middle" fill="var(--ink)" font-weight="700">× Δmax + base</text>
+  <text x="435" y="168" text-anchor="middle" fill="var(--muted)">±2 mm/step/axis</text>
+  <rect x="560" y="80" width="200" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="env"/>
+  <text x="660" y="102" text-anchor="middle" fill="var(--ink)" font-weight="700">gantry env (T3)</text>
+  <text x="660" y="118" text-anchor="middle" fill="var(--muted)">10 Hz, lazy render</text>
+  <text x="660" y="131" text-anchor="middle" fill="var(--muted)">200 Hz F/T underneath</text>
+  <path d="M140 59H178" stroke="var(--muted)" fill="none" marker-end="url(#frA)"/>
+  <path d="M330 59H368" stroke="var(--muted)" fill="none" marker-end="url(#frA)"/>
+  <path d="M75 88V128" stroke="var(--muted)" fill="none" marker-end="url(#frA)"/>
+  <path d="M435 88V110H90V128" stroke="var(--muted)" fill="none" marker-end="url(#frA)"/>
+  <path d="M140 159H178" stroke="var(--accent)" fill="none" marker-end="url(#frG)"/>
+  <path d="M330 159H368" stroke="var(--accent)" fill="none" marker-end="url(#frG)"/>
+  <path d="M500 159H530V109H558" stroke="var(--muted)" fill="none" marker-end="url(#frA)"/>
+  <path d="M660 80V20H40V28" stroke="var(--muted)" fill="none" stroke-dasharray="3 3" marker-end="url(#frA)"/>
+  <text x="560" y="14" fill="var(--muted)">next obs</text>
+  <text x="14" y="236" fill="var(--muted)">learning (UTD 0.5, after a 1 k warm-up) &#8594;</text>
+  <rect x="560" y="190" width="200" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="reward"/>
+  <text x="660" y="212" text-anchor="middle" fill="var(--ink)" font-weight="700">reward</text>
+  <text x="660" y="228" text-anchor="middle" fill="var(--muted)">+1 seat · −1 abort · −0.01</text>
+  <path d="M660 138V188" stroke="var(--muted)" fill="none" marker-end="url(#frA)"/>
+  <rect x="370" y="260" width="150" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="buf"/>
+  <text x="445" y="282" text-anchor="middle" fill="var(--ink)" font-weight="700">replay buffer</text>
+  <text x="445" y="298" text-anchor="middle" fill="var(--muted)">(o, r_res, rew, o')</text>
+  <path d="M660 248V289H522" stroke="var(--muted)" fill="none" marker-end="url(#frA)"/>
+  <rect x="180" y="260" width="150" height="58" rx="9" fill="var(--chip)" stroke="var(--line)" data-i="critic"/>
+  <text x="255" y="282" text-anchor="middle" fill="var(--ink)" font-weight="700">twin critics</text>
+  <text x="255" y="298" text-anchor="middle" fill="var(--muted)">Q1, Q2 of (o, r)</text>
+  <text x="255" y="311" text-anchor="middle" fill="var(--muted)">min-of-two target</text>
+  <path d="M370 289H332" stroke="var(--muted)" fill="none" marker-end="url(#frA)"/>
+  <rect x="180" y="370" width="150" height="58" rx="9" fill="var(--chip)" stroke="var(--line)" data-i="bc"/>
+  <text x="255" y="392" text-anchor="middle" fill="var(--ink)" font-weight="700">BC toward 0</text>
+  <text x="255" y="408" text-anchor="middle" fill="var(--muted)">λ: 2.5 → floor 1.0</text>
+  <path d="M445 318V399H332" stroke="var(--muted)" fill="none" marker-end="url(#frA)"/>
+  <rect x="10" y="300" width="130" height="80" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="upd"/>
+  <text x="75" y="326" text-anchor="middle" fill="var(--ink)" font-weight="700">actor update</text>
+  <text x="75" y="342" text-anchor="middle" fill="var(--muted)">every 2nd step:</text>
+  <text x="75" y="356" text-anchor="middle" fill="var(--muted)">−Q/|Q| + λ·BC</text>
+  <path d="M180 289H100V298" stroke="var(--muted)" fill="none" marker-end="url(#frA)"/>
+  <path d="M180 399H100V382" stroke="var(--muted)" fill="none" marker-end="url(#frA)"/>
+  <path d="M75 300V200H178" stroke="var(--accent)" fill="none" stroke-dasharray="4 3" marker-end="url(#frG)"/>
+  <text x="84" y="214" fill="var(--accent)">θ</text>
+</svg>
+<p class="ref">Click any block for its purpose, shapes and update frequency.</p>
+
+<h3>What to watch</h3>
+<p><b>The base, measured first.</b> The frozen T3 base is lesson 16's nanoVLA trained on the 200 T3 demos for
+15&nbsp;k steps (run <code>261101-054707-063d</code>, loss 0.009). Its closed-loop success during training was 0/20
+at 5&nbsp;k and 10&nbsp;k steps and 1/20 at 15&nbsp;k. On the 20 in-training eval seeds it fails in two ways: it lands
+on the rim and pushes until the 20&nbsp;s timeout (60%), or it digs in past 25&nbsp;N (35% force aborts); mean
+episode peak |F| 16.2&nbsp;N. So the gate is run from the hard corner the protocol warns about: a base at
+&le;&nbsp;5%. The bars were fixed before the runs and stay fixed; what the corner changes is the reading &mdash; a
+sparse +1 that the policy almost never collects carries almost no gradient.</p>
+<p><b>The runs.</b> Two training jobs on the same base, 20&nbsp;k env steps per seed, evaluation every 4&nbsp;k on
+20 fixed seeds (point 0 = the base):</p>
+<table class="out">
+<tr><th>job</th><th>seeds</th><th>in-training success, point 0 &rarr; final</th><th>residual |dp| contact / free
+(final, mm/step)</th><th>eval force aborts, final</th></tr>
+<tr><td>sparse reward (the plan's), run <code>261101-061000-a19s</code></td><td>5</td><td>5% &rarr; 0, 0, 5, 0, 0%</td>
+<td>0.04&ndash;0.06 / 0.03&ndash;0.05 (2&ndash;3% of the bound)</td><td>15&ndash;30% (base 35%)</td></tr>
+<tr><td>+ privileged hole shaping k = 1, run <code>261101-061001-b19h</code></td><td>3</td>
+<td>5% &rarr; 0, 5, 5%</td><td>0.30&ndash;0.40 / 0.55&ndash;0.65</td><td>20&ndash;65% (base 35%)</td></tr>
+</table>
+<p><b>The 100-seed evaluation</b> (base and every residual on the same held-out seeds; eval runs
+<code>261101-063500-a19e</code> and <code>261101-063000-b19e</code>):</p>
+<table class="out">
+<tr><th>policy</th><th>success (Wilson 95%)</th><th>timeout / force_abort</th><th>mean peak |F|</th>
+<th>|residual| contact / free (mm/step)</th></tr>
+<tr><td>frozen base</td><td>2/100 (0.6&ndash;7.0%)</td><td>67 / 31</td><td>17.97 N</td><td>&mdash;</td></tr>
+<tr><td>sparse s0 / s1 / s2 / s3 / s4</td><td>2 / 3 / 2 / 2 / 2 %</td><td>84/14, 83/14, 87/11, 80/18, 88/10</td>
+<td>16.2&ndash;17.2 N (median 16.68)</td><td>0.04&ndash;0.06 / 0.03&ndash;0.05</td></tr>
+<tr><td>shaped s0 / s1 / s2</td><td>1 / 1 / 2 %</td><td>39/60, 62/37, 54/44</td><td>20.3&ndash;23.1 N (median
+20.69)</td><td>0.32&ndash;0.37 / 0.54&ndash;0.66</td></tr>
+</table>
+<p><b>The board</b> (sparse job, the plan's reward): <b>m4.residual_improves_t3 NOT CONFIRMED</b> &mdash; median
+delta +0 points (per seed +0, +1, +0, +0, +0; median-seed vs base CI &minus;6.5..+6.5); <b>m4.peak_force_down NOT
+CONFIRMED</b> &mdash; 7% lower (16.68 vs 17.97&nbsp;N), short of the 20% bar; <b>m4.residual_quiet_in_free_space NOT
+CONFIRMED</b> &mdash; free/contact ratio 0.80 (0.040 vs 0.049&nbsp;mm/step: both at noise level); <b>m4.seed_spread_reported
+CONFIRMED</b> &mdash; five seeds, finals 2/3/2/2/2%. The shaped job is worse on every row (median &minus;1 point, peak
+force +15%, ratio 1.82). The one consistent effect is not on the board: <b>every</b> sparse seed cut the force
+aborts from 31 to 10&ndash;18 per 100, turning them into timeouts, and in 4 of 5 seeds the residual's mean z in
+contact is <em>upward</em> (+0.013 to +0.031&nbsp;mm/step) &mdash; over ~100 contact steps that is 1&ndash;3&nbsp;mm less
+commanded depth into the rim. The residual learned to push less, not to find the hole. The video is the
+before/after on seed 80081, picked as the first eval seed where the base fails and the median seed succeeds:
+the base pushes on the rim until the timeout,
+the median seed's residual seats the peg.</p>
+<p><b>How to read it.</b> With the sparse reward the training episodes collected <b>&le; 2%</b> successes in
+20&nbsp;k steps (every seed), the critic converged to a flat value (Q &asymp; &minus;0.35, loss ~5&middot;10<sup>-4</sup>)
+and the BC term at its floor did exactly what it is for: with no evidence that deviating pays, it held the
+residual at 2&ndash;3% of its bound. That is the <em>safe</em> failure mode of a residual &mdash; it never made the
+base worse &mdash; and it is also why m4.residual_quiet_in_free_space cannot be read as "acts at contact": contact
+and free-space magnitudes are both noise-level. The shaped variant shows the opposite failure. Shaping toward the
+true hole is lesson 13's recipe, but there the actor's observation carried a hole estimate; here the residual sees
+only the wrench, the state and the base's intent, so the shaping reward is unpredictable from its inputs, the
+critic's loss stays 300&times; higher (0.22&ndash;0.27), the residual grows largest in <em>free space</em>
+(0.55&ndash;0.65&nbsp;mm/step) and the force aborts rise above the base's. A reward term that the policy cannot
+observe the cause of is noise with a sign. The lesson's actual finding: <b>runtime RL refines a policy that
+already succeeds sometimes</b> (ForceRFT starts from a base that works most of the time); it does not discover a
+skill whose key state is invisible to it from a 5% base in 20&nbsp;k sparse-reward steps. The next experiments that
+would move the board are named in the exercises below, not tuned in.</p>
+<p class="ref">Throughput, for budgeting: on an idle host one worker runs ~66 env steps/s (1 thread, lazy
+rendering); here 8 workers shared the 24 cores with two other jobs (load average ~70) and ran 17&ndash;20 env
+steps/s each &mdash; 24 minutes of wall time for 5 &times; 20&nbsp;k steps, every seed in parallel.</p>
+
+<p><b>Exercises.</b> (1) <em>Headroom first:</em> train the residual on a base that already succeeds sometimes
+&mdash; a longer T3 base (40&nbsp;k steps) or the expert-noise demos &mdash; and re-run the 5 seeds. Predict from
+this page's reading whether the median delta moves before you look; then re-run with First seed = 5 (seeds
+5&ndash;9): do the per-seed finals land in the same spread, or does the median move by more than its own spread? (2) <em>Gentler as a goal:</em> set the peak-force penalty to 1.0. The reward now pays
+k&middot;peak/25&nbsp;N per episode; predict, then measure, what happens to m4.peak_force_down and to success &mdash; is
+there a trade? (3) <em>The deliberately wrong one &mdash; v1's bound:</em> set the residual bound to 5&nbsp;mm/step
+(v1's value) and train on <b>T1</b>. Predict from the arithmetic in the method (1&nbsp;mm = 1&nbsp;N into the cap
+spring) what the exploratory phase does to over_force and force_abort before the critic has learned anything, and
+check the per-seed curves: a bound that is larger than the base's own step &times; the contact stiffness turns
+exploration into the failure it is supposed to fix. <em>Measured</em> (T1, fvlmoe base, one seed, 4&nbsp;k env
+steps each): over the first ~10 training episodes 20% ended in a force failure at 5&nbsp;mm against 0% at
+2&nbsp;mm; the residual in contact grew to 1.25&nbsp;mm/step (vs 0.40), and by 4&nbsp;k steps the deterministic
+evaluation was unchanged for both (25%, lost to wrong_button). The damage is done where it hurts on hardware
+&mdash; in the exploratory episodes &mdash; and the evaluation curve never shows it: look at
+<code>train_force_fail_ma</code>, not at the eval line. (Trying bc_floor = 0 instead is refused by the code
+&mdash; lesson 12 already ran that experiment.)</p>
+
+<details class="techdev"><summary>Tech development &mdash; what broke, how it was found, what changed</summary>
+<p class="ref">Every change that was needed to make this lesson's experiments and claims work, in the order it was found: symptom, how it was found, cause, change, take-away. Master copy: <code>docs/force_vla_school_techdev.md</code>.</p>
+<p><b>19.1 — on the button task the residual had nothing to fix.</b> Symptom: two 5k-step RL runs left T1 success flat (0.25 → 0.25, 0.25 → 0.20). Found by: evaluating the frozen bases alone <em>before</em> any RL, with outcome counts — fvlmoe 17/40 successes, 22 wrong button, 1 force abort; the force-blind base 14/40, 23 wrong button, 3 force failures. Cause: a 1 mm/step press almost never overshoots, so 55–70 % of failures are the wrong button, and a residual that sees no image and no instruction cannot tell which button is right. The residual's ceiling on T1 is the force-failure share — 2.5–7.5 points. Change: lesson 19 moves to the peg task (T3), the plan's original choice, where the hidden hole offset is exactly what a wrench-reading residual can search for; the eval also reports success conditional on no non-force failure. Take-away: measure the base's failure anatomy before you choose what RL should fix.</p>
+<p><b>19.2 — rendering, not learning, was the bottleneck.</b> 33.7 env steps/s; timing each component showed 26 ms of a ~33 ms step went to rendering both cameras, though only the base reads images, and only every 8th step. Change: render only on the steps the base plans from → 66.5 env steps/s, with outcomes and peak forces verified identical.</p>
+<p><b>19.3 — the plan's ±5 mm residual bound was too large.</b> One exploratory step at 5 mm against a ~1000 N/m button is 5 N — enough to cross the over-force band of a 3 N threshold in a single step, so the residual would take over the press instead of correcting it. Change: ±2 mm. Take- away: scale a residual's bound to the base's step size times the contact stiffness.</p>
+<p><b>19.4 — the thread count changes the outputs.</b> The same base eval gave mean peak force 5.385013 at 4 threads and 5.385015 at 1 — CPU reductions summed in a different order. Change: RL runs pin <code>torch_threads=1</code> and record it; a seed is reproducible only with the thread count fixed too.</p>
+<p><b>19.5 — the behaviour-cloning target moved to visited states.</b> For a residual the BC target is always "residual = 0", so demonstrations would only contribute their states — and building the base's next-action input for them would mean re-running the frozen base on every demo frame. Change: BC toward zero on the replay buffer's own states, through the demo slot TD3 already has.</p>
+<p><b>19.6 — the BC floor is enforced in code.</b> Lesson 12's failure (annealing the imitation weight to zero) is now impossible to configure by accident: floors below 1.0 are refused.</p>
+<p><b>19.7 — a scratch file named <code>profile.py</code> broke torch.</b> <code>cProfile</code> imports <code>profile</code>, which picked up the script; torch's optimizer import then failed with a misleading circular-import error. Take-away: never name scratch files after standard-library modules.</p>
+<p><b>19.8 — the T3 base starts almost at zero.</b> The base reached 0/20, 0/20, 1/20 at its periodic checks and 2/100 on the shared seeds (67 timeouts, 31 force aborts): the hole sits up to ±4 mm off the visible marker with 0.5 mm clearance, so a behaviour-cloned policy aims at the marker, lands on the rim and pushes. Consequence: with a success-only reward, 20k training steps saw at most 2 % successes, the critic went flat (Q ≈ −0.35) and the BC floor held the residual at 2–3 % of its bound. All four M4 bars stayed red (median gain +0 over 5 seeds). Take-away: runtime RL refines a base that already succeeds sometimes — ForceRFT starts from a working policy too; from a 2 % base, sparse reward has nothing to propagate.</p>
+<p><b>19.9 — a reward the policy cannot observe is noise with a sign.</b> A hole-direction shaping term (computed from the simulator's hidden hole position, reward-only) made everything worse: force aborts 37–60/100, peak force +15 %, the residual largest in free space, critic loss ~300× higher. Lesson 13's shaping worked because the actor observed a hole estimate; here it sees only wrench, state and the base's intent, so the shaped reward is unpredictable from its inputs. Kept as a documented knob, default off.</p>
+<p><b>19.10 — the effect that did appear: push less.</b> Every plain-reward seed cut force aborts from 31 to 10–18/100 (converted to timeouts) while success stayed flat; in 4 of 5 seeds the mean vertical residual in contact points upward (+0.013 to +0.031 mm/step, 1–3 mm less depth over a contact phase). The abort penalty was the only signal training actually collected, and the residual learned exactly that. It is what the 7 % peak-force drop measures.</p>
+<p><b>19.11 — shared hosts cost 3× throughput.</b> 17–20 env steps/s per worker against 66 on an idle box (load 70–76 from other jobs) — 5 seeds took 24 min instead of 12. Budget 25–30 min for five seeds on a shared machine.</p>
+<p><b>19.12 — liveness shown for the wrong reason.</b> Jobs started in fresh containers recorded <code>pid 1</code>, which in the lab container is its own always-alive init: the UI showed them as running by luck, and a server restart would mark them failed. Real runs belong to the live lab once the task is registered.</p>
+<p><b>19.13 — the oversized bound does its damage while exploring.</b> With a 5 mm residual bound, 20 % of the first training episodes ended in a force failure (0 % at 2 mm) and the contact residual reached 1.25 vs 0.40 mm/step — yet the deterministic eval was identical by 4k steps. On hardware the exploratory episodes are the ones that break things: watch the training force-failure rate, not the eval curve.</p>
+</details>
+<h3>Knobs</h3>
+<ul>
+<li><b>Frozen base</b>: a lesson-16 <code>nano-vla</code> checkpoint trained on the chosen task. A suite checkpoint
+resolves its single non-blank arm on that task automatically; an ambiguous suite is refused with its arm labels.</li>
+<li><b>Task</b>: t3 (default, the gate) or t1 (the measured low-headroom case).</li>
+<li><b>RL seeds</b> / <b>First seed</b>: independent seeds, one 1-thread CPU process each, in parallel; seed s draws
+its training episodes from 100&nbsp;000 + 100&nbsp;000&middot;s onward, outside every demo and eval block.</li>
+<li><b>Env steps per seed</b>: 20&nbsp;000 is ForceRFT's budget and ~10&ndash;12 minutes of wall time here.</li>
+<li><b>BC weight floor</b>: the anneal 2.5 &rarr; floor runs over the first half of training; never below 1.0.</li>
+<li><b>Peak-force penalty</b>: k in the reward's &minus;k&middot;&Delta;peak/25&nbsp;N term (exercise 2).</li>
+<li><b>Hole shaping (privileged, T3)</b>: k in lesson 13's potential shaping toward the <em>true</em> hole,
+k&middot;(lateral distance decrease)/4&nbsp;mm, reward only &mdash; the actor and critic never see the hole. 0 is the
+plan's sparse reward; the k = 1 run on this page shows what it does when the cause is unobservable.</li>
+<li><b>Residual bound</b>: &Delta;<sub>max</sub> in mm per step per axis; 2 is the course value, 5 is v1's
+(exercise 3).</li>
+<li><b>Residual on f_target</b>: &plusmn;2&nbsp;N on the base's force target; needs a hybrid-head (lesson 18) base and
+refuses a position-head one.</li>
+<li><b>Eval every / Eval episodes per point</b>: the in-training curves (shared fixed seeds, residual
+deterministic, point 0 = the frozen base).</li>
+<li><b>Shared held-out seeds / Eval seed / video</b> (evaluate): the base and every residual roll on the same seeds;
+the video plays the base and the median seed's residual on the same seed, one after the other.</li>
+</ul>
+
+<script type="application/json" class="blkinfo">{"obs": {"t": "observation — what the env reports each 10 Hz step", "html": "<p><b>Purpose:</b> the two 96×96 cameras and the instruction feed only the frozen base; the 8-D state and the 6-D compensated wrench feed both. With lazy rendering the cameras are rendered only on the steps the base will plan from (every 8th).</p><p><b>Shapes:</b> rgb uint8 [96, 96, 3] ×2 (or None between plans), state f32 [8], wrench f32 [6].</p><p><b>Updated:</b> every env step (10 Hz); the F/T stream runs at 200 Hz underneath.</p>"}, "base": {"t": "frozen nanoVLA — lesson 16's policy, never updated", "html": "<p><b>Purpose:</b> plans a 16-step action chunk from cameras + words + state through its EMA weights; its parameters have requires_grad = False and it never sees a reward. Its flow noise is seeded per episode, so on an eval seed the base alone reproduces its lesson-16 rollout.</p><p><b>Shapes:</b> obs → chunk dp [16, 3], gripper [16].</p><p><b>Updated:</b> never (weights); one act() every n_exec = 8 steps (0.8 s).</p>"}, "next": {"t": "the base's next action — what the residual corrects", "html": "<p><b>Purpose:</b> element j of the current chunk: the action the base would execute right now. It is both the thing the residual is added to and an input of the residual (so it can tell 'descending' from 'searching').</p><p><b>Shapes:</b> dp [3] (m), gripper scalar.</p><p><b>Updated:</b> every step (j advances; a new chunk every 8).</p>"}, "feat": {"t": "features o_t — the residual's 28 inputs", "html": "<p><b>Purpose:</b> state (positions and velocities ×10), wrench /10 N, its change since the last step /5 N, base dp /1 cm, base gripper in [-1, 1], task one-hot. Fixed scales, nothing fitted, so a checkpoint needs no statistics. No images.</p><p><b>Shapes:</b> f32 [28] (+3 base f_target with residual_force).</p><p><b>Updated:</b> every step.</p>"}, "actor": {"t": "residual actor — the only acting network that learns", "html": "<p><b>Purpose:</b> fvb.policy.td3.Actor: 2 hidden layers of 256, ReLU, tanh output in [-1, 1]. The last layer's weight is ×0.01 and its bias 0 at init, so step 0 ≈ the base (exactly the base with the layer zeroed — the unit test).</p><p><b>Shapes:</b> [28] → r [3] (~75 k parameters).</p><p><b>Updated:</b> forward every step (plus Gaussian exploration σ = 0.2 during training); weights every 2nd TD3 update.</p>"}, "bound": {"t": "bound and sum — dp = base + Δmax · r", "html": "<p><b>Purpose:</b> scales the tanh output by Δmax = 2 mm per axis and adds it to the base's dp. 2 mm is step × stiffness-scaled: enough to cancel the base's ~1 mm/step press or cover T3's ±4 mm offset in two steps, small enough that one step adds at most ~2 N into a contact spring. v1's 5 mm is exercise 3.</p><p><b>Shapes:</b> r [3] → dp [3] (m), gripper passed through.</p><p><b>Updated:</b> every step.</p>"}, "env": {"t": "gantry env — T3 peg insertion", "html": "<p><b>Purpose:</b> 20 controller ticks / 50 physics steps per 10 Hz action; success = peg tip seated inside the hole whose position is the marker plus a hidden ±4 mm offset; |F| > 25 N aborts. Four envs per seed are stepped round-robin.</p><p><b>Shapes:</b> Action(dp, gripper) → Obs, info (success, outcome, peak_force).</p><p><b>Updated:</b> every step.</p>"}, "reward": {"t": "reward — sparse, with an optional gentleness term", "html": "<p><b>Purpose:</b> +1 on success, −1 on a force abort (or T1 over-force), −0.01 per step, optional −k·Δpeak/25 N. A timeout bootstraps (no clock in the features); every other end is terminal.</p><p><b>Shapes:</b> scalar per step, terminal flag.</p><p><b>Updated:</b> every step.</p>"}, "buf": {"t": "replay buffer — off-policy memory", "html": "<p><b>Purpose:</b> stores (o_t, r_t = the residual, reward, o_{t+1}, terminal) — the stored action is the residual, not the summed action, so the critic learns Q(o, r). The BC term samples its states from this same buffer with target action 0.</p><p><b>Shapes:</b> capacity = env_steps; batches of 256.</p><p><b>Updated:</b> one transition per env step.</p>"}, "critic": {"t": "twin critics — clipped double-Q", "html": "<p><b>Purpose:</b> two independent Q networks (256×2) over [o ; r]; the target uses the minimum of the two target critics at a smoothed target action, against the overestimation sparse rewards invite (TD3, lesson 11).</p><p><b>Shapes:</b> [B, 28 + 3] → [B, 1] each.</p><p><b>Updated:</b> every TD3 update (0.5 per env step after the 1 k warm-up); Polyak targets τ = 0.005.</p>"}, "bc": {"t": "BC toward residual = 0 — the prior, with a floor", "html": "<p><b>Purpose:</b> the TD3+BC term (lesson 12) with target 0 on visited states: 'stay the base unless the critic says otherwise'. λ anneals 2.5 → 1.0 over the first half of training and never lower — code refuses floors < 1.0.</p><p><b>Shapes:</b> mean ‖π(o) − 0‖² over a batch of 256.</p><p><b>Updated:</b> with every actor update.</p>"}, "upd": {"t": "actor update — delayed, normalised", "html": "<p><b>Purpose:</b> every 2nd critic step: loss = −Q1(o, π(o)) / mean|Q| (floored at 1) + λ·BC. The normalisation keeps the BC weight meaningful whatever the scale of Q. Gradients flow only into the residual actor.</p><p><b>Shapes:</b> batch [256, 28] → scalar.</p><p><b>Updated:</b> every 2nd TD3 update; target actor by Polyak averaging.</p>"}}</script>

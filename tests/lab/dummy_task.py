@@ -37,7 +37,11 @@ SPEC = TaskSpec(
         Param("steps", "Steps", "int", 5, 1, 1000),
         Param("delay", "Delay", "float", 0.02, 0, 10),
     ],
-    eval_params=[Param("n", "N", "int", 3, 1, 10)],
+    eval_params=[
+        Param("n", "N", "int", 3, 1, 10),
+        # optional (default None): empty/"" passes through; non-empty must resolve
+        Param("ckpt_b", "Second checkpoint", "ckpt", None, ckpt_task="dummy"),
+    ],
     charts=[
         {"id": "l", "title": "loss", "series": [{"key": "loss", "label": "loss"}], "log_y": False}
     ],

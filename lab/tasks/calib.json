@@ -11,5 +11,10 @@
   "attention": {"steps_per_s": 720.0, "overhead_s": 0.4},
   "vit-mnist": {"steps_per_s": 270.0, "overhead_s": 1.0},
   "cross-attn": {"steps_per_s": 120.0, "overhead_s": 1.0},
-  "find-digit": {"steps_per_s": 40.0, "overhead_s": 3.0}
+  "find-digit": {"steps_per_s": 40.0, "overhead_s": 3.0},
+  "force-sim": {"s_per_demo": 0.47, "task_overhead_s": 2.0, "overhead_s": 5.0},
+  "nano-vla": {"steps_per_s": 22.9, "load_s_per_demo": 0.01, "ep_s": 2.5, "overhead_s": 15.0},
+  "nano-force-vla": {"steps_per_s": 27.5, "load_s_per_demo": 0.01, "ep_s": 2.5, "overhead_s": 15.0},
+  "nano-force-vla2": {"steps_per_s": 25.0, "load_s_per_demo": 0.01, "ep_s": 4.0, "overhead_s": 15.0},
+  "force-rl": {"env_steps_per_s": 50.0, "eval_steps_per_s": 80.0, "overhead_s": 30.0}
 }

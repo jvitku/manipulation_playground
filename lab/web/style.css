@@ -93,6 +93,7 @@ pre.json{font-family:var(--mono);font-size:12px;background:var(--bg);border:1px 
 .chip{border-radius:999px;padding:1px 9px;font-size:11px;font-weight:600;background:var(--chip)}
 .chip.good{color:var(--good);background:var(--good-soft)}
 .chip.bad{color:var(--bad);background:var(--bad-soft)}
+.chip.warn{color:var(--warn);background:var(--warn-soft)}
 .note{color:var(--muted);font-size:12px;margin-top:8px}
 .hint{color:var(--muted);font-size:11px;margin-top:2px}
 svg text{font-family:var(--mono);font-size:10px;fill:var(--muted)}
@@ -144,6 +145,11 @@ svg .arr{stroke:var(--muted);fill:none;marker-end:url(#ah)}
 .blk-pop table{border-collapse:collapse;margin:6px 0}
 .blk-pop td,.blk-pop th{border:1px solid var(--line);padding:3px 8px;font-size:12.5px;text-align:left}
 
+.lesson details.techdev{margin:10px 0;border:1px solid var(--warn);border-radius:8px;background:var(--warn-soft);min-width:0}
+.lesson details.techdev>summary{cursor:pointer;padding:6px 10px;font-size:13px;font-weight:600;color:var(--warn)}
+.lesson details.techdev[open]>summary{border-bottom:1px solid var(--line)}
+.lesson details.techdev>:not(summary){margin-left:12px;margin-right:12px}
+.lesson details.techdev>p:last-child{margin-bottom:10px}
 .lesson details.theory{margin:10px 0;border:1px solid var(--accent);border-radius:8px;background:var(--accent-soft);min-width:0}
 .lesson details.theory>summary{cursor:pointer;padding:6px 10px;font-size:13px;font-weight:600;color:var(--accent)}
 .lesson details.theory[open]>summary{border-bottom:1px solid var(--line)}

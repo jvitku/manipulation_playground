@@ -52,10 +52,11 @@
   }
 
   // ---------- param forms ----------
-  async function fillCkptSelect(select, taskId) {
+  async function fillCkptSelect(select, taskId, optional) {
     let cks = [];
     try { cks = ((await api("GET", `/api/tasks/${encodeURIComponent(taskId)}`)).checkpoints) || []; } catch (e) { /* empty list */ }
     select.replaceChildren();
+    if (optional) select.append(el("option", { value: "", text: "none" }));
     for (const c of cks) {
       const m = c.metrics || {};
       const key = Object.keys(m).find((k) => typeof m[k] === "number");
@@ -81,10 +82,11 @@
         input = el("input", { type: "checkbox" });
         input.checked = !!p.default;
       } else if (p.kind === "ckpt") {
-        // a checkpoint of another task (p.ckpt_task): options come from that task's detail endpoint
+        // a checkpoint of another task (p.ckpt_task): options come from that task's detail
+        // endpoint; a param with no default (null) is optional and gets a "none" option
         input = el("select");
         input.append(el("option", { value: "", text: "loading checkpoints…" }));
-        fillCkptSelect(input, p.ckpt_task);
+        fillCkptSelect(input, p.ckpt_task, p.default == null);
       } else {
         input = el("input", { type: "number", step: p.step != null ? p.step : p.kind === "int" ? 1 : "any" });
         if (p.min != null) input.min = p.min;

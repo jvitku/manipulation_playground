@@ -154,6 +154,66 @@ def test_eval_roundtrip(client):
     assert bad.status_code == 404
 
 
+def _ckpt_of_a_run(client):
+    rid = _start(client, steps=2)
+    _wait(client, f"/api/runs/dummy/{rid}")
+    return rid, client.get("/api/tasks/dummy").json()["checkpoints"][0]["id"]
+
+
+def test_eval_ckpt_param_optional_and_resolved(client, tmp_path):
+    import json
+    from pathlib import Path
+
+    rid, ck = _ckpt_of_a_run(client)
+
+    def eval_params(resp):
+        assert resp.status_code == 200, resp.text
+        d = tmp_path / "evals" / "dummy" / resp.json()["eval_id"] / "config.json"
+        return json.loads(d.read_text())["params"]
+
+    url = "/api/tasks/dummy/evals"
+    # empty (and omitted) optional ckpt param passes through as ""
+    r = client.post(url, json={"ckpt": ck, "params": {"ckpt_b": ""}})
+    assert eval_params(r)["ckpt_b"] == ""
+    assert eval_params(client.post(url, json={"ckpt": ck}))["ckpt_b"] == ""
+    # non-empty resolves to the checkpoint's absolute file path
+    p = Path(eval_params(client.post(url, json={"ckpt": ck, "params": {"ckpt_b": ck}}))["ckpt_b"])
+    assert p.is_absolute() and p.is_file()
+    assert p == (tmp_path / "runs" / "dummy" / rid / "ckpt" / ck.split("/")[1]).resolve()
+
+
+def test_eval_ckpt_param_traversal_404(client):
+    rid, ck = _ckpt_of_a_run(client)
+    for bad in ("../x", "..", f"{rid}/..", f"{rid}/../index.json", "/etc/passwd", "nope/x.pt"):
+        r = client.post("/api/tasks/dummy/evals", json={"ckpt": ck, "params": {"ckpt_b": bad}})
+        assert r.status_code == 404 and "ckpt_b" in r.text, bad
+
+
+def test_eval_ckpt_param_required_empty_422(client, monkeypatch):
+    from lab.tasks import registry
+    from lab.tasks.base import Param
+
+    spec = registry.get("dummy")
+    monkeypatch.setattr(
+        spec,
+        "eval_params",
+        [*spec.eval_params, Param("ckpt_req", "Required", "ckpt", "", ckpt_task="dummy")],
+    )
+    rid, ck = _ckpt_of_a_run(client)
+    r = client.post("/api/tasks/dummy/evals", json={"ckpt": ck, "params": {"ckpt_req": ""}})
+    assert r.status_code == 422 and "ckpt_req" in r.text
+    r = client.post("/api/tasks/dummy/evals", json={"ckpt": ck, "params": {"ckpt_req": ck}})
+    assert r.status_code == 200, r.text
+
+
+def test_start_run_required_ckpt_still_422(client):
+    # task8's required train ckpt (default "", not None) still refuses an empty value
+    r = client.post("/api/tasks/residual-rl/runs", json={"params": {"base_ckpt": ""}})
+    assert r.status_code == 422 and "base_ckpt" in r.text and "flow-bc" in r.text
+    r = client.post("/api/tasks/residual-rl/runs", json={"params": {"base_ckpt": "nope/x.pt"}})
+    assert r.status_code == 422 and "no such flow-bc checkpoint" in r.text
+
+
 def test_gpu_endpoint_shape(client):
     r = client.get("/api/gpu").json()
     assert set(r) == {"used_mb", "total_mb"}

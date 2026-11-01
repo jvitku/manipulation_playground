@@ -1,0 +1,379 @@
+<h3>The question</h3>
+<p>Can a vision&ndash;language&ndash;action model built <em>from scratch</em> &mdash; every block written in this repo,
+7.5&nbsp;M parameters, trained in minutes on one GPU &mdash; act from pixels and words? And, the question the whole
+force-VLA school hangs on: what does such a model <em>miss</em> when it has no sense of touch? This lesson builds
+nanoVLA (vision stem, tiny language path, transformer trunk, flow-matching action expert), trains it on lesson 15's
+demonstrations, and lets the claims board answer with numbers: on the fully visible T0 it should be nearly perfect
+(claim c4), on T1 &mdash; where the click threshold is hidden from the camera &mdash; it should land <em>mid-range by
+design</em> (c5), and on the two-button T1 the instruction should be load-bearing (c6). The gap c5 leaves open is
+exactly the room lesson 17 fills with a force input.</p>
+
+<h3>The task</h3>
+<p>Both tasks, cameras and demos come from lesson 15's testbed. The policy sees two 96&times;96 cameras (static +
+wrist), the 8-D state [x, y, z, yaw, grip, vx, vy, vz] and one instruction from a 23-word vocabulary; it answers
+with a <b>chunk</b> of H = 16 actions (&Delta;p xyz + gripper), of which the first n_exec = 8 are executed at 10 Hz
+before it re-plans. No wrench enters the model anywhere &mdash; that is lesson 17.</p>
+<table class="out">
+<tr><th>task</th><th>instruction</th><th>what the camera sees</th><th>what it cannot see</th></tr>
+<tr><td>T0 reach&ndash;grasp</td><td>"pick up the cube"</td><td>everything that matters: the cube, the gripper</td>
+<td>nothing &mdash; the architecture check</td></tr>
+<tr><td>T1 press-until-click</td><td>"press the red/blue button"</td><td>both buttons, their positions, sides
+swapped per episode</td><td>the per-button click threshold \(\sim U(3, 9)\) N &mdash; pure Python, pixel-identical
+scenes (lesson 15); success also demands peak |F| &lt; 1.5&times; threshold, so pressing blindly harder loses</td></tr>
+</table>
+<p class="ref">T1 is the designed blind spot: vision + words find and press the right button, but <em>when the click
+comes</em> and <em>how hard is too hard</em> leak only through force. A vision-only policy should therefore sit
+mid-range on T1 &mdash; the M1 gate expects 30&ndash;70%, and a result <em>above</em> the window means the task
+premise broke (re-randomise T1), not that the model is good.</p>
+
+<h3>The method</h3>
+<p><b>Prefix / suffix.</b> nanoVLA is the &pi;0 / SmolVLA shape at 1/50th scale: a <b>prefix</b> encodes what the
+world looks like and what was asked &mdash; [image&nbsp;;&nbsp;text] through the trunk into
+\(E \in \mathbb{R}^{B \times S \times 256}\), S &le; 84 tokens &mdash; and a <b>suffix</b> turns noise into actions
+by reading E through cross-attention. The split is what makes iterative sampling cheap: the prefix is computed
+<em>once</em> per decision, the small suffix runs K = 10 times for the Euler integration.</p>
+<p><b>Vision &rarr; 72 tokens.</b> One conv stem (4 stride-2 layers, 32&ndash;256 channels) is shared by both
+cameras: 96 &rarr; 48 &rarr; 24 &rarr; 12 &rarr; 6, so each image becomes a 6&times;6 grid of 256-D vectors = 36
+tokens, 72 for the pair &mdash; [B, 72, 256]. A learned 2-D position embedding (row table + column table) says where
+a token sits in its image; a learned per-camera embedding says which camera it came from, which is all that tells
+the two apart since the stem weights are shared.</p>
+<p><b>Text path.</b> The vocabulary is the course's 23 words (every instruction word of T0&ndash;T3 plus the subtask
+words lesson 18 will need). Tokenize = lowercase, split, look up, pad to T = 12; &lt;pad&gt; positions are masked out
+of every attention read downstream. The embeddings pass one encoder layer &rarr; [B, &le;12, 256].</p>
+<p><b>Trunk.</b> Four pre-norm encoder layers (4 heads, FFN 768) run self-attention over the concatenated
+[image&nbsp;;&nbsp;text] sequence &mdash; this is where "the red button" meets the red pixels. Output: the prefix E
+and its key mask. The trunk is nanoVLA's "VLM" &mdash; and deliberately stays force-free in every later lesson (both
+papers found force must not enter the VLM pathway).</p>
+<p><b>Action expert.</b> The suffix is [state token&nbsp;;&nbsp;16 noisy action tokens]: the 8-D state through a
+linear lift, each noisy action \(x_\tau[t]\) through a linear lift plus the flow-time embedding \(\tau\) (log-spaced
+sin/cos through a 2-layer MLP, the same &tau; for the whole chunk) plus a learned suffix position. Four decoder
+layers run <em>causal</em> self-attention over the suffix (an action token reads the state and earlier steps, never
+later ones) and cross-attention into E (masked where E is &lt;pad&gt;); a linear head turns the 16 chunk features
+into the velocity [B, 16, 4].</p>
+<p><b>Flow matching</b> &mdash; the same object lessons 2 and 4 taught, now conditioned on pixels and words. Actions
+are scaled to model units in [&minus;1, 1] (dp / 0.05 m, gripper &times; 2 &minus; 1; fixed, nothing fitted). Draw
+\(\tau \sim \mathrm{Beta}(1.5, 1)\), noise \(e \sim \mathcal N(0, I)\), interpolate on the straight line and regress
+its velocity:</p>
+<p>$$x_\tau = \tau\, e + (1 - \tau)\, x_0, \qquad u = \frac{d x_\tau}{d \tau} = e - x_0, \qquad
+\mathcal L = \lVert v_\theta(x_\tau, \tau \mid E, \text{state}) - u \rVert^2,$$</p>
+<p>masked where the chunk runs past the episode end (the dataset's pad_mask). At inference, start at pure noise
+(\(\tau = 1\)) and integrate to data (\(\tau = 0\)) with K Euler steps:</p>
+<p>$$x \leftarrow x - \tfrac{1}{K}\, v_\theta(x, \tau), \qquad K = 10.$$</p>
+<p><b>Chunking.</b> Predict H = 16 steps, execute n_exec = 8, re-plan &mdash; lesson 4's trade-off verbatim: longer
+execution is smoother and cheaper but reacts a whole chunk late; executing all 16 open-loop on T1 is this lesson's
+deliberately-wrong exercise. Training: AdamW (lr 3e-4, linear warmup then cosine to 0), grad-clip 1.0, batch 64, and
+an EMA copy (decay 0.999) that is what acts and what the checkpoint evaluates &mdash; the house convention.</p>
+<p><b>The no-language arm.</b> The claims suite's arm C trains and evaluates the <em>identical</em> config on T1
+with every instruction replaced by a constant <code>&lt;unk&gt;</code> token &mdash; text that exists but says
+nothing. (Not the all-&lt;pad&gt; text: with every key masked, the text encoder's self-attention softmax is NaN.
+Arm C is a flag in the task wrapper that swaps the instruction for the model's own blank constant
+&mdash; <code>nfv.model.text.BLANK_INSTRUCTION</code>, the same text lesson 17's instruction dropout and
+classifier-free guidance condition on; the env still draws its real target button.)</p>
+
+<details class="theory"><summary>Motivation &mdash; why each choice is in this experiment</summary>
+<p><b>From scratch at d = 256, not a pretrained VLM.</b> A real VLA inherits a web-scale VLM because its scenes are
+the open world. These scenes are 96&times;96 renders of one gantry and the whole language is 23 words &mdash; there
+is no web knowledge to inherit, and a from-scratch 7.5&nbsp;M-parameter model trains in ~11 minutes on the 3080,
+which is what makes the lesson-17/18 ablation suites affordable. The price is honest too: every block is ~100 lines
+the lesson can quote, instead of a frozen black box.</p>
+<p><b>Why a flow head and not regression.</b> Lesson 2's collapse: an MSE head averages modes. T1 always shows two
+buttons; half the demos go left, half right. Conditioned on the instruction the target is (mostly) unimodal, but the
+starting approach, the press depth and T0's grasp timing are genuinely multimodal &mdash; a generative head samples
+a coherent chunk instead of the mean of several. The flow unit test of milestone M1 pins the other direction: with
+one data mode the field is nearly straight and even one Euler step lands on the mean.</p>
+<p><b>Why EMA.</b> The flow loss is noisy (fresh e and &tau; every step), so the raw weights jitter; the EMA shadow
+is a cheap average that evaluates several points better and is the lab's checkpoint convention anyway
+(lab/core/loop.py) &mdash; the optimizer never sees it.</p>
+<p><b>Why 20 k steps.</b> The loss is near its plateau well before (first drop is ~10&times; within 2 k steps);
+20 k at the measured 23&ndash;31 steps/s (loaded vs idle box) is 11&ndash;15 min &mdash; inside the M1 gate's
+"20 k &lt; 20 min" budget, with the cosine tail giving the EMA a quiet run-out. The recorded suite runs used 15 k
+per arm so three arms fit one evening; the shortened choice is written into their run records.</p>
+<p><b>Why T1's expected 30&ndash;70% window IS the design.</b> The course needs headroom a force input can claim in
+lesson 17. If vision alone solved T1, the threshold would not be hidden (premise broken &rarr; re-randomise); if it
+scored ~0%, the task would be too hard to show a clean force-vs-no-force gap. c5 is a claim about the
+<em>course</em>, not about the model &mdash; and the board treats leaving the window above as NOT CONFIRMED with an
+explicit re-randomise note.</p>
+</details>
+<details class="theory"><summary>Theory &mdash; the VLA recipe, and what the papers would say</summary>
+<p><b>The recipe.</b> A modern VLA is: a vision encoder into tokens, language into tokens, one transformer over both
+(the "VLM"), and an <b>action expert</b> &mdash; a second, smaller transformer that cross-attends into the VLM's
+output and generates an action <em>chunk</em> with a diffusion/flow objective.
+<a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener">&pi;0 (arXiv 2410.24164)</a> set this
+shape (3 B-parameter PaliGemma VLM + 300 M flow-matching expert, 50 Hz chunks);
+<a href="https://arxiv.org/abs/2506.01844" target="_blank" rel="noopener">SmolVLA (arXiv 2506.01844)</a> showed it
+survives aggressive shrinking (450 M total, consumer hardware, async inference). nanoVLA keeps the structure
+&mdash; prefix/suffix split, flow head, chunking, even the "expert reads the VLM through cross-attention" wiring
+&mdash; at another 50&times; down: trunk 2.6 M, expert 3.8 M, vision 0.4 M, text 0.7 M, total 7.5 M parameters.</p>
+<p><b>Claims vs papers.</b> The papers' numbers do not transfer to a toy &mdash; nothing here says "SmolVLA gets X%".
+What transfers is the <em>shape of the claims</em>: architecture solves visible tasks (c4 mirrors every VLA paper's
+headline), and what the inputs cannot carry bounds what the policy can do (c5/c6 are the course's own, measured
+here with Wilson intervals and verdicts instead of quoted). The same board grades the ForceVLA claims next lesson,
+scaled the same way.</p>
+<h4>Read more</h4>
+<ul>
+<li><a href="https://arxiv.org/abs/2410.24164" target="_blank" rel="noopener">Black et&nbsp;al., "&pi;0: A
+Vision-Language-Action Flow Model for General Robot Control" (2024)</a> &mdash; the prefix/suffix + flow-matching
+action expert this lesson miniaturises.</li>
+<li><a href="https://arxiv.org/abs/2506.01844" target="_blank" rel="noopener">Shukor et&nbsp;al., "SmolVLA" (2025)</a>
+&mdash; the small-VLA existence proof: the recipe survives shrinking; nanoVLA continues the trend off the chart.</li>
+<li><a href="https://arxiv.org/abs/2212.06817" target="_blank" rel="noopener">RT-1 (2022)</a> &mdash; the
+tokens-in, actions-out lineage lessons 6&ndash;10 and 14 built up to.</li>
+<li>Lessons 2 (flow matching), 4 (chunking), 10 (two-stream VLA), 14 (action interfaces) &mdash; every mechanism
+here was a lesson already; this one only composes them.</li>
+</ul>
+</details>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 780 470" role="img" aria-label="nanoVLA: cameras through a shared conv stem to 72 image tokens and the instruction through a tiny text encoder join in the 4-layer trunk, producing the prefix E; the suffix - state token, noisy action chunk and tau embedding - runs through the action expert with cross-attention into E, the velocity head and ten Euler steps produce the action chunk, whose first eight steps the executor runs before the loop re-plans" style="width:100%;max-width:780px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="nvA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+    <marker id="nvG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+  </defs>
+  <text x="14" y="20" fill="var(--muted)">prefix: once per decision &#8594;</text>
+  <!-- vision path -->
+  <rect x="10" y="30" width="112" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="cams"/>
+  <text x="66" y="47" text-anchor="middle" fill="var(--ink)" font-weight="700">cameras</text>
+  <text x="66" y="62" text-anchor="middle" fill="var(--muted)">static + wrist</text>
+  <text x="66" y="77" text-anchor="middle" fill="var(--muted)">2x 96x96 uint8</text>
+  <line x1="122" y1="59" x2="148" y2="59" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <rect x="150" y="30" width="122" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="stem"/>
+  <text x="211" y="47" text-anchor="middle" fill="var(--ink)" font-weight="700">conv stem x4</text>
+  <text x="211" y="62" text-anchor="middle" fill="var(--muted)">shared, stride 2</text>
+  <text x="211" y="77" text-anchor="middle" fill="var(--muted)">96 &#8594; 6x6 grid</text>
+  <line x1="272" y1="59" x2="298" y2="59" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <rect x="300" y="30" width="122" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="vtok"/>
+  <text x="361" y="47" text-anchor="middle" fill="var(--ink)" font-weight="700">72 img tokens</text>
+  <text x="361" y="62" text-anchor="middle" fill="var(--muted)">[B, 72, 256]</text>
+  <text x="361" y="77" text-anchor="middle" fill="var(--muted)">+2D pos +camera</text>
+  <!-- text path -->
+  <rect x="10" y="112" width="112" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="instr"/>
+  <text x="66" y="129" text-anchor="middle" fill="var(--ink)" font-weight="700">instruction</text>
+  <text x="66" y="144" text-anchor="middle" fill="var(--muted)">"press the</text>
+  <text x="66" y="159" text-anchor="middle" fill="var(--muted)">red button"</text>
+  <line x1="122" y1="141" x2="148" y2="141" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <rect x="150" y="112" width="122" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="ttok"/>
+  <text x="211" y="129" text-anchor="middle" fill="var(--ink)" font-weight="700">text encoder</text>
+  <text x="211" y="144" text-anchor="middle" fill="var(--muted)">23-word vocab</text>
+  <text x="211" y="159" text-anchor="middle" fill="var(--muted)">[B, &#8804;12, 256]</text>
+  <!-- concat + trunk -->
+  <polyline points="422,59 450,59 450,96" fill="none" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <polyline points="272,141 450,141 450,122" fill="none" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <rect x="402" y="98" width="96" height="22" rx="6" fill="var(--chip)" stroke="var(--line)" data-i="concat"/>
+  <text x="450" y="113" text-anchor="middle" fill="var(--muted)">[img ; text]</text>
+  <line x1="498" y1="109" x2="528" y2="109" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <rect x="530" y="76" width="122" height="66" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="trunk"/>
+  <text x="591" y="95" text-anchor="middle" fill="var(--ink)" font-weight="700">trunk ("VLM")</text>
+  <text x="591" y="110" text-anchor="middle" fill="var(--muted)">4x self-attn</text>
+  <text x="591" y="125" text-anchor="middle" fill="var(--muted)">d 256, FFN 768</text>
+  <line x1="652" y1="109" x2="678" y2="109" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <rect x="680" y="76" width="92" height="66" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="prefixE"/>
+  <text x="726" y="95" text-anchor="middle" fill="var(--ink)" font-weight="700">prefix E</text>
+  <text x="726" y="110" text-anchor="middle" fill="var(--muted)">[B,&#8804;84,256]</text>
+  <text x="726" y="125" text-anchor="middle" fill="var(--muted)">+ key mask</text>
+  <!-- suffix row -->
+  <text x="14" y="212" fill="var(--muted)">suffix: K = 10 passes per decision &#8594;</text>
+  <rect x="10" y="226" width="112" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="state"/>
+  <text x="66" y="243" text-anchor="middle" fill="var(--ink)" font-weight="700">state token</text>
+  <text x="66" y="258" text-anchor="middle" fill="var(--muted)">(8,) &#8594; [B,256]</text>
+  <text x="66" y="273" text-anchor="middle" fill="var(--muted)">x y z yaw g v</text>
+  <rect x="10" y="300" width="112" height="58" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="noise"/>
+  <text x="66" y="317" text-anchor="middle" fill="var(--ink)" font-weight="700">noisy chunk</text>
+  <text x="66" y="332" text-anchor="middle" fill="var(--muted)">x at tau=1 is</text>
+  <text x="66" y="347" text-anchor="middle" fill="var(--muted)">e~N(0,I) [16,4]</text>
+  <rect x="10" y="374" width="112" height="44" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="tau"/>
+  <text x="66" y="391" text-anchor="middle" fill="var(--ink)" font-weight="700">tau embed</text>
+  <text x="66" y="406" text-anchor="middle" fill="var(--muted)">sin/cos + MLP</text>
+  <line x1="122" y1="255" x2="188" y2="296" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <line x1="122" y1="329" x2="188" y2="320" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <line x1="122" y1="396" x2="188" y2="344" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <rect x="190" y="276" width="150" height="86" rx="9" fill="var(--accent-soft)" stroke="var(--accent)" data-i="expert"/>
+  <text x="265" y="295" text-anchor="middle" fill="var(--ink)" font-weight="700">action expert</text>
+  <text x="265" y="310" text-anchor="middle" fill="var(--muted)">4 decoder layers</text>
+  <text x="265" y="325" text-anchor="middle" fill="var(--muted)">causal self-attn</text>
+  <text x="265" y="340" text-anchor="middle" fill="var(--muted)">cross-attn &#8594; E</text>
+  <text x="265" y="355" text-anchor="middle" fill="var(--muted)">suffix 1+16 tok</text>
+  <polyline points="726,142 726,250 265,250 265,274" fill="none" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#nvG)"/>
+  <text x="470" y="244" fill="var(--accent)">E = keys/values of the cross-attention</text>
+  <line x1="340" y1="319" x2="366" y2="319" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <rect x="368" y="292" width="108" height="54" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="head"/>
+  <text x="422" y="311" text-anchor="middle" fill="var(--ink)" font-weight="700">velocity head</text>
+  <text x="422" y="327" text-anchor="middle" fill="var(--muted)">v [B, 16, 4]</text>
+  <line x1="476" y1="319" x2="502" y2="319" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <rect x="504" y="292" width="108" height="54" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="euler"/>
+  <text x="558" y="311" text-anchor="middle" fill="var(--ink)" font-weight="700">Euler x10</text>
+  <text x="558" y="327" text-anchor="middle" fill="var(--muted)">x &#8722;= v / K</text>
+  <polyline points="558,292 558,268 66,268 66,296" fill="none" stroke="var(--muted)" stroke-dasharray="4 3" marker-end="url(#nvA)"/>
+  <text x="330" y="264" fill="var(--muted)">next tau: refine x, prefix E reused</text>
+  <line x1="612" y1="319" x2="638" y2="319" stroke="var(--muted)" marker-end="url(#nvA)"/>
+  <rect x="640" y="286" width="132" height="66" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="exec"/>
+  <text x="706" y="305" text-anchor="middle" fill="var(--ink)" font-weight="700">execute 8 of 16</text>
+  <text x="706" y="320" text-anchor="middle" fill="var(--muted)">dp [16,3] grip[16]</text>
+  <text x="706" y="335" text-anchor="middle" fill="var(--muted)">env @ 10 Hz, then</text>
+  <text x="706" y="349" text-anchor="middle" fill="var(--muted)">re-plan</text>
+  <polyline points="706,352 706,440 66,440 66,420" fill="none" stroke="var(--muted)" stroke-dasharray="4 3" marker-end="url(#nvA)"/>
+  <text x="250" y="434" fill="var(--muted)">0.8 s later: fresh cameras + state, next decision (new prefix)</text>
+</svg>
+<p class="ref">Parameters (measured, EMA excluded): vision 0.39 M &middot; text 0.67 M &middot; trunk 2.63 M &middot;
+expert 3.83 M &middot; heads 3.3 k &middot; <b>total 7.52 M</b>. The orange edge is the whole design: the expensive
+prefix is computed once, then ten cheap suffix passes read it through cross-attention. Click a block's &#9432; for
+its purpose, shapes and update frequency.</p>
+
+<details class="code"><summary>Vision: one shared stem, 36 tokens per camera, camera + 2-D position embeddings</summary><pre><code class="language-python" data-src="src/nfv/model/vision.py">    def forward(self, *imgs: torch.Tensor) -&gt; torch.Tensor:
+        """imgs: one [B, 3, img, img] tensor per camera (static, wrist) -&gt; [B, C*G^2, D]."""
+        assert len(imgs) == self.cameras, f"expected {self.cameras} camera images"
+        pos = self.pos_row[:, None, :] + self.pos_col[None, :, :]  # [G, G, D], 2-D position
+        pos = pos.flatten(0, 1)  # [G*G, D], same order as the stem's flatten
+        toks = [
+            self.stem(img) + pos + self.cam_embed[c]  # [B, G*G, D] per camera
+            for c, img in enumerate(imgs)
+        ]
+        return torch.cat(toks, dim=1)  # [B, C*G^2, D] = [B, 72, 256]</code></pre></details>
+<details class="code"><summary>Text: 23 words, pad-masked everywhere &mdash; the mask arm C's blank text must not empty</summary><pre><code class="language-python" data-src="src/nfv/model/text.py">    def forward(self, ids: torch.Tensor):
+        """ids int64 [B, T] -&gt; (tokens [B, T, D], key_mask [B, T] bool, attn [B, NH, T, T])."""
+        key_mask = ids != PAD  # [B, T], True on real words
+        x = self.embed(ids) + self.pos  # [B, T, D]
+        x, attn = self.block(x, mask=key_mask[:, None, None, :])  # pads hidden as keys
+        return x, key_mask, attn</code></pre></details>
+<details class="code"><summary>The action expert: suffix assembly, causal self-attention, cross-attention into E</summary><pre><code class="language-python" data-src="src/nfv/model/expert.py">        b, h, _ = x_tau.shape
+        assert h == self.chunk, f"chunk mismatch: got {h}, built for {self.chunk}"
+        acts = self.act_in(x_tau) + self.tau(tau)[:, None, :]  # [B, H, D], tau on every token
+        x = torch.cat([state_token[:, None, :], acts], dim=1) + self.pos  # suffix [B, T, D]
+        self_mask = causal_mask(1 + h, device=x.device)  # [T, T]: state first, then the chunk
+        mem_mask = mem_key_mask[:, None, None, :]  # [B, 1, 1, S]: hide the prefix &lt;pad&gt; keys
+        for block in self.blocks:
+            x, self_attn, cross_attn = block(x, memory, self_mask, mem_mask)
+        feats = self.ln_out(x[:, 1:, :])  # [B, H, D]: chunk tokens only
+        return feats, self_attn, cross_attn</code></pre></details>
+<details class="code"><summary>Flow sampling: K Euler steps from noise to an action chunk (the suffix loop)</summary><pre><code class="language-python" data-src="src/nfv/model/flow.py">        x = torch.randn(shape, generator=generator, device=device)  # x at tau = 1 [B, H, A]
+        xs = [x]
+        dt = 1.0 / steps
+        for i in range(steps):
+            tau = torch.full((shape[0],), 1.0 - i * dt, device=device)  # [B], tau: 1 -&gt; 1/K
+            v = velocity(x, tau)  # [B, H, A]
+            x = x - dt * v  # Euler step toward the data: [B, H, A]
+            if trace:
+                xs.append(x)
+        return (x, torch.stack(xs)) if trace else x  # [B, H, A]; trace adds [K+1, B, H, A]</code></pre></details>
+
+<h3>What to watch</h3>
+<p>All numbers below were measured in this image on the RTX 3080 and live in the lab's own run records. The suite
+was trained and evaluated <b>twice</b>: round 1 (run <code>261031-220907-712a</code>) on the original demos, whose
+board caught a T1 data defect, and round 2 (run <code>261101-002753-8993</code>, its 100-episode eval
+<code>261101-005237-51f9</code> and two follow-up probes) on the re-recorded T1 demos after the lesson-15 expert
+fix. <b>Training:</b> the batcher is CPU-bound, so the rate follows the box: round 1's 3&times;15 k suite took
+86 min on a loaded box, round 2's 24 min (30.7 steps/s) on an idle one; peak VRAM <b>0.87 GiB</b> both times
+(torch.cuda.max_memory_allocated &mdash; it fits the shared 10 GB card ~11&times; over); the single-preset default
+20 k is &asymp;11&ndash;15 min, inside the M1 "&lt; 20 min" gate. The suite ran 15 k steps/arm (3&times;20 k would
+have crossed the evening budget; the shortened choice is on the record). The <b>loss curve</b> drops ~10&times;
+within the first 2 k steps and then grinds flat (round 2: arm A 0.66 &rarr; 0.063 at 2 k &rarr; 0.0075 at 15 k;
+arms B/C 0.42 &rarr; ~0.012 at 2 k &rarr; 0.0042 / 0.0040 &mdash; the longer position-press episodes train to the
+same plateau). On the single preset, the <b>eval-points series</b> (closed-loop success on 20 held-out seeds, every
+5 k steps, drawn on the loss axis) is the honest curve: the loss looks finished long before the behaviour is.</p>
+<p><b>The claims board &mdash; two rounds, and the board earned its keep</b> (100 episodes/arm, held-out seeds,
+eval seed 0; round 1's numbers are its CPU eval's, round 2 ran on the GPU &mdash; the flow noise stream differs per
+device, so identical seeds shift a few episodes, e.g. round-1 T0 was 88 on CPU and 92 on a GPU probe):</p>
+<ul>
+<li><b>c4 &mdash; nanovla_solves_visible:</b> round 1 T0 <b>88/100</b> (CI 80.2&ndash;93.0%) &rarr; NOT CONFIRMED;
+round 2 &mdash; the T0 demos unchanged, the arm retrained &mdash; <b>92/100</b> (CI 85.0&ndash;95.9%) &rarr;
+<b>INCONCLUSIVE</b>: the CI now straddles the 95% gate. Unaffected by the T1 repair, as expected. The misses keep
+the same shape both rounds: 7 force-aborts + 1 timeout &mdash; with no force sense, a missed grasp becomes a 25 N
+dig-in, and the testbed scores that as failure by design (peak |F| mean 8.1 N, max 25.3 N). Levers before
+re-judging: the full 20 k schedule and more demos. Those levers were then pulled &mdash; full 20 k singles on 200
+demos (run <code>261101-010614-2081</code>) and 400 demos (run <code>261101-024340-4389</code>) &mdash; and the
+point estimate clears the bar at every n (97/100, 195/200, 481/500, finally <b>484/500 = 96.8%</b>, CI
+94.9&ndash;98.0%, eval <code>261101-030700-3b72</code>), yet the verdict still reads INCONCLUSIVE: even at n = 500
+the Wilson interval grazes the 95% bar by 0.1 pt. The course accepts that as the honest closing reading and the
+row's real lesson in CI semantics &mdash; the gate sits <em>inside</em> the model's own confidence band, a model
+this close to its bar would need thousands of episodes to separate from it, and no further retrain is owed.</li>
+<li><b>c5 &mdash; hidden_threshold_blinds_vla:</b> the bug the board caught, now in past tense. Round 1 measured T1
+<b>3/100</b> (CI 1.0&ndash;8.5%) &mdash; far below the 30&ndash;70% window &mdash; and the diagnosis was sharper
+than the designed blindness. Lesson 15's T1 expert pressed through the <em>hybrid controller</em>
+(<code>Action(dp=np.zeros(3), f_target=ft)</code> &mdash; on every press step the stored dp label was exactly 0
+while f_target carried &minus;(threshold + 0.8) N), so the descent lived in the controller's admittance, <em>not in
+the action labels</em>: a position-only policy had no press to clone &mdash; it approached, hovered ~15 mm above
+the cap, and timed out (92/100 timeouts, peak |F| mean 1.4 N) while its flow loss sat at 0.0037. Imitation
+succeeded; the behaviour was missing from the data. The repair (a plan-&sect;8 gate decision): the expert now
+presses in <em>position mode</em> (1 mm/step, lesson 15), the T1 demos were re-recorded (run
+<code>261101-002511-7bc4</code>), and a unit test pins the invariant &mdash; press-phase dp<sub>z</sub> &lt; 0 and
+zero f_target in every recorded T1 demo (tests/nfv/test_nfv_data.py). Round 2: T1 <b>45/100</b> (CI
+35.6&ndash;54.8%) &rarr; <b>CONFIRMED</b>, mid-window. And the failures finally look like T1: 0 timeouts, peak |F|
+mean 8.0 N (1.4 N in round 1) &mdash; the policy presses; what it cannot do is read which button (45 wrong_button)
+or always survive the descent (10 force-aborts, digs beside the cap).</li>
+<li><b>c6 &mdash; language_is_load_bearing:</b> still <b>NOT CONFIRMED</b> &mdash; and now the red is meaningful
+rather than vacuous. Round 1's gap (3 vs 0, +3 pts, CI &minus;2.7&ndash;8.5%) could say nothing: neither arm could
+press. Round 2: default <b>45/100</b> vs no-language <b>46/100</b>, gap <b>&minus;1 pt</b> (CI
+&minus;20.1&ndash;18.2%). With pressing repaired, the instructed arm chooses its button at CHANCE &mdash; it
+pressed red 46 / blue 44 across its episodes (wrong_button 45/100), the approach probe agrees (over a button in
+50/50 episodes, over the <em>instructed</em> one in only 21/50) &mdash; and its final loss equals the blank arm's
+(0.0042 vs 0.0040): the words bought no loss and no behaviour. The suspect mechanism survives its own test: the
+flow interpolant <em>leaks the mode</em> &mdash; at most &tau; the noisy chunk x<sub>&tau;</sub> already says which
+button this sample is drifting toward, so the velocity target is largely predictable without the text. Round 1
+hoped the fixed data would fix this too by making the tie expensive (a wrong-button press fails the episode &mdash;
+and in round 2 it does, 45 times); it did not: an eval-time cost creates no training-time gradient, because the
+flow objective only ever asks the model to continue a chunk that already chose. The board stays red here &mdash;
+a real finding about flow-matching VLAs at this scale, and lesson 17 inherits it: its force arms train on these
+same demos. Round 2 of lesson 17 then put the textbook cure on trial &mdash; instruction dropout (p = 0.1) plus
+classifier-free guidance on the instruction, with a re-plan-cadence override; the same two act-time knobs (CFG
+weight, executed-steps override) are on this task's evaluate form too, so any lesson-16 checkpoint can be re-rolled
+under them &mdash; and measured it <em>null at this scale</em>: button match stayed at chance (45&ndash;48.5%)
+across the full w &times; n_exec grid, because the words move only ~3.4% of the velocity field and dropout training
+halved even that (the leak starves the words of gradient, and guidance can only amplify what training left). The
+numbers, the mechanism probe and the next levers live in lesson 17's Round&nbsp;2 section; this board's claims and
+bars stay as they are.</li>
+</ul>
+<p>In the <b>trace panel</b>, a round-2 T1 episode finally reads like T1: approach, a position-mode descent,
+F<sub>z</sub> climbing a &asymp;0.4 N-per-step staircase to the click &mdash; SUCCESS &mdash; or the same confident
+staircase on the wrong button, WRONG_BUTTON. (Round 1's panel showed a flat hover at F<sub>z</sub> &asymp; 0 with
+the subtask label stuck at "approach" until timeout &mdash; scrubbing one of those traces is how the dp-zero defect
+was first seen.) The mode strip is still all grey: nanoVLA commands no wrench, the z-axis never leaves position
+mode. A T0 episode is the healthy contrast: reach, grasp, lift, SUCCESS. That grey strip &mdash; and a press whose
+stopping point the model cannot see coming &mdash; is lessons 17 and 18's opening argument.</p>
+<p><b>Exercises.</b> (1) Interval honesty, again: run the suite eval at episodes = 20 &mdash; the intervals widen
+until the board turns indecisive; 100 episodes is what buys verdicts. (2) The data curve: train <em>single</em> on
+t0 with demos = 50 instead of 200 and compare the eval-points series &mdash; the loss curve barely changes (same
+objective) while closed-loop success drops; train loss measures imitation on-distribution, not recovery. (3) The
+deliberately wrong one: set <b>n_exec = 16</b> (execute the whole chunk open-loop) and evaluate on t0. Measured on
+the round-2 arm A's own weights &mdash; chunking knobs are inference-only, so this is exactly what retraining with
+that form value yields: <b>70/100</b> against the same-seed baseline <b>92/100</b>, timeouts 1 &rarr; 11, aborts
+7 &rarr; 19 &mdash; the model re-reads the world every 1.6 s, misses the grasp window, and corrections arrive a
+chunk late (lesson 4's trade, now with a price tag; the round-1 weights measured the same shape, 72 vs 92). The
+companion surprise: <b>euler_steps = 1</b> degrades T0 barely (<b>87/100</b>) &mdash; lesson 2's result that a
+near-unimodal flow field is nearly straight, so one Euler step almost suffices when the scene has a single visible
+target; it is not a license for K = 1 where real multimodality lives.</p>
+
+<details class="techdev"><summary>Tech development &mdash; what broke, how it was found, what changed</summary>
+<p class="ref">Every change that was needed to make this lesson's experiments and claims work, in the order it was found: symptom, how it was found, cause, change, take-away. Master copy: <code>docs/force_vla_school_techdev.md</code>.</p>
+<p><b>16.1 — an all-padding instruction produced NaN.</b> Blanking the text (the no-language arm) made the text self-attention softmax over an all-masked row. Change: "blank" = one constant <code>&lt;unk&gt;</code> token.</p>
+<p><b>16.2 — round 1: T1 at 3/100 instead of the designed 30–70 %.</b> Found by: the claims board (c5 red, <em>below</em> the window). Investigation: the policy cloned the demos perfectly (loss 0.0037) and hovered 15 mm above the cap until timeout (92/100 timeouts; it touched a button in 8/100). Cause: entry 15.7. After the fix: T1 45/100 (CI 35.6–54.8) → c5 CONFIRMED, and the failure mix finally looks like T1 (45 wrong button, 10 force aborts, 0 timeouts). Take-away: the board's job is exactly this — a red verdict is a measurement, and this one found a data bug.</p>
+<p><b>16.3 — the instruction is ignored (c6).</b> With pressing fixed, the language arm and the blanked arm tie (45 vs 46/100); button choice is at chance; their training losses are equal (0.0042 vs 0.0040). Mechanism: in flow matching the noisy interpolant x_τ already leaks which mode the demo took, so the words reduce no loss; and a wrong button costs nothing at training time. Round-2 lever (instruction dropout + classifier-free guidance) is measured in lesson 17.</p>
+<p><b>16.4 — the claim c4 sits inside its own confidence band.</b> T0: 88/100 on CPU and 92/100 on GPU for the same seeds (per-device noise streams in the flow sampler); 20 k steps → 97/100; then a "500-episode" eval reported 200 episodes — the form's <code>episodes</code> cap (200) silently clipped the request. Change: cap raised to 1000. With 400 demos: 484/500 = 96.8 %, CI 94.9–98.0 — the bar (0.95) lies inside the band by 0.1 pt, so the verdict stays INCONCLUSIVE, accepted as honest. Take-away: read back what actually ran, not what you asked for.</p>
+<p><b>16.5 — a test failure that only existed in suite order.</b> Importing the <code>nfv.model.build</code> <em>submodule</em> rebound the package attribute <code>build</code> (the function) → <code>TypeError: 'module' object is not callable</code>, only when another test imported the submodule first. Change: the package <code>__init__</code> loads the submodule, then rebinds the name.</p>
+<p><b>16.6 — wall time is not GPU time.</b> The suite took 86 min instead of ~33 because another job had the host at load 60–74: the batcher is CPU-bound. Change: none needed — but budgets now quote "idle box" and the calibration records the measured rate.</p>
+</details>
+<h3>Knobs</h3>
+<ul>
+<li><b>Preset</b>: <em>single</em> trains one nanoVLA on <b>Task</b>'s demos (with the eval-points series);
+<em>claims_suite</em> trains arms A (t0), B (t1) and C (t1, no language) sequentially into ONE checkpoint whose
+evaluation fills the whole M1 board.</li>
+<li><b>Steps / Learning rate / Batch</b>: the fit() schedule (warmup + cosine). 20 k &times; 3e-4 &times; 64 is the
+plan default; the loss is forgiving, the closed-loop success is what needs the tail.</li>
+<li><b>Demos</b>: first n episodes of the canonical set, in recording order &mdash; the data-efficiency knob
+(50/100/200/400 is the plan's curve; 400 needs a lesson-15 re-record at 400).</li>
+<li><b>Chunk H / Executed steps</b>: predict H, execute n_exec, re-plan. The reactivity trade from lesson 4;
+n_exec &gt; chunk is refused.</li>
+<li><b>Euler steps</b>: inference-only integration count. 10 is the plan default; 1 is exercise 3.</li>
+<li><b>Episodes / Eval seed / video</b> (evaluate): held-out episodes per arm (claims want 100), the eval-seed
+window, and the rollout video (up to 4 episodes spread over the arms, static camera + force strip).</li>
+</ul>
+
+<p class="ref">The single checkpoint is fit()'s house payload; the suite checkpoint holds all three arms labelled
+(kind "nfv-suite"), so one evaluate sees every arm &mdash; the pattern the lesson-17 ablation suites reuse. The
+round-1 board flagged exactly one repair before lesson 17 could argue fairly &mdash; T1's demos pressed by wire
+(through the controller's force loop) and contained no position-space press &mdash; and round 2 closed it: the
+re-recorded demos press in dp space, c5 sits mid-window at 45/100, and the blind policy finally has a real press to
+be blind with. What stayed red is c6: at this scale the flow head lets a policy press competently without ever
+reading the words. The grey mode strip stays the longer arc: lesson 17 feeds the wrench <em>in</em> (ForceVLA's
+FVLMoE among five entry routes) and must beat 45% &mdash; a real bar, not a hover's 3% &mdash; lesson 18 makes
+force an <em>output</em>, and the claims board stays the referee throughout.</p>
+
+<script type="application/json" class="blkinfo">{"cams": {"t": "cameras — what the policy sees", "html": "<p><b>Purpose:</b> the policy's only view of the world: the fixed workspace camera and the wrist camera, rendered by the testbed at 96×96 (osmesa, CPU). T1's click threshold is invisible here by construction — 1 px ≈ 6 mm and the threshold never touches the scene.</p><p><b>Shapes:</b> two uint8 (96, 96, 3) frames per decision; the dataset serves them as float [B, 3, 96, 96] in [0, 1], act() feeds raw uint8 (the stem normalises both onto [-0.5, 0.5]).</p><p><b>Updated:</b> every policy decision — once per executed chunk (0.8 s at the defaults).</p>"}, "stem": {"t": "conv stem — 4 stride-2 layers, shared by both cameras", "html": "<p><b>Purpose:</b> turn an image into a coarse grid of feature vectors: 4× (3×3 conv stride 2 + GELU), channels 32→64→128→256, so 96 → 48 → 24 → 12 → 6. One stem serves both cameras (0.39 M parameters for the whole vision block) — which camera a token came from is restored by the camera embedding.</p><p><b>Shapes:</b> [B, 3, 96, 96] → [B, 256, 6, 6] → flattened [B, 36, 256] per camera.</p><p><b>Updated:</b> weights every optimizer step; activations once per decision.</p>"}, "vtok": {"t": "image tokens — 72 of them, tagged with where and which camera", "html": "<p><b>Purpose:</b> the vision half of the prefix: 36 tokens per camera + a learned 2-D position embedding (row table + column table, [6, 256] each) + a learned per-camera embedding ([2, 256]). Everything downstream treats them as just tokens.</p><p><b>Shapes:</b> [B, 72, 256]; their key-mask entries are always True (no padding in vision).</p><p><b>Updated:</b> once per decision.</p>"}, "instr": {"t": "instruction — the words that pick the target", "html": "<p><b>Purpose:</b> the episode's command, sampled by the env (\"press the red button\" / \"press the blue button\" on T1). On the two-button task this is the ONLY channel that says which button is correct — claim c6 measures exactly that. Arm C replaces it with a constant &lt;unk&gt; token at train and eval time.</p><p><b>Shapes:</b> a string of ≤ 4 words from the 23-word course vocabulary.</p><p><b>Updated:</b> once per episode.</p>"}, "ttok": {"t": "text encoder — tokenize, embed, one transformer layer", "html": "<p><b>Purpose:</b> lowercase, split, look up (unknown → &lt;unk&gt;), pad to 12; embedding + learned positions + ONE pre-norm encoder layer. The key_mask (ids != &lt;pad&gt;) hides pad positions from every attention read downstream — which is why the blank arm feeds one real &lt;unk&gt; token instead of all-&lt;pad&gt; (an all-masked softmax is NaN).</p><p><b>Shapes:</b> ids int64 [B, 12] → tokens [B, 12, 256] + mask [B, 12]; 0.67 M parameters.</p><p><b>Updated:</b> weights every step; activations once per decision.</p>"}, "concat": {"t": "concatenation — one sequence, two modalities", "html": "<p><b>Purpose:</b> the prefix sequence is literally [image tokens ; text tokens] — no fusion module, no gating. Cross-modal binding (\"red\" ↔ the red pixels) happens inside the trunk's self-attention, where every token attends to every real token.</p><p><b>Shapes:</b> [B, 72, 256] + [B, ≤12, 256] → [B, S ≤ 84, 256], key mask [B, S].</p><p><b>Updated:</b> once per decision.</p>"}, "trunk": {"t": "trunk — nanoVLA's \"VLM\"", "html": "<p><b>Purpose:</b> 4 pre-norm encoder layers (4 heads, FFN 768, d = 256) of self-attention over [image ; text]; final LayerNorm. This is the π0/SmolVLA VLM scaled to 2.63 M parameters — and it stays force-free in every later lesson (both papers found force must not enter the VLM pathway; the lesson-17 fusion modules attach around it).</p><p><b>Shapes:</b> [B, S, 256] → E [B, S, 256]; attention maps [B, 4, S, S] per layer (shown in aux).</p><p><b>Updated:</b> weights every step; one forward per decision.</p>"}, "prefixE": {"t": "prefix E — the conditioning memory", "html": "<p><b>Purpose:</b> the encoded scene-plus-command the action expert reads. Computed ONCE per decision and reused by all 10 Euler passes — the prefix/suffix split is what makes iterative sampling affordable.</p><p><b>Shapes:</b> E [B, ≤84, 256] + key mask [B, ≤84] (text pads stay hidden as cross-attention keys).</p><p><b>Updated:</b> once per decision (every 0.8 s at n_exec = 8).</p>"}, "state": {"t": "state token — where the robot is right now", "html": "<p><b>Purpose:</b> the 8-D proprioceptive state [x, y, z, yaw, grip, vx, vy, vz] through a Linear(8 → 256), prepended to the suffix as its first token. The causal mask lets every action token read it; it exists to be read, not to predict (its output feature is dropped).</p><p><b>Shapes:</b> float32 (8,) → [B, 256]; 2.3 k parameters.</p><p><b>Updated:</b> once per decision.</p>"}, "noise": {"t": "noisy action chunk — the thing being refined", "html": "<p><b>Purpose:</b> flow matching starts the chunk at pure noise x = e ~ N(0, I) at τ = 1 and refines it toward data at τ = 0. During training the interpolant x_τ = τe + (1−τ)x0 plays this role; at inference it is the Euler iterate. Lives in model units ([-1, 1]: dp/0.05 m, gripper×2−1).</p><p><b>Shapes:</b> [B, 16, 4] — H = 16 chunk steps × (Δp xyz + gripper); lifted to [B, 16, 256] by a Linear inside the expert.</p><p><b>Updated:</b> every Euler step (10× per decision).</p>"}, "tau": {"t": "τ embedding — which point of the flow we are at", "html": "<p><b>Purpose:</b> the flow time τ ∈ [0, 1] as log-spaced sin/cos features (frequencies 1…1000 rad per unit τ) through a 2-layer MLP; added to every action token (same τ for the whole chunk). Without it the expert could not tell \"mostly noise, move boldly\" from \"nearly data, refine gently\".</p><p><b>Shapes:</b> [B] → [B, 256].</p><p><b>Updated:</b> every Euler step; τ runs 1 → 1/K.</p>"}, "expert": {"t": "action expert — a small decoder that outputs velocities", "html": "<p><b>Purpose:</b> 4 pre-norm decoder layers over the suffix [state ; 16 action tokens]: causal self-attention (an action token reads the state and earlier steps, never later ones), cross-attention into E (the only place pixels and words reach the actions), FFN. 3.83 M parameters — deliberately the biggest block: it runs 10× per decision, but on only 17 tokens.</p><p><b>Shapes:</b> x_τ [B, 16, 4], τ [B], state token [B, 256], E [B, S, 256] → features [B, 16, 256]; attention maps [B, 4, 17, 17] and [B, 4, 17, S].</p><p><b>Updated:</b> weights every step; 10 forwards per decision.</p>"}, "head": {"t": "velocity head — features to flow velocity", "html": "<p><b>Purpose:</b> Linear(256 → 4) on each chunk feature: the predicted velocity v ≈ e − x0 of the straight-line flow, in model units. Training regresses it with masked MSE; inference integrates it.</p><p><b>Shapes:</b> [B, 16, 256] → v [B, 16, 4]; 1 k parameters.</p><p><b>Updated:</b> every Euler step.</p>"}, "euler": {"t": "Euler integration — 10 steps from noise to actions", "html": "<p><b>Purpose:</b> x ← x − v(x, τ)/K for K = 10 steps, τ walking 1 → 0.1; then clamp to env units (dp ±0.05 m, gripper [0, 1]). K is inference-only: training never integrates, so exercise 3 (K = 1) reuses identical weights and only breaks the sampling — measured on T1 in What to watch.</p><p><b>Shapes:</b> [1, 16, 4] throughout; the per-episode torch.Generator makes rollouts seed-deterministic.</p><p><b>Updated:</b> 10 velocity evaluations per decision, all against the same prefix E.</p>"}, "exec": {"t": "executor — 8 of 16 steps, then re-plan", "html": "<p><b>Purpose:</b> the chunking contract: predict H = 16 actions, execute the first n_exec = 8 at 10 Hz, then take fresh cameras + state and decide again. Lesson 4's trade: longer execution is smoother and amortises inference; shorter reacts faster. n_exec = 16 (fully open-loop) is measured in What to watch.</p><p><b>Shapes:</b> dp float32 [16, 3] (env units), gripper [16]; f_target = None — nanoVLA has a position head only, the z-axis mode strip stays grey.</p><p><b>Updated:</b> one chunk per decision, 8 env steps per chunk (0.8 s).</p>"}}</script>
