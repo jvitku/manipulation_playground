@@ -1498,6 +1498,78 @@
     container.replaceChildren(tbl || h("p", { style: "color:var(--muted)", text: "No claims in this result." }));
   }
 
+  // ---- LoRA anatomy (lesson 20, lab/tasks/task_nfv5.py): per-arm cost table + the ΔW spectra.
+  // Reads result.lora_arms / probe_full / merge_check / bf16_lost_update_frac / lora_spectrum;
+  // returns null when the result has none of them (every other fvrollout result).
+  function svBars(title, sv, r, color) { // singular values as bars, the top-r shaded
+    const vals = (Array.isArray(sv) ? sv : []).map((v) => num(v) || 0);
+    const W = 300, H = 120, L = 40, B = 18, T = 16;
+    const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, style: "width:100%;max-width:320px;height:auto;font:9px var(--mono)", role: "img", "aria-label": title });
+    svg.append(s("text", { x: L, y: 10, fill: "var(--ink)" }, title));
+    if (!vals.length) return svg;
+    const vmax = Math.max(...vals, 1e-12), n = vals.length, bw = (W - L - 4) / n;
+    vals.forEach((v, i) => {
+      const bh = (v / vmax) * (H - T - B);
+      const bar = s("rect", { x: L + i * bw, y: H - B - bh, width: Math.max(0.6, bw - 0.6), height: bh, fill: i < r ? color : "var(--muted)", "fill-opacity": i < r ? 0.9 : 0.45 });
+      bar.append(s("title", {}, `s${i + 1} = ${v.toPrecision(3)}`));
+      svg.append(bar);
+    });
+    svg.append(s("line", { x1: L, x2: W - 4, y1: H - B, y2: H - B, stroke: "var(--line)" }));
+    svg.append(s("text", { x: L - 3, y: T + 6, "text-anchor": "end", fill: "var(--muted)" }, vmax.toPrecision(2)));
+    svg.append(s("text", { x: L - 3, y: H - B, "text-anchor": "end", fill: "var(--muted)" }, "0"));
+    if (r < n) svg.append(s("line", { x1: L + r * bw, x2: L + r * bw, y1: T, y2: H - B, stroke: "var(--warn)", "stroke-dasharray": "3 2" }));
+    svg.append(s("text", { x: L, y: H - 4, fill: "var(--muted)" }, `index i = 1..${n} (shaded: top ${Math.min(r, n)})`));
+    return svg;
+  }
+  function loraAnatomy(r) {
+    const arms = Array.isArray(r.lora_arms) ? r.lora_arms.filter((a) => a && typeof a === "object") : [];
+    const sp = r.lora_spectrum && Array.isArray(r.lora_spectrum.layers) ? r.lora_spectrum : null;
+    if (!arms.length && !sp) return null;
+    const box = h("div", { class: "lora-anatomy" });
+    box.append(h("h4", { text: "LoRA anatomy: what each arm trains and what it costs" }));
+    const fmtM = (x) => (num(x) == null ? "–" : (x / 1e6).toFixed(2) + " M");
+    const tbl = h("table", { class: "out", style: "margin-top:6px" });
+    tbl.append(h("tr", {}, ...["arm", "mode", "trainable", "% of total", "peak VRAM (GB)", "steps/s", "adapter MB", "full ckpt MB", "final loss", "success", "95% CI"].map((t) => h("th", { text: t }))));
+    for (const a of arms) {
+      const ci = Array.isArray(a.wilson95) ? `${pct(a.wilson95[0])} – ${pct(a.wilson95[1])}` : "–";
+      tbl.append(h("tr", {}, ...[a.label, a.mode + (num(a.r) != null ? ` (r=${a.r}, α=${a.alpha})` : ""), fmtM(a.trainable),
+        num(a.trainable_pct) == null ? "–" : a.trainable_pct.toFixed(2) + " %", num(a.peak_vram_gb) == null ? "–" : a.peak_vram_gb.toFixed(2),
+        num(a.steps_per_s) == null ? "–" : a.steps_per_s.toFixed(2), num(a.adapter_mb) == null ? "–" : a.adapter_mb.toFixed(1),
+        num(a.full_ckpt_mb) == null ? "–" : a.full_ckpt_mb.toFixed(0), num(a.final_loss) == null ? "–" : a.final_loss.toFixed(3),
+        num(a.success) == null ? "–" : pct(a.success), ci].map((v) => h("td", { text: String(v) }))));
+    }
+    const pf = r.probe_full || {};
+    for (const prec of ["fp32", "bf16"]) {
+      const d = pf[prec];
+      if (!d || typeof d !== "object") continue;
+      const verdictTxt = d.fits === true ? `fits: ${num(d.peak_alloc_gb) == null ? "?" : d.peak_alloc_gb.toFixed(2)}` : d.fits === false ? `OOM (after ${num(d.peak_alloc_gb) == null ? "?" : d.peak_alloc_gb.toFixed(2)})` : "–";
+      tbl.append(h("tr", {}, ...[`D full (${prec === "fp32" ? "fp32 master" : "as-loaded bf16"})`, "every parameter", fmtM(d.trainable),
+        num(d.trainable) != null && num(d.total) ? (100 * d.trainable / d.total).toFixed(0) + " %" : "–", verdictTxt, "–", "–", "–", "–", "measured only", "–"].map((v) => h("td", { text: String(v) }))));
+    }
+    if (arms.length || Object.keys(pf).length) box.append(tbl);
+    const notes = [];
+    const mc = r.merge_check;
+    if (mc && num(mc.fp32_max_abs) != null) notes.push(`Merge check (B): max |v_adapter − v_merged| = ${mc.fp32_max_abs.toExponential(1)} in fp32` + (num(mc.bf16_max_abs) != null ? `, ${mc.bf16_max_abs.toExponential(1)} when merged into bf16 weights (rounding)` : "") + ".");
+    if (num(r.bf16_lost_update_frac) != null) notes.push(`Precision (C): ${pct(r.bf16_lost_update_frac)} of one peak-LR AdamW update to the expert would round away if the weights were stored in bf16 - why the trainable tensors get fp32 master copies.`);
+    if (notes.length) box.append(h("p", { class: "note", text: notes.join(" ") }));
+    if (sp) {
+      const rr = num(sp.r) || 16;
+      box.append(h("h4", { text: `Spectrum of the update ΔW per layer: LoRA (rank ≤ ${rr}) vs full fine-tuning (C: W_after − W_before)` }));
+      const grid = h("div", { style: "display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px 16px" });
+      for (const L2 of sp.layers) {
+        if (!L2 || typeof L2 !== "object") continue;
+        const name = String(L2.name || "?").replace(/^model\.vlm_with_expert\./, "");
+        const cell = h("div", {}, h("div", { style: "font:11px var(--mono);margin-bottom:2px", text: `${name} [${(L2.shape || []).join("×")}]` }));
+        if (L2.lora) cell.append(svBars(`LoRA ΔW: top-${rr} energy ${pct(L2.lora.energy_top_r)}`, L2.lora.sv, rr, "var(--chart1)"));
+        if (L2.full) cell.append(svBars(`full FT ΔW: top-16 energy ${pct(L2.full.energy_top_16)}`, L2.full.sv, 16, "var(--chart2)"));
+        grid.append(cell);
+      }
+      box.append(grid);
+      if (num(sp.full_mean_energy_top16) != null) box.append(h("p", { class: "note", text: `Energy = share of ||ΔW||²_F in the shaded singular values. A LoRA update has at most r non-zero singular values by construction; the full fine-tune's top-16 carry ${pct(sp.full_mean_energy_top16)} on average over these layers (the first 64 of its singular values are drawn).` }));
+    }
+    return box;
+  }
+
   // ---- fvrollout: force-sim testbed results (schema in lab/tasks/task_nfv0.py) --------------
   // Top: claims board (when result.claims exists), outcome chips + Wilson, the per-scenario
   // tables, the rollout video; below: a per-episode trace panel (fz vs the commanded force,
@@ -1552,6 +1624,8 @@
     }
     if (tk.arms) outTable(`Wipe at ${tk.target_n} N: position vs hybrid`, ARM_HEAD, armRows(tk.arms));
     if (r.kp) outTable("Position-only wipe by K_p (N/m)", ARM_HEAD, armRows(r.kp));
+    const anatomy = loraAnatomy(r);
+    if (anatomy) wrap.append(anatomy);
     if (r.video && ctx && typeof ctx.fileUrl === "function") {
       const vid = h("video", { controls: "", preload: "metadata", style: "width:100%;max-width:640px;display:block;margin:10px 0;border-radius:8px;background:#000" });
       vid.setAttribute("src", ctx.fileUrl(r.video));
