@@ -16,6 +16,9 @@ Batch (``sample_batch(batch_size, rng, chunk=16)``), B = batch, H = chunk length
     f_target       f32 [B, H, 6]
     s_fv2          f32 [B, H]
     s_lin          f32 [B, H]
+    s_sub          f32 [B, H]           per-subtask hindsight progress (derived at load from
+                                        ``subtask``: nfv.sim.subtasks.hindsight_progress) —
+                                        the ForceVLA2 hybrid head's s label (lesson 18)
     pad_mask       bool [B, H]          True = real step, False = past the episode end
                                         (padded rows are zero; mask the loss with this)
     subtask        i64 [B]              the step's subtask label
@@ -33,8 +36,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from nfv.sim.subtasks import hindsight_progress
+
 _OBS_KEYS = ("rgb_static", "rgb_wrist", "state", "wrench", "wrench_window")
 _CHUNK_KEYS = ("dp", "gripper", "f_target", "s_fv2", "s_lin")
+_DERIVED_CHUNK_KEYS = ("s_sub",)  # computed at load, not stored in the shards
 
 
 class DemoDataset:
@@ -52,6 +58,7 @@ class DemoDataset:
                 self.episodes.append(
                     {k: z[k] for k in (*_OBS_KEYS, *_CHUNK_KEYS, "dp_exec", "subtask")}
                 )
+            self.episodes[-1]["s_sub"] = hindsight_progress(self.episodes[-1]["subtask"])
         self.lengths = np.array([e["dp"].shape[0] for e in self.episodes])
         # flat (episode, t) index of every step = every possible chunk start
         self.starts = np.array(
@@ -70,13 +77,14 @@ class DemoDataset:
     ) -> dict[str, torch.Tensor]:
         """Uniform chunk starts -> torch batch; see the module docstring for the legend."""
         picks = self.starts[rng.integers(0, len(self.starts), size=batch_size)]
-        out: dict[str, list] = {k: [] for k in (*_OBS_KEYS, *_CHUNK_KEYS, "pad_mask", "subtask")}
+        chunk_keys = (*_CHUNK_KEYS, *_DERIVED_CHUNK_KEYS)
+        out: dict[str, list] = {k: [] for k in (*_OBS_KEYS, *chunk_keys, "pad_mask", "subtask")}
         for i, t in picks:
             ep, n = self.episodes[i], int(self.lengths[i])
             for k in _OBS_KEYS:
                 out[k].append(ep[k][t])
             valid = min(chunk, n - t)
-            for k in _CHUNK_KEYS:
+            for k in chunk_keys:
                 a = ep[k][t : t + valid].astype(np.float32)
                 if valid < chunk:  # zero-pad past the episode end; pad_mask marks it
                     pad = np.zeros((chunk - valid, *a.shape[1:]), dtype=np.float32)
@@ -90,7 +98,7 @@ class DemoDataset:
         for k in ("rgb_static", "rgb_wrist"):  # uint8 HWC -> float CHW in [0, 1], batch time
             u8 = torch.from_numpy(np.stack(out[k]))  # [B, 96, 96, 3] uint8
             batch[k] = u8.permute(0, 3, 1, 2).float() / 255.0  # [B, 3, 96, 96]
-        for k in ("state", "wrench", "wrench_window", *_CHUNK_KEYS):
+        for k in ("state", "wrench", "wrench_window", *chunk_keys):
             batch[k] = torch.from_numpy(np.stack(out[k]).astype(np.float32))
         batch["pad_mask"] = torch.from_numpy(np.stack(out["pad_mask"]))
         batch["subtask"] = torch.from_numpy(np.stack(out["subtask"]))
