@@ -189,3 +189,42 @@ The lesson quotes the measured number.
 controller selects an axis at |f| > 0.5 N — 0.02 in model units — so residue on the f_target
 dimensions could flip an axis into admittance mid-air. The lesson-18 eval measures the
 spurious-selection rate before any deadband is added.
+
+## Lesson 19 — runtime RL on the frozen VLA (M4)
+
+**19.1 — on the button task the residual had nothing to fix.** Symptom: two 5k-step RL runs left
+T1 success flat (0.25 → 0.25, 0.25 → 0.20). Found by: evaluating the frozen bases alone *before*
+any RL, with outcome counts — fvlmoe 17/40 successes, 22 wrong button, 1 force abort; the
+force-blind base 14/40, 23 wrong button, 3 force failures. Cause: a 1 mm/step press almost never
+overshoots, so 55–70 % of failures are the wrong button, and a residual that sees no image and
+no instruction cannot tell which button is right. The residual's ceiling on T1 is the
+force-failure share — 2.5–7.5 points. Change: lesson 19 moves to the peg task (T3), the plan's
+original choice, where the hidden hole offset is exactly what a wrench-reading residual can
+search for; the eval also reports success conditional on no non-force failure. Take-away:
+measure the base's failure anatomy before you choose what RL should fix.
+
+**19.2 — rendering, not learning, was the bottleneck.** 33.7 env steps/s; timing each component
+showed 26 ms of a ~33 ms step went to rendering both cameras, though only the base reads images,
+and only every 8th step. Change: render only on the steps the base plans from → 66.5 env
+steps/s, with outcomes and peak forces verified identical.
+
+**19.3 — the plan's ±5 mm residual bound was too large.** One exploratory step at 5 mm against
+a ~1000 N/m button is 5 N — enough to cross the over-force band of a 3 N threshold in a single
+step, so the residual would take over the press instead of correcting it. Change: ±2 mm. Take-
+away: scale a residual's bound to the base's step size times the contact stiffness.
+
+**19.4 — the thread count changes the outputs.** The same base eval gave mean peak force 5.385013
+at 4 threads and 5.385015 at 1 — CPU reductions summed in a different order. Change: RL runs pin
+`torch_threads=1` and record it; a seed is reproducible only with the thread count fixed too.
+
+**19.5 — the behaviour-cloning target moved to visited states.** For a residual the BC target is
+always "residual = 0", so demonstrations would only contribute their states — and building the
+base's next-action input for them would mean re-running the frozen base on every demo frame.
+Change: BC toward zero on the replay buffer's own states, through the demo slot TD3 already has.
+
+**19.6 — the BC floor is enforced in code.** Lesson 12's failure (annealing the imitation weight
+to zero) is now impossible to configure by accident: floors below 1.0 are refused.
+
+**19.7 — a scratch file named `profile.py` broke torch.** `cProfile` imports `profile`, which
+picked up the script; torch's optimizer import then failed with a misleading circular-import
+error. Take-away: never name scratch files after standard-library modules.
