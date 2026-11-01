@@ -22,6 +22,7 @@ FastAPI backend (`lab/server`), static front end (`lab/web`), tasks in `lab/task
 | 13 | `residual-rl` | frozen flow policy plus a TD3-learned residual | ~2 min |
 | 14 | `tokenize` | one task, three action interfaces: continuous regression, per-dim bins, autoregressive tokens — with a hands-on tokenization playground | ~30 s |
 | 15 | `force-sim` | the contact testbed: a gantry that can feel — wrench sensing, position vs hybrid force control, scripted experts recording the demo sets the force-VLA lessons train on, and the claims board | ~7 min |
+| 16 | `nano-vla` | nanoVLA from scratch: pixels + words → flow-matched action chunks on T0/T1; the claims suite (t0 / t1 / t1 no-language) measures what the camera cannot see and what the words carry | ~18 min (suite ~30 min) |
 
 The ladder page shows each card's estimate at the default parameters and the state of its newest
 run (`GET /api/tasks`: `est_label`, `last_state`). Runs of `td3`/`td3-bc` are long; they and any

@@ -18,6 +18,7 @@ from lab.tasks import (
     task_embed,  # noqa: F401
     task_finddigit,  # noqa: F401
     task_nfv0,  # noqa: F401
+    task_nfv1,  # noqa: F401
     task_token,  # noqa: F401
     task_vit,  # noqa: F401
 )
