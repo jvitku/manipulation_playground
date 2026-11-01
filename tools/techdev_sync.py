@@ -2,7 +2,7 @@
 
 Source of truth: docs/force_vla_school_techdev.md. Each lesson gets one
 <details class="techdev"> block (inserted before <h3>Knobs</h3>, replaced in place on rerun)
-holding the entries of its section(s). Run: python3 tools/techdev_sync.py
+holding the entries of its section(s). Run: python3 tools/techdev_sync.py [lesson.html ...]
 """
 
 import html
@@ -59,8 +59,13 @@ def render(entries: list[tuple[str, str]]) -> str:
 
 
 def main() -> None:
+    import sys
+
+    only = set(sys.argv[1:])  # optional lesson file names; default: all
     secs = sections(LOG.read_text())
     for name, prefixes in MAP.items():
+        if only and name not in only:
+            continue
         path = LESSONS / name
         if not path.exists():
             continue
