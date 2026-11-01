@@ -453,4 +453,36 @@ M4_CLAIMS: tuple[Claim, ...] = (
         source="course plan §8 M4 (5 seeds, per-seed curves); lessons 11-13 seed spread",
         url=_FRFT_URL,
     ),
+    # ---- the simulated deployment (interventions="expert"): measured only on such a run ----
+    Claim(
+        id="m4.corrections_unlock_learning",
+        statement="With a simulated operator correcting the robot during training (corrections "
+        "supervise the actor, critics on autonomous transitions only), the residual raises T3 "
+        "success by at least 10 points over the frozen base, evaluated fully autonomously",
+        module="force-rl",
+        task="t3",
+        arms={
+            "a": {"arm": "base + residual trained with interventions=expert (median seed)"},
+            "b": {"arm": "frozen base"},
+        },
+        metric="T3 success on the same shared held-out seeds (no operator at eval), "
+        "median-over-seeds residual minus base",
+        expect="a-b >= 0.10",
+        source="ForceRFT arXiv 2609.22840 (human corrections supervise the residual actor); "
+        "HIL-SERL arXiv 2410.21845",
+        url=_FRFT_URL,
+    ),
+    Claim(
+        id="m4.autonomy_rises",
+        statement="The operator is needed less as training goes on: the intervention rate in "
+        "the last 20 % of training is at most half of the rate in the first 20 %",
+        module="force-rl",
+        task="t3",
+        arms={"a": {"arm": "operator steps / env steps in the last / first 20 % of training"}},
+        metric="ratio of step-weighted intervention rates (last 20 % / first 20 %)",
+        expect="a <= 0.5",
+        source="HIL-SERL arXiv 2410.21845 (intervention rate falls as the policy improves); "
+        "ForceRFT arXiv 2609.22840",
+        url="https://arxiv.org/abs/2410.21845",
+    ),
 )

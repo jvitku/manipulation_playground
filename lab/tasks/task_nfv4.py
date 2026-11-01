@@ -20,7 +20,9 @@ seed dir (the workers' should_continue) and waits for them.
 Checkpoint (one, at the end): {"kind": "nfv-residual-suite", "task", "seeds": [..],
 "residuals": {seed: TD3.state(meta) + "arch" (dp_res_m, f_res_n, residual_force)},
 "base": the frozen base's {"model", "ema", "arch"} (stored ONCE), "base_info",
-"train_curves": {seed: run_residual_rl curves}, "params"}.
+"train_curves": {seed: run_residual_rl curves}, "params"}; a run with the simulated
+deployment (``interventions="expert"`` / ``deploy_mode``, nfv.rl.deploy) adds "deploy": {seed:
+operator steps/minutes, first/last-20 % intervention rates, rate curve, trigger counts, swaps}.
 
 EVAL re-evaluates the frozen base and every saved residual on the same ``episodes`` held-out
 seeds (``nfv.seeds.eval_seeds(task, episodes, eval_seed*episodes)``), again one worker process
@@ -36,7 +38,10 @@ result.json (viewer `fvrollout`):
      "median": {"success", "delta", "peak_force_mean", "seed"},
      "residual_trace": {"contact_mm", "free_mm", "trace"} (median seed, first eval seed),
      "outcomes": {"success", "counts", "wilson95", "per_task"}  (fvrollout's summary block:
-                 per_task = base + one row per seed), "peak_force": {"mean", "max"}}
+                 per_task = base + one row per seed), "peak_force": {"mean", "max"},
+     "operator": task_nfv4.operator_cost(...) - only for an interventions=expert suite: the
+                 training run's total operator steps/minutes ("cost in human time"); the
+                 evaluation itself is always fully autonomous}
 """
 
 from __future__ import annotations
@@ -98,6 +103,7 @@ def _tail(path: Path, n: int = 1500) -> str:
 def train(ctx) -> None:
     import torch
 
+    from nfv.rl.deploy import robot_minutes
     from nfv.rl.loop import base_part, load_base
 
     P = ctx.params
@@ -117,7 +123,15 @@ def train(ctx) -> None:
         "--peak-force-penalty", str(float(P["peak_force_penalty"])),
         "--hole-shaping", str(float(P.get("hole_shaping", 0.0))),
         "--dp-res", str(float(P.get("dp_res_mm", 2.0)) * 1e-3),
+        # simulated deployment (nfv.rl.deploy); the defaults are the lesson-19 path
+        "--interventions", str(P.get("interventions", "off")),
+        "--intervention-budget", str(float(P.get("intervention_budget", 0.2))),
+        "--intervention-decay", str(float(P.get("intervention_decay", 0.0))),
+        "--corr-frac", str(float(P.get("corr_frac", 0.5))),
+        "--swap-every", str(int(P.get("swap_every", 500))),
     ]  # fmt: skip
+    if bool(P.get("deploy_mode")):
+        common.append("--deploy-mode")
     if base_info.get("arm"):
         common += ["--arm", str(base_info["arm"])]
     if bool(P.get("residual_force")):
@@ -191,19 +205,23 @@ def train(ctx) -> None:
     failed = [s for s, p in procs.items() if p.returncode != 0]
     if failed:
         raise RuntimeError(f"RL seeds {failed} failed:\n{_tail(dirs[failed[0]] / 'worker.log')}")
-    residuals, curves, finals = {}, {}, {}
+    residuals, curves, finals, deploy = {}, {}, {}, {}
     for s in seeds:
         residuals[str(s)] = torch.load(dirs[s] / "residual.pt", map_location="cpu",
                                        weights_only=False)  # fmt: skip
         res = json.loads((dirs[s] / "result.json").read_text())
         curves[str(s)] = res["curves"]
         finals[s] = res["final_eval"]["success"]
+        if "deploy" in res:  # simulated deployment: operator cost + intervention curve
+            deploy[str(s)] = {k: v for k, v in res["deploy"].items() if k != "episodes"}
     base_eval = json.loads((dirs[seeds[0]] / "result.json").read_text())["base_eval"]
     payload = {
         "kind": "nfv-residual-suite", "task": task, "seeds": seeds, "residuals": residuals,
         "base": base_part(base), "base_info": base_info, "train_curves": curves,
         "params": dict(P),
     }  # fmt: skip
+    if deploy:
+        payload["deploy"] = deploy
     med = float(np.median(list(finals.values())))
     ctx.save_ckpt(steps, payload, label="stopped" if stopped else "final",
                   metrics={"final_success_median": round(med, 4),
@@ -212,9 +230,13 @@ def train(ctx) -> None:
         ctx.set_status(state="stopped")
         return
     per = ", ".join(f"s{s} {v:.0%}" for s, v in finals.items())
+    op = ""
+    if deploy and any(d.get("first20_rate") is not None for d in deploy.values()):
+        tot = sum(d["operator_steps"] for d in deploy.values())
+        op = f"; operator {tot} steps ({robot_minutes(tot):.1f} min) over {len(deploy)} seeds"
     ctx.done(f"{len(seeds)} RL seeds on {task}: final success {per} (median {med:.0%}) vs "
              f"frozen base {base_eval['success']:.0%} on {base_eval['n']} in-training eval "
-             f"seeds")  # fmt: skip
+             f"seeds{op}")  # fmt: skip
 
 
 # ---------------------------------------------------------------------- traces and video
@@ -301,7 +323,33 @@ def _summary(ev: dict) -> dict:
     }  # fmt: skip
 
 
-def _claims(base: dict, seeds: list[dict], med: dict) -> list[dict]:
+def operator_cost(deploy: dict) -> dict | None:
+    """The training run's operator bill, pooled over seeds (None: no interventions).
+
+    ``deploy`` = the suite's {seed: nfv.rl.loop deploy summary}. Rates are step-weighted;
+    first/last 20 % windows are pooled over seeds with their env-step counts as weights.
+    """
+    rows = {s: d for s, d in (deploy or {}).items() if d.get("first20_rate") is not None}
+    if not rows:
+        return None
+    steps = {s: d["robot_min"] * 600.0 for s, d in rows.items()}  # env steps (10 Hz)
+    w = sum(steps.values())
+    first = sum(d["first20_rate"] * steps[s] for s, d in rows.items()) / max(w, 1e-9)
+    last = sum(d["last20_rate"] * steps[s] for s, d in rows.items()) / max(w, 1e-9)
+    tot = int(sum(d["operator_steps"] for d in rows.values()))
+    return {
+        "operator_steps": tot, "operator_min": round(tot / 600.0, 2),
+        "robot_min": round(w / 600.0, 2), "operator_share": tot / max(w, 1e-9),
+        "first20_rate": first, "last20_rate": last,
+        "autonomy_ratio": (last / first) if first > 0 else None,
+        "per_seed": {s: {k: d[k] for k in ("operator_steps", "operator_min", "operator_share",
+                                           "first20_rate", "last20_rate", "n_segments",
+                                           "triggers")}
+                     for s, d in rows.items()},
+    }  # fmt: skip
+
+
+def _claims(base: dict, seeds: list[dict], med: dict, op: dict | None = None) -> list[dict]:
     filled: dict[str, dict] = {}
     if seeds:
         ms = next(r for r in seeds if r["seed"] == med["seed"])
@@ -337,6 +385,26 @@ def _claims(base: dict, seeds: list[dict], med: dict) -> list[dict]:
             f"{max(r['success'] for r in seeds):.0%})",
             "verdict": verdict("a >= 5", {"a": float(len(seeds))}),
         }
+    if seeds and op is not None:  # trained with the simulated operator (interventions=expert)
+        filled["m4.corrections_unlock_learning"] = {
+            "measured": f"trained with operator corrections ({op['operator_steps']} operator "
+            f"steps = {op['operator_min']:.1f} min of {op['robot_min']:.1f} robot min); "
+            f"evaluated autonomously: median seed s{ms['seed']} {ms['success']:.0%} vs base "
+            f"{base['success']:.0%} (delta {med['delta']:+.0%}; CI {ci[0]:+.1%}..{ci[1]:+.1%})"
+            "; per seed: " + ", ".join(f"s{r['seed']} {r['delta']:+.0%}" for r in seeds),
+            "verdict": verdict(
+                "a-b >= 0.10", {"a": base["success"] + med["delta"], "b": base["success"]}, ci=ci
+            ),  # fmt: skip
+        }
+        if op["autonomy_ratio"] is not None:
+            filled["m4.autonomy_rises"] = {
+                "measured": f"intervention rate first 20 % {op['first20_rate']:.1%} -> last "
+                f"20 % {op['last20_rate']:.1%} of training (ratio {op['autonomy_ratio']:.2f}, "
+                f"pooled over {len(op['per_seed'])} seeds); per seed: "
+                + ", ".join(f"s{s} {d['first20_rate']:.0%}->{d['last20_rate']:.0%}"
+                            for s, d in op["per_seed"].items()),
+                "verdict": verdict("a <= 0.5", {"a": op["autonomy_ratio"]}),
+            }  # fmt: skip
     rows = []
     for c in M4_CLAIMS:
         f = filled.get(c.id)
@@ -481,13 +549,18 @@ def evaluate(ctx) -> None:
         "episodes_traces": traces,
         "params": dict(P), "base_successes_n": k,
     }  # fmt: skip
-    result["claims"] = _claims(base, rows, med)
+    op = operator_cost(suite.get("deploy"))
+    if op is not None:
+        result["operator"] = op  # the cost in human time of the training run (eval: no operator)
+    result["claims"] = _claims(base, rows, med, op)
     atomic_write_json(ctx.dir / "result.json", result)
     verdicts = "; ".join(f"{r['id'].split('.')[-1]}: {r['verdict']}" for r in result["claims"]
                          if r["verdict"] != NOT_MEASURED)  # fmt: skip
+    opx = (f"; trained with {op['operator_steps']} operator steps ({op['operator_min']:.1f} "
+           f"min)" if op is not None else "")  # fmt: skip
     ctx.done(
         f"{task}: base {base['success']:.0%}, residual median {med['success']:.0%} "
-        f"(delta {med['delta']:+.0%}) over {episodes} shared seeds - {verdicts}"
+        f"(delta {med['delta']:+.0%}) over {episodes} shared seeds{opx} - {verdicts}"
     )
 
 
@@ -509,6 +582,8 @@ def check(params: dict) -> None:
     if float(params["bc_floor"]) < 1.0:
         raise ValueError("bc_floor must be >= 1.0: the BC term toward the base must never "
                          "anneal away (lesson 12)")  # fmt: skip
+    if params.get("interventions", "off") == "expert" and str(params.get("task")) != "t3":
+        raise ValueError("the simulated operator (interventions=expert) exists for t3 only")
 
 
 SPEC = TaskSpec(
@@ -546,6 +621,22 @@ SPEC = TaskSpec(
         Param("eval_every", "Eval every (env steps)", "int", EVAL_EVERY, min=100, max=20000,
               step=100),
         Param("n_eval", "Eval episodes per point", "int", N_EVAL, min=1, max=100),
+        # ---- simulated deployment (nfv.rl.deploy): all off = the lesson-19 run above ----
+        Param("interventions", "Operator interventions", "choice", "off",
+              choices=["off", "expert"],
+              help="expert = a simulated operator (the T3 expert's view of the true hole) takes "
+                   "over when the peg stalls in contact for 1 s or |F| > 12 N, and corrects in "
+                   "residual space; corrections supervise the actor, critics see autonomous "
+                   "steps only (ForceRFT). T3 only"),
+        Param("intervention_budget", "Operator budget (share of steps)", "float", 0.2, min=0.0,
+              max=1.0, step=0.05, help="a take-over starts only while operator steps <= this x "
+                                       "env steps so far"),
+        Param("intervention_decay", "Operator decay", "float", 0.0, min=0.0, max=1.0, step=0.1,
+              help="budget x (1 - decay x progress): 0 = constant, 1 = no help by the end"),
+        Param("deploy_mode", "Deploy mode (policy snapshot)", "bool", False,
+              help="the robot acts with a frozen copy of the actor, swapped every N updates"),
+        Param("swap_every", "Swap policy every (updates)", "int", 500, min=1, max=10000,
+              step=50),
     ],  # fmt: skip
     eval_params=[
         Param("episodes", "Shared held-out seeds", "int", 100, min=2, max=500,
@@ -572,6 +663,15 @@ SPEC = TaskSpec(
         {"id": "critic", "title": "Critic loss per seed",
          "series": [{"key": f"s{i}_critic_loss", "label": f"seed {i}"}
                     for i in range(MAX_SEEDS)], "log_y": True},
+        {"id": "operator", "title": "Operator intervention rate per seed (share of each "
+         "episode's steps, moving average)",
+         "series": [{"key": f"s{i}_intervention_rate_ma", "label": f"seed {i}"}
+                    for i in range(MAX_SEEDS)], "log_y": False},
+        {"id": "robot_time", "title": "Robot minutes (env steps / 10 Hz) and operator minutes "
+         "per seed",
+         "series": [{"key": f"s{i}_robot_min", "label": f"robot s{i}"} for i in range(MAX_SEEDS)]
+         + [{"key": f"s{i}_operator_min", "label": f"operator s{i}"}
+            for i in range(MAX_SEEDS)], "log_y": False},
         {"id": "speed", "title": "Env steps/s per seed",
          "series": [{"key": f"s{i}_env_steps_per_s", "label": f"seed {i}"}
                     for i in range(MAX_SEEDS)], "log_y": False},
