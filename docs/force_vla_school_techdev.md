@@ -147,3 +147,45 @@ any active job.
 
 **17.7 — round 2 (instruction dropout + CFG, reactive re-planning):** results pending — filled
 in when the re-run lands.
+
+## Lesson 18 — ForceVLA2 (M3)
+
+**18.1 — the paper's progress label cannot drive its own subtask machine.** Symptom: fed the
+experts' eq.-10 progress traces, the machine advanced on step 1 of every episode. Found by:
+driving the machine with the label over 4 experts × 4 seeds and comparing to the expert's
+subtask per step — agreement 0.15–0.61. Cause: eq. 10 restarts at every expert *phase*, not every
+subtask, and its free-space factor exp(−2l) already reads 0.82 at l = 0.1 m, so the label sits
+near the 0.8 threshold from the start. Change: a hindsight label, k/(n−1) within each run of one
+subtask label (served by the dataset as `s_sub`). Take-away: a progress label must restart at
+the same granularity the prompt switches on — test it by driving the machine with it *before*
+training on it.
+
+**18.2 — distance-based progress fails too.** The linear phase progress (1 − l/l₀) never left
+"approach" on the wipe and the peg tasks: force-settling and spiral-search phases do not shrink a
+distance. The hindsight label reaches 0.83–0.93 agreement on all four tasks; the residual gap is
+a deliberate switch at ~80 % of each subtask — early, never late.
+
+**18.3 — the prompt vocabulary listed words no demo carries.** The wipe and insert phases run to
+the episode's end, so "done" is never labelled; the machine would have prompted a word absent
+from training. Change: prompts use only the subtasks the demos actually label. Take-away: the
+run-time prompt vocabulary must equal the training-label vocabulary.
+
+**18.4 — "exceeds 1" with a bounded s.** The paper advances when s exceeds 1 while bounding s to
+[0, 1]. Change: advance at s ≥ 0.8, re-arm only after s < 0.3 — the hysteresis also stops a noisy
+s near the threshold from skipping subtasks inside one chunk. Known limit: a one-step subtask run
+cannot re-arm the machine.
+
+**18.5 — a residual would make the force bypass redundant.** With a standard residual around
+the cross-attention, the force token reaches E'_state anyway. Change: no residual; tested — with
+the cross-attention zeroed, the state gradient is exactly 0 while all six wrench axes still reach
+the gate and experts. Consequence worth teaching: "experts see only state" still contains
+vision, because E'_state is a weighted sum of the prefix's values.
+
+**18.6 — the parameter budget differs from the plan.** Measured +1.13 M (cross-attention 263 k,
+experts 789 k) against the plan's ≈ +1.7 M, which matches no d → 2d → d expert configuration.
+The lesson quotes the measured number.
+
+**18.7 — risk: sampling noise can switch an axis into force control in free space.** The
+controller selects an axis at |f| > 0.5 N — 0.02 in model units — so residue on the f_target
+dimensions could flip an axis into admittance mid-air. The lesson-18 eval measures the
+spurious-selection rate before any deadband is added.
