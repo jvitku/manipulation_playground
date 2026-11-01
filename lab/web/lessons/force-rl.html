@@ -326,16 +326,16 @@ updates, as a background learner on hardware would.</p>
   <line x1="140" y1="108" x2="168" y2="45" stroke="var(--muted)" marker-end="url(#dpA)"/><line x1="140" y1="120" x2="168" y2="120" stroke="var(--muted)" marker-end="url(#dpA)"/><line x1="140" y1="132" x2="168" y2="195" stroke="var(--muted)" marker-end="url(#dpA)"/>
   <rect x="340" y="95" width="120" height="50" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="dp_compose"/><text x="400" y="116" text-anchor="middle" fill="var(--ink)">compose</text><text x="400" y="132" text-anchor="middle" fill="var(--muted)">base + 2 mm · r</text>
   <line x1="310" y1="40" x2="338" y2="103" stroke="var(--muted)" marker-end="url(#dpA)"/><line x1="310" y1="120" x2="338" y2="120" stroke="var(--muted)" marker-end="url(#dpA)"/><line x1="310" y1="200" x2="338" y2="137" stroke="var(--accent)" stroke-dasharray="4 3" marker-end="url(#dpG)"/>
-  <path d="M400 145 Q 400 250 75 147" fill="none" stroke="var(--muted)" marker-end="url(#dpA)"/>
+  <path d="M400 145 V 245 H 60 V 147" fill="none" stroke="var(--muted)" marker-end="url(#dpA)"/>
   <rect x="490" y="95" width="140" height="50" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" data-i="dp_buffer"/><text x="560" y="116" text-anchor="middle" fill="var(--ink)">replay buffer</text><text x="560" y="132" text-anchor="middle" fill="var(--muted)">+ intervened flag</text>
   <line x1="460" y1="120" x2="488" y2="120" stroke="var(--muted)" marker-end="url(#dpA)"/>
   <rect x="490" y="15" width="140" height="50" rx="7" fill="var(--chip)" stroke="var(--line)" data-i="dp_learner"/><text x="560" y="36" text-anchor="middle" fill="var(--ink)">actor learner</text><text x="560" y="52" text-anchor="middle" fill="var(--muted)">TD3 + BC (2 targets)</text>
   <rect x="490" y="175" width="140" height="50" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" data-i="dp_critic"/><text x="560" y="196" text-anchor="middle" fill="var(--ink)">twin critics</text><text x="560" y="212" text-anchor="middle" fill="var(--muted)">autonomous only</text>
   <line x1="560" y1="95" x2="560" y2="67" stroke="var(--muted)" marker-end="url(#dpA)"/><line x1="560" y1="145" x2="560" y2="173" stroke="var(--muted)" marker-end="url(#dpA)"/>
-  <path d="M632 200 Q 680 120 632 50" fill="none" stroke="var(--muted)" marker-end="url(#dpA)"/>
+  <path d="M630 200 H 640 V 40 H 632" fill="none" stroke="var(--muted)" marker-end="url(#dpA)"/>
   <rect x="648" y="95" width="128" height="50" rx="7" fill="var(--chip)" stroke="var(--line)" stroke-dasharray="4 3" data-i="dp_swap"/><text x="712" y="116" text-anchor="middle" fill="var(--ink)">swap weights</text><text x="712" y="132" text-anchor="middle" fill="var(--muted)">every 500 updates</text>
   <line x1="630" y1="40" x2="700" y2="93" stroke="var(--muted)" marker-end="url(#dpA)"/>
-  <path d="M712 145 Q 712 255 310 140" fill="none" stroke="var(--accent)" stroke-dasharray="4 3" marker-end="url(#dpG)"/>
+  <path d="M712 145 V 160 H 290 V 147" fill="none" stroke="var(--accent)" stroke-dasharray="4 3" marker-end="url(#dpG)"/>
 </svg>
 <p class="ref">Amber blocks are what round 2 adds. The dashed arrow from the operator replaces the residual while it holds
 control; the dashed arrow from the swap is the only way learned weights reach the robot.</p>
