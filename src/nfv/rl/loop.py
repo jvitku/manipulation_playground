@@ -23,10 +23,11 @@ Loop (all in one process, CPU physics + osmesa rendering):
   nfv.seeds block (demos < 41 000, eval < 90 000), so one RL seed never sees an eval placement
   and two RL seeds never share a training episode.
 
-Task default **T1**, not v1's T3: lesson 17 measured the gap there — BC imitates the press but
-has no incentive to stop once the button clicks, so it presses through the hidden 1.5x
-over-force band; a reward that says "-1 for over_force" is exactly what BC lacks. T3 (and t0/t2)
-is a parameter.
+Task default **T3** (v1's and the plan's choice; the hole sits up to ±4 mm off the visible
+marker, so the missing information is in the wrench). T1 was tried first and is kept as a
+parameter: measured on 40 held-out seeds, 55-58 % of two frozen T1 bases' episodes end in
+wrong_button, which a residual without images or instruction cannot fix, and only 1-3 of 40 in
+a force failure — the residual's whole T1 headroom (``success_cond`` reports it).
 
 Returned dict (also the shape the lab wrapper writes): see :func:`run_residual_rl`.
 
@@ -171,6 +172,7 @@ class _Slot:
     ep_ret: float = 0.0
     ep_len: int = 0
     pending: tuple | None = None  # (o, a, r, terminal) waiting for its o2
+    hole_mm: float | None = None  # privileged peg-to-hole distance (reward shaping only)
     trace: dict = field(default_factory=dict)
 
 
@@ -187,10 +189,12 @@ class ResidualActor:
     def __init__(
         self, base, agent, residual_force: bool = False, device: str = "cpu",
         lazy_render: bool = True,
+        dp_res: float = DP_RES,
     ):  # fmt: skip
         self.base, self.agent, self.residual_force = base, agent, residual_force
         self.device = device
         self.lazy_render = lazy_render
+        self.dp_res = float(dp_res)
         self.n_exec = max(1, int(base.cfg.n_exec))
         self.blank = False
 
@@ -203,6 +207,7 @@ class ResidualActor:
         slot.chunk, slot.j = None, 0
         slot.prev_wrench = np.asarray(slot.obs.wrench, np.float32).copy()
         slot.ep_ret, slot.ep_len, slot.pending = 0.0, 0, None
+        slot.hole_mm = _hole_mm(slot.env)
         slot.feat = self._features(slot)
 
     def _base_next(self, slot: _Slot, replan: bool = True):
@@ -235,7 +240,7 @@ class ResidualActor:
     def step(self, slot: _Slot, r: np.ndarray):
         """Execute base-next + residual r; -> (obs, info, contact flag of the acted-on obs)."""
         dp, g, ft = self._base_next(slot, replan=False)
-        dp, g, ft = compose(dp, g, ft, r, self.residual_force)
+        dp, g, ft = compose(dp, g, ft, r, self.residual_force, self.dp_res)
         contact = float(np.linalg.norm(slot.obs.wrench[:3])) > CONTACT_N
         slot.prev_wrench = np.asarray(slot.obs.wrench, np.float32).copy()
         env = slot.env
@@ -249,11 +254,22 @@ class ResidualActor:
         slot.obs = obs
         slot.j += 1
         slot.ep_len += 1
+        prev, slot.hole_mm = slot.hole_mm, _hole_mm(env)
+        if prev is not None:
+            info["hole_dist_mm"], info["hole_prev_mm"] = slot.hole_mm, prev
         return obs, info, contact
 
 
-def _residual_mm(r: np.ndarray) -> float:
-    return float(np.linalg.norm(np.asarray(r[:3], np.float64)) * DP_RES * 1e3)
+def _hole_mm(env) -> float | None:
+    """Privileged lateral peg-tip-to-hole distance in mm (T3 only; reward shaping only)."""
+    task = env.task
+    if not (hasattr(task, "hole_xy") and hasattr(task, "peg_tip")):
+        return None
+    return float(np.linalg.norm(task.peg_tip(env)[:2] - task.hole_xy) * 1e3)
+
+
+def _residual_mm(r: np.ndarray, dp_res: float = DP_RES) -> float:
+    return float(np.linalg.norm(np.asarray(r[:3], np.float64)) * dp_res * 1e3)
 
 
 def evaluate(actor: ResidualActor, env: Env, task: str, seeds: list[int], off: bool = False,
@@ -279,7 +295,7 @@ def evaluate(actor: ResidualActor, env: Env, task: str, seeds: list[int], off: b
             rr, _ = reward(info, peak_prev, **reward_kw)
             peak_prev = float(info["peak_force"])
             ret += rr
-            m = _residual_mm(r)
+            m = _residual_mm(r, actor.dp_res)
             mag["contact" if contact else "free"].append(m)
             if trace_first and i == 0:
                 tr["t"].append(round(float(info["t"]), 2))
@@ -326,7 +342,7 @@ def evaluate(actor: ResidualActor, env: Env, task: str, seeds: list[int], off: b
 # ---------------------------------------------------------------------------------- the run
 def run_residual_rl(
     base_ckpt,
-    task: str = "t1",
+    task: str = "t3",
     seed: int = 0,
     env_steps: int = 20_000,
     ctx=None,
@@ -345,6 +361,7 @@ def run_residual_rl(
     step_cost: float = 0.01,
     peak_force_penalty: float = 0.0,
     fail_penalty: float = 0.0,
+    hole_shaping: float = 0.0,
     residual_force: bool = False,
     hidden: int = 256,
     batch: int = 256,
@@ -352,6 +369,7 @@ def run_residual_rl(
     device: str | None = None,
     zero_last_layer: bool = False,
     torch_threads: int | None = 1,
+    dp_res: float = DP_RES,
 ) -> dict:
     """Train one residual on a frozen base for ``env_steps`` env transitions; one RL seed.
 
@@ -371,7 +389,8 @@ def run_residual_rl(
                     "force_abort",
                     "over_force", "peak_force_mean", "return_mean", "res_mm_contact",
                     "res_mm_free"},           # one point per eval; point 0 = the frozen base
-         "train": [{"env_step", "ep_return_ma", "train_success_ma", "bc_weight",
+         "train": [{"env_step", "ep_return_ma", "train_success_ma", "train_force_fail_ma",
+                    "bc_weight",
                     "critic_loss", "q1_mean", "actor_loss", "bc_loss", "res_mm_ma"}, ...],
          "base_eval": eval dict (residual off), "final_eval": eval dict (incl. "trace"),
          "residual_trace": {"contact_mm", "free_mm", "trace"} of the final eval,
@@ -388,16 +407,16 @@ def run_residual_rl(
     rng = np.random.default_rng(seed)
     base, base_info = load_base(base_ckpt, task, arm, device)
     agent = make_agent(residual_force, hidden, batch, device, zero_last_layer)
-    actor = ResidualActor(base, agent, residual_force, device)
+    actor = ResidualActor(base, agent, residual_force, device, dp_res=dp_res)
     buf = ReplayBuffer(agent.obs_dim, agent.act_dim, max(env_steps, 1))
     bc_view = ZeroActionView(buf)
     reward_kw = {"step_cost": step_cost, "peak_force_penalty": peak_force_penalty,
-                 "fail_penalty": fail_penalty}  # fmt: skip
+                 "fail_penalty": fail_penalty, "hole_shaping": hole_shaping}  # fmt: skip
     config = {
         "task": task, "seed": seed, "env_steps": env_steps, "arm": arm, "n_envs": n_envs,
         "warmup": warmup, "utd": utd, "eval_every": eval_every, "n_eval": n_eval,
         "eval_offset": eval_offset, "bc_start": bc_start, "bc_floor": bc_floor,
-        "bc_decay": bc_decay, "expl_noise": expl_noise, "dp_res_m": DP_RES, "f_res_n": F_RES,
+        "bc_decay": bc_decay, "expl_noise": expl_noise, "dp_res_m": float(dp_res), "f_res_n": F_RES,
         "residual_force": residual_force, "hidden": hidden, "batch": batch, **reward_kw,
         "n_exec": actor.n_exec,
         "torch_threads": torch.get_num_threads(),
@@ -438,6 +457,7 @@ def run_residual_rl(
         ep_counter += 1
     rets: deque = deque(maxlen=MA_WINDOW)
     succ: deque = deque(maxlen=MA_WINDOW)
+    ffail: deque = deque(maxlen=MA_WINDOW)  # force_abort / over_force among training episodes
     res_ma: deque = deque(maxlen=500)
     loss_acc: dict[str, list] = {}
     peak_prev = [0.0] * len(slots)
@@ -455,7 +475,7 @@ def run_residual_rl(
             rr, terminal = reward(info, peak_prev[si], **reward_kw)
             peak_prev[si] = float(info["peak_force"])
             sl.ep_ret += rr
-            res_ma.append(_residual_mm(r))
+            res_ma.append(_residual_mm(r, actor.dp_res))
             t += 1
             if info["done"]:
                 # o2 for the (timeout) bootstrap: the base's plan continuation, no re-plan
@@ -463,6 +483,7 @@ def run_residual_rl(
                 buf.add(o, r, rr, o2, terminal)
                 rets.append(sl.ep_ret)
                 succ.append(float(info["success"]))
+                ffail.append(float(info["force_abort"] or info["outcome"] == "over_force"))
                 peak_prev[si] = 0.0
                 actor.start(sl, RL_SEED0 + seed * RL_SEED_BLOCK + ep_counter)
                 ep_counter += 1
@@ -483,6 +504,7 @@ def run_residual_rl(
                     "env_step": t,
                     "ep_return_ma": float(np.mean(rets)) if rets else None,
                     "train_success_ma": float(np.mean(succ)) if succ else None,
+                    "train_force_fail_ma": float(np.mean(ffail)) if ffail else None,
                     "bc_weight": bc_weight_at(t, bc_decay, bc_start, bc_floor),
                     "res_mm_ma": float(np.mean(res_ma)) if res_ma else 0.0,
                     "updates": updates,
@@ -539,6 +561,6 @@ def _save(ctx, agent, base, base_info, config, step, ev) -> None:
             "eval": {k: ev[k] for k in _CKPT_EVAL_KEYS}}  # fmt: skip
     payload = agent.state(meta)
     payload["base"] = base_part(base)
-    payload["arch"] = {"kind": "nfv_residual", "dp_res_m": DP_RES, "f_res_n": F_RES,
+    payload["arch"] = {"kind": "nfv_residual", "dp_res_m": config["dp_res_m"], "f_res_n": F_RES,
                        "residual_force": config["residual_force"]}  # fmt: skip
     _call(ctx, "save_ckpt", step, payload, metrics={"eval_success": ev["success"]})

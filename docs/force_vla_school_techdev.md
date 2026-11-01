@@ -269,3 +269,40 @@ to zero) is now impossible to configure by accident: floors below 1.0 are refuse
 **19.7 — a scratch file named `profile.py` broke torch.** `cProfile` imports `profile`, which
 picked up the script; torch's optimizer import then failed with a misleading circular-import
 error. Take-away: never name scratch files after standard-library modules.
+
+**19.8 — the T3 base starts almost at zero.** The base reached 0/20, 0/20, 1/20 at its periodic
+checks and 2/100 on the shared seeds (67 timeouts, 31 force aborts): the hole sits up to ±4 mm
+off the visible marker with 0.5 mm clearance, so a behaviour-cloned policy aims at the marker,
+lands on the rim and pushes. Consequence: with a success-only reward, 20k training steps saw at
+most 2 % successes, the critic went flat (Q ≈ −0.35) and the BC floor held the residual at
+2–3 % of its bound. All four M4 bars stayed red (median gain +0 over 5 seeds). Take-away:
+runtime RL refines a base that already succeeds sometimes — ForceRFT starts from a working
+policy too; from a 2 % base, sparse reward has nothing to propagate.
+
+**19.9 — a reward the policy cannot observe is noise with a sign.** A hole-direction shaping term
+(computed from the simulator's hidden hole position, reward-only) made everything worse: force
+aborts 37–60/100, peak force +15 %, the residual largest in free space, critic loss ~300× higher.
+Lesson 13's shaping worked because the actor observed a hole estimate; here it sees only
+wrench, state and the base's intent, so the shaped reward is unpredictable from its inputs. Kept
+as a documented knob, default off.
+
+**19.10 — the effect that did appear: push less.** Every plain-reward seed cut force aborts from
+31 to 10–18/100 (converted to timeouts) while success stayed flat; in 4 of 5 seeds the mean
+vertical residual in contact points upward (+0.013 to +0.031 mm/step, 1–3 mm less depth over a
+contact phase). The abort penalty was the only signal training actually collected, and the
+residual learned exactly that. It is what the 7 % peak-force drop measures.
+
+**19.11 — shared hosts cost 3× throughput.** 17–20 env steps/s per worker against 66 on an idle
+box (load 70–76 from other jobs) — 5 seeds took 24 min instead of 12. Budget 25–30 min for five
+seeds on a shared machine.
+
+**19.12 — liveness shown for the wrong reason.** Jobs started in fresh containers recorded
+`pid 1`, which in the lab container is its own always-alive init: the UI showed them as running
+by luck, and a server restart would mark them failed. Real runs belong to the live lab once the
+task is registered.
+
+**19.13 — the oversized bound does its damage while exploring.** With a 5 mm residual bound, 20 %
+of the first training episodes ended in a force failure (0 % at 2 mm) and the contact residual
+reached 1.25 vs 0.40 mm/step — yet the deterministic eval was identical by 4k steps. On hardware
+the exploratory episodes are the ones that break things: watch the training force-failure rate,
+not the eval curve.

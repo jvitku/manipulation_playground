@@ -62,6 +62,7 @@ CONTACT_N = 0.5  # N: |F| above this counts as contact (= T1's "press" subtask t
 BC_START = 2.5
 BC_FLOOR = 1.0
 BC_FLOOR_MIN = 1.0  # the schedule refuses floors below this (the lesson-12 failure)
+HOLE_SHAPING_MM = 4.0  # T3's hidden-offset bound: the shaping potential's length scale
 
 
 def feature_dim(residual_force: bool = False) -> int:
@@ -114,14 +115,16 @@ def compose(
     base_f_target: np.ndarray | None,
     r: np.ndarray,
     residual_force: bool = False,
+    dp_res: float = DP_RES,
 ) -> tuple[np.ndarray, float, np.ndarray | None]:
     """Base action + bounded residual -> (dp float64 [3], gripper, f_target [6] | None).
 
     The gripper is never corrected (lesson 19 is about contact force, not grasping). With
-    ``r == 0`` the returned dp equals ``base_dp.astype(float64)`` bit-for-bit.
+    ``r == 0`` the returned dp equals ``base_dp.astype(float64)`` bit-for-bit. ``dp_res`` is
+    the bound (default DP_RES); the lesson's wrong exercise raises it to v1's 5 mm.
     """
     r = np.asarray(r, dtype=np.float64)
-    dp = np.asarray(base_dp, dtype=np.float64) + DP_RES * r[:3]
+    dp = np.asarray(base_dp, dtype=np.float64) + dp_res * r[:3]
     ft = None if base_f_target is None else np.asarray(base_f_target, dtype=np.float64).copy()
     if residual_force:
         if ft is None:
@@ -198,6 +201,7 @@ def reward(
     step_cost: float = 0.01,
     peak_force_penalty: float = 0.0,
     fail_penalty: float = 0.0,
+    hole_shaping: float = 0.0,
 ) -> tuple[float, bool]:
     """Sparse reward of one env step -> (r, terminal).
 
@@ -208,8 +212,17 @@ def reward(
     ``peak_force_penalty * peak / F_ABORT``, a dense way to state "gentler" as a goal.
     ``terminal`` is True on every end except timeout: the features carry no clock, so a timeout
     is not a property of the state and bootstraps (as in task 13).
+
+    ``hole_shaping`` (default 0 = the plan's sparse reward) adds lesson 13's privileged
+    potential shaping toward the TRUE hole on T3: k x (d_prev - d) / HOLE_SHAPING_MM, with d the
+    peg tip's lateral distance to the hidden hole (mm, ``info["hole_dist_mm"]`` and
+    ``info["hole_prev_mm"]``, written by the loop, never seen by the actor or the critic).
+    Potential-based, so it changes how fast the optimum is found, not which policy is optimal.
     """
     r = -step_cost
+    hd, hp = info.get("hole_dist_mm"), info.get("hole_prev_mm")
+    if hole_shaping and hd is not None and hp is not None:
+        r += hole_shaping * (hp - hd) / HOLE_SHAPING_MM
     if peak_force_penalty:
         r -= peak_force_penalty * max(0.0, float(info["peak_force"]) - peak_prev) / F_ABORT
     out = info.get("outcome")

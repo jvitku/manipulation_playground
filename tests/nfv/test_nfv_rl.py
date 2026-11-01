@@ -210,3 +210,16 @@ def test_load_base_resolves_suite_arm(base):
         rl_loop.load_base(suite, "t1", arm="blank")
     with pytest.raises(ValueError, match="pick the base arm"):
         rl_loop.load_base({**suite, "arms": ["a", "c"], "c": pl}, "t1")
+
+
+def test_hole_shaping_is_reward_only():
+    info = {"done": False, "peak_force": 0.0, "hole_dist_mm": 2.0, "hole_prev_mm": 4.0}
+    assert rr.reward(info)[0] == pytest.approx(-0.01)  # default: the plan's sparse reward
+    assert rr.reward(info, hole_shaping=1.0)[0] == pytest.approx(-0.01 + 0.5)
+    env = Env(task="t3", render=False)
+    env.reset(50_000)
+    d = rl_loop._hole_mm(env)
+    assert d is not None and 0.0 <= d < 200.0
+    env.reset(50_000, task="t1")
+    assert rl_loop._hole_mm(env) is None
+    env.close()
