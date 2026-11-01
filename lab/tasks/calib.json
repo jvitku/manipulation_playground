@@ -16,5 +16,6 @@
   "nano-vla": {"steps_per_s": 22.9, "load_s_per_demo": 0.01, "ep_s": 2.5, "overhead_s": 15.0},
   "nano-force-vla": {"steps_per_s": 27.5, "load_s_per_demo": 0.01, "ep_s": 2.5, "overhead_s": 15.0},
   "nano-force-vla2": {"steps_per_s": 25.0, "load_s_per_demo": 0.01, "ep_s": 4.0, "overhead_s": 15.0},
-  "force-rl": {"env_steps_per_s": 50.0, "eval_steps_per_s": 80.0, "overhead_s": 30.0}
+  "force-rl": {"env_steps_per_s": 50.0, "eval_steps_per_s": 80.0, "overhead_s": 30.0},
+  "lora-vla": {"samples_per_s": {"head": 52.8, "lora": 49.0, "expert_full": 49.5}, "load_s": 25.0, "probe_s": 60.0, "ep_s": 6.0, "overhead_s": 30.0}
 }

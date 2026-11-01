@@ -1,0 +1,8 @@
+<h3>The question</h3>
+<p>Lessons 16&ndash;19 trained VLAs of a few million parameters from scratch. Real VLAs are pretrained at hundreds of
+millions to billions of parameters, and adapting one to a new robot means fine-tuning it &mdash; on a 10&nbsp;GB
+consumer GPU, where training every weight of a 450&nbsp;M-parameter SmolVLA does not even fit. This lesson asks
+whether LoRA &mdash; a frozen pretrained network plus low-rank adapters, about 1&nbsp;% of the weights, written from
+scratch in <code>src/nfv/lora.py</code> &mdash; can match the standard fine-tune on the course's peg-in-hole demos,
+what it saves in memory and disk, and whether what full fine-tuning actually changes is low-rank at all.
+(Placeholder: the full lesson page follows.)</p>
