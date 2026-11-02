@@ -511,9 +511,15 @@
 
       function showResult(result, evalId) {
         lastShown = { result, evalId };
-        outcomeEl.replaceChildren(outcomeTable(result));
+        // viewers that lay out their own framed windows (results & claims included) take the
+        // full width; the generic outcome table beside them would only repeat their numbers
+        const own = WINDOWED_VIEWERS.has(spec.viewer);
+        outcomeEl.hidden = own;
+        outcomeEl.replaceChildren(own ? "" : outcomeTable(result));
+        viewerEl.parentElement.classList.toggle("full", own);
+        viewerEl.className = own ? "viewer-plain" : "chart";
         viewerEl.hidden = false;
-        viewerEl.replaceChildren(el("h3", { text: "result" }), el("div", { class: "viewer-body" }));
+        viewerEl.replaceChildren(own ? "" : el("h3", { text: "result" }), el("div", { class: "viewer-body" }));
         const ctx = {
           task: taskId,
           evalId,
@@ -538,6 +544,8 @@
   //  - flat (tasks 3-9): top-level {n_episodes, success, wilson95, counts: {outcome: k}, ...} (plus
   //    base_success for the residual task): headline success % with its CI, then each count as
   //    "k of n" (counts are integers, never percentages). Other top-level numbers are settings.
+  const WINDOWED_VIEWERS = new Set(["fvrollout"]);
+
   function outcomeTable(result) {
     const rows = [];
     const pct = (v) => (v >= 0 && v <= 1 ? `${(v * 100).toFixed(1)} %` : Number(v).toPrecision(3));

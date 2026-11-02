@@ -1474,28 +1474,59 @@
   // claimsBoard(rows) returns the table (fvrollout embeds it); the registered "claims" viewer
   // renders result.claims alone. Verdict chips: CONFIRMED good, NOT CONFIRMED bad,
   // INCONCLUSIVE warn, anything else (e.g. "NOT MEASURED") plain.
+  // The board: a verdict tally, then one row per measured claim (verdict pill with a matching
+  // left rule, the statement with its metric and source, the expected relation, the measured
+  // value). Claims this run could not measure fold into a closed <details> underneath.
+  const VERDICT_KIND = { "CONFIRMED": "good", "NOT CONFIRMED": "bad", "INCONCLUSIVE": "warn" };
   function claimsBoard(rows) {
     if (!Array.isArray(rows) || !rows.length) return null;
-    const cls = (v) => (v === "CONFIRMED" ? " good" : v === "NOT CONFIRMED" ? " bad" : v === "INCONCLUSIVE" ? " warn" : "");
-    const tbl = h("table", { class: "out claims" });
-    tbl.append(h("tr", {}, ...["claim", "source", "expected", "measured", "verdict"].map((t) => h("th", { text: t }))));
-    for (const r of rows) {
-      if (!r || typeof r !== "object") continue;
-      const st = h("td", { style: "max-width:340px" }, h("div", {}, h("b", { text: r.statement || r.id || "?" })));
-      if (r.metric) st.append(h("div", { style: "color:var(--muted);font-size:11px", text: r.metric }));
-      const src = h("td", { style: "max-width:190px;font-size:11px" },
-        r.url ? h("a", { href: r.url, target: "_blank", rel: "noopener", text: r.source || r.url })
-          : h("span", { text: r.source || "" }));
-      tbl.append(h("tr", {}, st, src,
-        h("td", { style: "font-family:var(--mono);font-size:11px;white-space:nowrap", text: r.expected == null ? "" : String(r.expected) }),
-        h("td", { style: "font-size:11px;max-width:300px", text: r.measured == null ? "" : String(r.measured) }),
-        h("td", {}, h("span", { class: "chip" + cls(r.verdict), text: r.verdict || "?" }))));
+    const list = rows.filter((r) => r && typeof r === "object");
+    if (!list.length) return null;
+    const measured = list.filter((r) => VERDICT_KIND[r.verdict]);
+    const other = list.filter((r) => !VERDICT_KIND[r.verdict]);
+    const tally = h("div", { class: "claims2-sum" });
+    for (const v of Object.keys(VERDICT_KIND)) {
+      const k = measured.filter((r) => r.verdict === v).length;
+      if (k) tally.append(h("span", { class: "vpill " + VERDICT_KIND[v], text: `${k} ${v.toLowerCase()}` }));
     }
-    return tbl;
+    if (other.length) tally.append(h("span", { class: "vpill", text: `${other.length} not measured in this run` }));
+    const row = (r) => {
+      const kind = VERDICT_KIND[r.verdict] || "na";
+      const claim = h("td", { class: "c-claim" }, h("div", { class: "c-stmt", text: r.statement || r.id || "?" }));
+      if (r.metric) {
+        const m = String(r.metric);
+        claim.append(m.length > 140
+          ? h("details", { class: "c-how" }, h("summary", { text: "how it is measured" }), h("div", { class: "c-metric", text: m }))
+          : h("div", { class: "c-metric", text: m }));
+      }
+      if (r.source || r.url) {
+        claim.append(h("div", { class: "c-src" }, r.url
+          ? h("a", { href: r.url, target: "_blank", rel: "noopener", text: r.source || r.url })
+          : h("span", { text: r.source })));
+      }
+      return h("tr", { class: "v-" + kind },
+        h("td", { class: "c-verdict" }, h("span", { class: "vpill " + (VERDICT_KIND[r.verdict] || ""), text: r.verdict || "?" })),
+        claim,
+        h("td", { class: "c-exp" }, r.expected == null ? null : h("code", { text: String(r.expected) })),
+        h("td", { class: "c-meas", text: r.measured == null ? "" : String(r.measured) }));
+    };
+    const table = (rs) => h("div", { class: "claims2-scroll" }, h("table", { class: "claims2-tbl" },
+      h("thead", {}, h("tr", {}, ...["verdict", "claim", "expected", "measured"].map((t) => h("th", { text: t })))),
+      h("tbody", {}, ...rs.map(row))));
+    const box = h("div", { class: "claims2" }, tally);
+    if (measured.length) box.append(table(measured));
+    if (other.length) box.append(h("details", { class: "claims2-more" }, h("summary", { text: `${other.length} claim${other.length > 1 ? "s" : ""} not measured in this run` }), table(other)));
+    return box;
   }
   function claimsViewer(result, container) {
-    const tbl = claimsBoard(result && result.claims);
-    container.replaceChildren(tbl || h("p", { style: "color:var(--muted)", text: "No claims in this result." }));
+    const board = claimsBoard(result && result.claims);
+    container.replaceChildren(board || h("p", { style: "color:var(--muted)", text: "No claims in this result." }));
+  }
+  // vwin(title, subtitle, ...kids): one framed "window" of a viewer (a header bar + a body).
+  function vwin(title, sub, ...kids) {
+    return h("section", { class: "vwin" },
+      h("header", {}, h("h3", { text: title }), sub ? h("span", { class: "vsub", text: sub }) : null),
+      h("div", { class: "vwin-body" }, ...kids));
   }
 
   // ---- LoRA anatomy (lesson 20, lab/tasks/task_nfv5.py): per-arm cost table + the ΔW spectra.
@@ -1578,8 +1609,12 @@
   function fvrollout(result, container, ctx) {
     const r = result || {};
     const wrap = h("div", { class: "viewer-fvrollout" });
-    const board = claimsBoard(r.claims);
-    if (board) wrap.append(h("h4", { text: "Claims" }), board);
+    const rep = h("div", {}); // window 1: the interactive replay (video + episode traces)
+    const res = h("div", {}); // window 2: results & claims (tables, the board, per-arm analysis)
+    function assemble() {
+      if (rep.childElementCount) wrap.append(vwin("Interactive replay", "the rollout video and every recorded episode, step by step", rep));
+      if (res.childElementCount) wrap.append(vwin("Results & claims", "held-out evaluation: outcomes, the claims board, the per-arm analysis", res));
+    }
     const o = r.outcomes || {};
     const stats = h("div", { style: "margin:10px 0 6px" });
     if (r.scenario) stats.append(chip("scenario", String(r.scenario)));
@@ -1588,13 +1623,15 @@
     if (num(r.n_episodes) != null) stats.append(chip("episodes", String(r.n_episodes)));
     const pk = r.peak_force || {};
     if (num(pk.max) != null) stats.append(chip("peak |F|", `${pk.mean} N mean · ${pk.max} N max`));
-    wrap.append(stats);
+    if (stats.childElementCount) res.append(stats);
+    const board = claimsBoard(r.claims);
+    if (board) res.append(h("h4", { class: "vsec", text: "Claims board" }), board);
     function outTable(title, headers, rows) {
       if (!rows.length) return;
       const tbl = h("table", { class: "out", style: "margin-top:6px" });
       tbl.append(h("tr", {}, ...headers.map((t) => h("th", { text: t }))));
       for (const row of rows) tbl.append(h("tr", {}, ...row.map((v) => h("td", { text: v == null ? "–" : String(v) }))));
-      wrap.append(h("h4", { text: title }), tbl);
+      res.append(h("h4", { class: "vsec", text: title }), h("div", { class: "claims2-scroll" }, tbl));
     }
     const counts = o.counts || {};
     const n = num(r.n_episodes) || Object.values(counts).reduce((a, b) => a + (num(b) || 0), 0);
@@ -1625,34 +1662,36 @@
     if (tk.arms) outTable(`Wipe at ${tk.target_n} N: position vs hybrid`, ARM_HEAD, armRows(tk.arms));
     if (r.kp) outTable("Position-only wipe by K_p (N/m)", ARM_HEAD, armRows(r.kp));
     const anatomy = loraAnatomy(r);
-    if (anatomy) wrap.append(anatomy);
+    if (anatomy) res.append(anatomy);
     if (r.video && ctx && typeof ctx.fileUrl === "function") {
-      const vid = h("video", { controls: "", preload: "metadata", style: "width:100%;max-width:640px;display:block;margin:10px 0;border-radius:8px;background:#000" });
+      const vid = h("video", { controls: "", preload: "metadata", style: "width:100%;max-width:640px;display:block;margin:4px 0 10px;border-radius:8px;background:#000" });
       vid.setAttribute("src", ctx.fileUrl(r.video));
-      wrap.append(h("h4", { text: "Rollout video" }), vid);
+      rep.append(h("h4", { class: "vsec", text: "Rollout video" }), vid);
     }
     // ---- per-episode traces ----
     const eps = Array.isArray(r.episodes_traces)
       ? r.episodes_traces.filter((e) => e && Array.isArray(e.fz) && e.fz.length && Array.isArray(e.t)) : [];
     if (!eps.length) {
+      assemble();
       if (!wrap.childElementCount) return jsonFallback(result, container);
       container.replaceChildren(wrap);
       return;
     }
-    wrap.append(h("h4", { text: "Episode traces (10 Hz): measured Fz vs commanded force" }));
+    rep.append(h("h4", { class: "vsec", text: "Episode replay (10 Hz): measured Fz vs commanded force" }));
     const epS = h("input", { type: "range", min: 0, max: eps.length - 1, value: 0, step: 1, style: "width:160px" });
     const [prevB, nextB] = stepButtons(epS, () => { drawEp(); });
     const epLbl = h("b", { text: "" });
     const scrub = h("input", { type: "range", min: 0, max: 1, value: 0, step: 1, style: "flex:1;min-width:160px;max-width:420px" });
     const readout = h("span", { style: "font:12px var(--mono);color:var(--muted)" });
     const svgBox = h("div", {});
-    wrap.append(
+    rep.append(
       h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0" },
         h("span", { text: "episode" }), prevB, epS, nextB, epLbl),
       svgBox,
       h("div", { style: "display:flex;gap:10px;align-items:center;margin-top:6px;max-width:640px" }, h("span", { style: "font:12px var(--mono)", text: "scrub" }), scrub),
       readout,
       h("p", { class: "note", text: "Course sign convention: pressing on the surface reads NEGATIVE Fz, so a 5 N press sits at −5 N. The strip under the time axis is the z-axis controller mode per policy step: green = hybrid (admittance on the force error), grey = position. Markers: click / abort / seated events." }));
+    assemble();
     container.replaceChildren(wrap);
     const W = 640, H = 250, L = 46, R = 8, T = 10, B = 44, MS = 9; // MS = mode-strip height
     let ep = eps[0], cursor = null, cursorStep = 0;

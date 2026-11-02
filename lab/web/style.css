@@ -86,6 +86,8 @@ select.runsel{font:12.5px var(--mono);background:var(--bg);color:var(--ink);bord
 .u-legend{display:none}
 .evalrow{display:grid;grid-template-columns:minmax(240px,320px) minmax(0,1fr);gap:16px;margin-top:12px}
 @media (max-width:760px){.evalrow{grid-template-columns:1fr}}
+.evalrow.full{grid-template-columns:minmax(0,1fr)}
+.viewer-plain{min-width:0}
 table.out{border-collapse:collapse;font-family:var(--mono);font-size:12.5px;width:100%}
 table.out td,table.out th{border-bottom:1px solid var(--line);padding:5px 10px 5px 0;text-align:left}
 table.out th{color:var(--muted);font-weight:500;font-size:11px}
@@ -94,6 +96,41 @@ pre.json{font-family:var(--mono);font-size:12px;background:var(--bg);border:1px 
 .chip.good{color:var(--good);background:var(--good-soft)}
 .chip.bad{color:var(--bad);background:var(--bad-soft)}
 .chip.warn{color:var(--warn);background:var(--warn-soft)}
+/* viewer windows: a framed card per concern (interactive replay / results & claims) */
+.vwin{border:1px solid var(--line);border-radius:12px;background:var(--panel);margin:14px 0;min-width:0;overflow:hidden}
+.vwin>header{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:9px 14px;background:var(--chip);border-bottom:1px solid var(--line)}
+.vwin>header h3{margin:0;font-size:13.5px;font-weight:700}
+.vwin>header .vsub{color:var(--muted);font-size:11.5px}
+.vwin-body{padding:10px 14px 14px;min-width:0}
+.vwin-body h4.vsec{margin:16px 0 6px;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.vwin-body>h4.vsec:first-child{margin-top:4px}
+/* the claims board */
+.vpill{display:inline-block;border-radius:999px;padding:2px 10px;font-size:11px;font-weight:700;letter-spacing:.02em;white-space:nowrap;background:var(--chip);color:var(--muted)}
+.vpill.good{color:var(--good);background:var(--good-soft)}
+.vpill.bad{color:var(--bad);background:var(--bad-soft)}
+.vpill.warn{color:var(--warn);background:var(--warn-soft)}
+.claims2-sum{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 10px}
+.claims2-scroll{overflow-x:auto;min-width:0}
+.claims2-tbl{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px;line-height:1.4}
+.claims2-tbl th{text-align:left;font-size:11px;font-weight:500;color:var(--muted);padding:4px 12px 6px 10px;border-bottom:1px solid var(--line)}
+.claims2-tbl td{padding:10px 12px 10px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.claims2-tbl tbody tr:last-child td{border-bottom:0}
+.claims2-tbl td.c-verdict{border-left:3px solid var(--line);width:1%}
+.claims2-tbl tr.v-good td.c-verdict{border-left-color:var(--good)}
+.claims2-tbl tr.v-bad td.c-verdict{border-left-color:var(--bad)}
+.claims2-tbl tr.v-warn td.c-verdict{border-left-color:var(--warn)}
+.claims2-tbl tr.v-na{opacity:.75}
+.claims2-tbl .c-claim{min-width:190px;max-width:420px}
+.claims2-tbl .c-stmt{font-weight:600}
+.claims2-tbl .c-metric{color:var(--muted);font-size:11.5px;margin-top:3px}
+.claims2-tbl .c-how{margin-top:4px}
+.claims2-tbl .c-how>summary{cursor:pointer;color:var(--muted);font-size:11px}
+.claims2-tbl .c-src{font-size:11px;margin-top:4px}
+.claims2-tbl .c-src a{color:var(--accent)}
+.claims2-tbl .c-exp code{font-family:var(--mono);font-size:11.5px;background:var(--chip);padding:2px 7px;border-radius:5px;white-space:nowrap}
+.claims2-tbl .c-meas{font-family:var(--mono);font-size:11.5px;min-width:150px;max-width:380px;overflow-wrap:anywhere}
+.claims2-more{margin-top:10px}
+.claims2-more>summary{cursor:pointer;color:var(--muted);font-size:12px;padding:4px 0}
 .note{color:var(--muted);font-size:12px;margin-top:8px}
 .hint{color:var(--muted);font-size:11px;margin-top:2px}
 svg text{font-family:var(--mono);font-size:10px;fill:var(--muted)}
