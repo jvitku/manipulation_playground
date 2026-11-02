@@ -21,7 +21,7 @@ cannot measure a claim marks its row :data:`NOT_MEASURED` instead of calling :fu
 ``M1_CLAIMS`` the nanoVLA module's (``nano-vla``, lesson 16) and ``M2_CLAIMS`` the
 nanoForceVLA module's (``nano-force-vla``, lesson 17: the ForceVLA Table-3 mini, the twin and
 FACT force-to-noise checks and the plan's M2 gate); later modules append theirs in the same
-registry style.
+registry style (M3 lesson 18, M4 lesson 19, M5 lesson 20 ``lora-vla``: LoRA on SmolVLA).
 """
 
 from __future__ import annotations
@@ -484,5 +484,107 @@ M4_CLAIMS: tuple[Claim, ...] = (
         source="HIL-SERL arXiv 2410.21845 (intervention rate falls as the policy improves); "
         "ForceRFT arXiv 2609.22840",
         url="https://arxiv.org/abs/2410.21845",
+    ),
+)
+
+# M5 (lesson 20, `lora-vla`): LoRA fine-tuning of the 450 M SmolVLA on the course demos. Bars
+# fixed before the runs (outputs/lora_vla/PREREG.txt names the task they are judged on: T3, or
+# T0 if every arm is <= 5 % on T3). Arms: A = head only (new-embodiment projections), B = head
+# + LoRA r=16 on the VLM and action-expert attention, C = lerobot's expert-only full fine-tune,
+# D = every parameter trainable (memory probe only), all at the same batch.
+_LORA_URL = "https://arxiv.org/abs/2106.09685"
+_SMOLVLA_URL = "https://arxiv.org/abs/2506.01844"
+
+M5_CLAIMS: tuple[Claim, ...] = (
+    Claim(
+        id="m5.lora_param_fraction",
+        statement="LoRA adapts the 450 M-parameter VLA while training at most 2 % of its "
+        "parameters (adapters + the new-embodiment projections)",
+        module="lora-vla",
+        task="all",
+        arms={"a": {"arm": "B lora: trainable / total parameters"}},
+        metric="trainable parameter fraction of arm B",
+        expect="a <= 0.02",
+        source="LoRA arXiv 2106.09685 (GPT-3 175B: 0.01 % of the parameters); SmolVLA "
+        "arXiv 2506.01844 (450 M, expert-only fine-tuning)",
+        url=_LORA_URL,
+    ),
+    Claim(
+        id="m5.lora_matches_expert_ft",
+        statement="LoRA on the attention layers reaches the success of lerobot's standard "
+        "fine-tune (whole action expert, ~22x the trainable parameters) within 10 points",
+        module="lora-vla",
+        task="all",
+        arms={"a": {"arm": "B lora"}, "b": {"arm": "C expert_full"}},
+        metric="closed-loop success on the same 100 held-out seeds, B minus C",
+        expect="a-b >= -0.10",
+        source="LoRA arXiv 2106.09685 Table 2-4 (LoRA on par with or better than full "
+        "fine-tuning); course plan, lesson 20",
+        url=_LORA_URL,
+    ),
+    Claim(
+        id="m5.lora_beats_head_only",
+        statement="Adapting the network's internals matters: LoRA beats training only the "
+        "new-embodiment projections by at least 10 points",
+        module="lora-vla",
+        task="all",
+        arms={"a": {"arm": "B lora"}, "b": {"arm": "A head (linear-probe baseline)"}},
+        metric="closed-loop success on the same 100 held-out seeds, B minus A",
+        expect="a-b >= 0.10",
+        source="LoRA arXiv 2106.09685 (adapter / prefix baselines); intrinsic dimension arXiv "
+        "2012.13255 (the update needs a subspace, not just new heads)",
+        url=_LORA_URL,
+    ),
+    Claim(
+        id="m5.lora_memory",
+        statement="LoRA fine-tuning needs at most 60 % of the GPU memory of the expert-only "
+        "full fine-tune at the same batch",
+        module="lora-vla",
+        task="all",
+        arms={"a": {"arm": "peak allocated VRAM, B / C"}},
+        metric="torch.cuda.max_memory_allocated during training, B / C, same batch",
+        expect="a <= 0.6",
+        source="LoRA arXiv 2106.09685 §4.2 (GPT-3: 1.2 TB -> 350 GB training VRAM, ~2/3 saved)",
+        url=_LORA_URL,
+    ),
+    Claim(
+        id="m5.full_ft_does_not_fit",
+        statement="Training every parameter of the 450 M VLA does not fit a 10 GB consumer GPU "
+        "at the batch the other arms use (CUDA OOM, or a peak above 9.5 GB)",
+        module="lora-vla",
+        task="all",
+        arms={"a": {"arm": "D full: peak allocated GB (an OOM counts as 10 GB)"}},
+        metric="peak allocated VRAM of 3 full-fine-tune steps (fp32 master weights + AdamW), "
+        "same batch",
+        expect="a >= 9.5",
+        source="SmolVLA arXiv 2506.01844 (designed to train on consumer GPUs only with the VLM "
+        "frozen); LoRA arXiv 2106.09685 §4.2",
+        url=_SMOLVLA_URL,
+    ),
+    Claim(
+        id="m5.update_is_low_rank",
+        statement="What full fine-tuning changes is approximately low-rank: in the expert's "
+        "attention layers the top-16 singular values of ΔW = W_after - W_before carry at least "
+        "half of its energy",
+        module="lora-vla",
+        task="all",
+        arms={"a": {"arm": "C expert_full: sum of the top-16 s_i^2 / sum of all s_i^2"}},
+        metric="share of ||ΔW||_F^2 in the top-16 singular values, mean over the measured layers",
+        expect="a >= 0.5",
+        source="intrinsic dimension arXiv 2012.13255; LoRA arXiv 2106.09685 §7 (ΔW has a very "
+        "low intrinsic rank)",
+        url="https://arxiv.org/abs/2012.13255",
+    ),
+    Claim(
+        id="m5.merge_is_exact",
+        statement="Merging the adapters into the weights (W + (alpha/r) B A) changes nothing: "
+        "the merged network computes the adapter network's output, with zero added latency",
+        module="lora-vla",
+        task="all",
+        arms={"a": {"arm": "B lora: max |v_adapter - v_merged| on a real batch, fp32"}},
+        metric="max absolute difference of the predicted flow velocity, fp32, TF32 off",
+        expect="a <= 1e-4",
+        source="LoRA arXiv 2106.09685 §4.1 (no additional inference latency)",
+        url=_LORA_URL,
     ),
 )

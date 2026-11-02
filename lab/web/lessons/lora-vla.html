@@ -1,0 +1,484 @@
+<h3>The question</h3>
+<p>Lessons 15&ndash;19 trained every policy from scratch: nanoVLAs of a few million parameters that fit on any GPU and
+learn a task in minutes. Real VLAs do not start from scratch. They are <b>pretrained</b> &mdash; hundreds of millions to
+billions of parameters that already read images and words &mdash; and the work is to <em>adapt</em> one to a new robot
+and a new task. The standard way to adapt is fine-tuning, and fine-tuning a 450&nbsp;M-parameter model means training
+450&nbsp;M numbers, storing a gradient for each and two AdamW moments for each. On this course's 10&nbsp;GB RTX&nbsp;3080
+that does not fit: training every parameter of SmolVLA ran out of memory at batch 16 after 8.96&nbsp;GiB allocated
+(measured below, arm D). So how do you adapt a large VLA on a small budget? This lesson writes <b>LoRA</b> from scratch
+&mdash; a frozen pretrained network plus low-rank adapters, about 1&nbsp;% of the weights &mdash; and asks four questions
+of it: does it reach the standard fine-tune's success, what does it actually save in memory and on disk, can it be
+folded back into the weights for free, and is what full fine-tuning changes really low-rank, as LoRA assumes?</p>
+
+<h3>The task</h3>
+<p><b>The model.</b> SmolVLA (<code>lerobot/smolvla_base</code>, 450&nbsp;046&nbsp;176 parameters as loaded, 452&nbsp;974&nbsp;816
+with the adapters): a SmolVLM2 vision-language model cut to 16 text layers reads the cameras, the instruction and one
+state token; a 16-layer <b>action expert</b> of width 720 denoises the action chunk by flow matching, attending to the
+VLM's keys and values &mdash; lesson 16's recipe at roughly 60&times; the parameters. It was pretrained on a different
+arm (SO-100), with different cameras, state and actions: the gantry is a <em>new embodiment</em> for it.</p>
+<p><b>Adapting it to the gantry.</b> The two course cameras (static and wrist, 96&times;96) become its
+<code>camera1</code>/<code>camera2</code>; its own preprocessing upsamples them to 512&times;512 for SigLIP, and after
+the connector's pixel shuffle each camera is 64 tokens. The instruction plus a newline is tokenised to 48 tokens. The
+8-D state and the 4-D action (dp xyz + gripper) are z-scored with the demo set's own statistics (the base's belong to
+the SO-100) and zero-padded to SmolVLA's 32 dims; the loss masks the padded action dims away. Chunk 16, execute 8
+&mdash; the course standard (smolvla_base was trained at 50/50; the expert's chunk tokens carry no learned positional
+table, so the weights load unchanged and simply see shorter chunks). The new-embodiment projections &mdash;
+<code>state_proj</code> [32&rarr;960], <code>action_in_proj</code> [32&rarr;720], <code>action_out_proj</code>
+[720&rarr;32] and the time-action MLP, 1&nbsp;635&nbsp;152 parameters &mdash; are trained by every arm.</p>
+<p><b>Data and budget.</b> The first 200 of lesson 15's canonical demos, 5&nbsp;000 steps per arm at batch 16 (80&nbsp;000
+samples, ~11.6 passes over T3's 6&nbsp;911 demo steps), AdamW with SmolVLA's preset (betas 0.9/0.95, weight decay
+1e&minus;10, grad-norm clip 10), 500 warm-up steps and a cosine to 2.5&nbsp;% of the peak. The peak learning rates were
+fixed per mode before any run and not tuned: head 1e&minus;3, LoRA 2e&minus;4, expert_full 1e&minus;4 (SmolVLA's own).
+Each suite (three arms in sequence + the D probe) took 81 minutes on the GPU.</p>
+<p><b>T3 first, T0 by pre-registration.</b> The task was the user's choice: <b>T3 peg insertion</b>, whose hole sits up
+to &plusmn;4&nbsp;mm off the visible marker and which lesson 19's nano base solved 2&nbsp;% of the time. Because a
+comparison between arms means nothing if every arm is at the floor, a fallback was written into
+<code>outputs/lora_vla/PREREG.txt</code> <em>before</em> the T3 evaluation: if every arm is &le;&nbsp;5&nbsp;% on T3, the
+identical suite runs on <b>T0 reach &amp; grasp</b> (pick up a visible cube, lift it 5&nbsp;cm within 10&nbsp;s), and the
+two success claims are judged there; the task-independent claims stay on the T3 suite. It fired: A 0/100, B 0/100,
+C 3/100 on T3. 95&ndash;100&nbsp;% of the T3 episodes ended in a force abort (mean peak |F| 25.3&ndash;26.0&nbsp;N). The
+cause is the action space, not the adaptation: 62&nbsp;% of the T3 demo steps are hybrid force control (search and
+insert run on a force target with dp<sub>z</sub> exactly 0), and this lesson's action is dp xyz + gripper, so the
+contact phase has no channel to be imitated in &mdash; the same channel gap as lessons 15, 18 and 19 (tech development
+20.5).</p>
+
+<h3>The method: a low-rank update to frozen weights</h3>
+<p><b>(a) What fine-tuning changes.</b> Every linear layer of a pretrained network holds a weight matrix
+\(W\in\mathbb R^{d\times k}\) (out &times; in). Fine-tuning on the new task, whatever the optimizer, ends at</p>
+<p>$$W' = W + \Delta W,\qquad \Delta W\in\mathbb R^{d\times k}.$$</p>
+<p>Full fine-tuning treats all \(d\,k\) entries of \(\Delta W\) as free. LoRA's whole idea is a bet on the
+<em>structure</em> of \(\Delta W\): not on what the network knows (that is \(W\), kept), but on how little has to change
+to point that knowledge at a new task.</p>
+<p><b>(b) The low-rank hypothesis.</b> Aghajanyan et al. measured the <em>intrinsic dimension</em> of fine-tuning: optimise
+only a random low-dimensional subspace of the parameters, projected back into the full space, and ask how small it can
+be. With only 200 trainable numbers they tuned RoBERTa to 90&nbsp;% of full fine-tuning's performance on MRPC &mdash; and
+the larger the pretrained model, the smaller the subspace it needs. If the useful directions of change are that few,
+each layer's update should be well approximated by a matrix of low rank \(r\):</p>
+<p>$$\Delta W \approx B\,A,\qquad B\in\mathbb R^{d\times r},\quad A\in\mathbb R^{r\times k},\quad r\ll\min(d,k).$$</p>
+<p>A rank-\(r\) matrix is a sum of \(r\) outer products: \(A\) picks \(r\) directions in the input space ("down",
+\(k\to r\)), \(B\) says how each of them should move the output ("up", \(r\to d\)). Everything outside those \(r\)
+input directions passes through the layer exactly as pretrained.</p>
+<p><b>(c) The forward pass.</b> \(W\) is frozen; only \(A\) and \(B\) train, and \(\Delta W\) is never formed while
+training:</p>
+<p>$$h = W x + \frac{\alpha}{r}\,B\,(A\,x).$$</p>
+<p>The bypass costs \(r(d+k)\) multiply-adds per token instead of \(d\,k\). The factor \(\alpha/r\) makes the learning
+rate rank-independent: with Adam every entry of \(B\) moves by roughly the learning rate per step whatever \(r\) is, so
+the size of \(BA\,x\) &mdash; a sum over \(r\) terms &mdash; grows with \(r\); dividing by \(r\) keeps the effective step
+of \(\Delta W\) about constant, and \(\alpha\) is set once (here \(\alpha = 2r = 32\), scale 2). Sweeping the rank knob
+then changes the adapter's capacity, not its learning rate (Hu et al.: the scaling helps "to reduce the need to retune
+hyperparameters when we vary r").</p>
+<details class="code"><summary>LoRALinear: freeze W, create A [r, in] random and B [out, r] = 0</summary><pre><code class="language-python" data-src="src/nfv/lora.py">self.base = base
+for p in self.base.parameters():
+    p.requires_grad_(False)  # W [out, in] and b [out] stay pretrained
+self.r = int(r)
+self.alpha = float(alpha)
+self.scale = self.alpha / self.r  # the alpha / r factor
+dev = base.weight.device
+self.lora_A = nn.Parameter(torch.empty(self.r, base.in_features, device=dev,
+                                       dtype=adapter_dtype))  # [r, in]  # fmt: skip
+self.lora_B = nn.Parameter(torch.zeros(base.out_features, self.r, device=dev,
+                                       dtype=adapter_dtype))  # [out, r] # fmt: skip
+nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))  # nn.Linear's own weight init</code></pre></details>
+<details class="code"><summary>The forward pass: the frozen layer plus the scaled bypass B(A x)</summary><pre><code class="language-python" data-src="src/nfv/lora.py">def forward(self, x: Tensor) -&gt; Tensor:
+    y = self.base(x)  # [..., out]   W x + b, frozen
+    h = self.dropout(x).to(self.lora_A.dtype)  # [..., in]
+    d = F.linear(F.linear(h, self.lora_A), self.lora_B)  # [..., r] -&gt; [..., out]
+    return y + (self.scale * d).to(y.dtype)  # B = 0 at init: exactly y</code></pre></details>
+<p><b>(d) Initialisation: step 0 is the pretrained model.</b> \(A\) gets <code>nn.Linear</code>'s own kaiming-uniform init,
+\(B = 0\). Then \(BA = 0\), and the adapted network computes <em>exactly</em> the pretrained output &mdash; bit for bit,
+a unit test. The gradients at step 0 show why the two halves are initialised differently. With \(g = \partial L/\partial
+h\):</p>
+<p>$$\frac{\partial L}{\partial B} = \frac{\alpha}{r}\,g\,(A x)^{\top} \neq 0,\qquad
+\frac{\partial L}{\partial A} = \frac{\alpha}{r}\,B^{\top} g\,x^{\top} = 0\ \text{ while } B = 0.$$</p>
+<p>\(B\) moves first (through the random directions \(A\) offers); \(A\) starts learning once \(B\) is non-zero. Both at
+zero would leave both gradients zero forever. This is the third time the course uses the move: lesson 13's residual
+actor and lesson 19's residual on a frozen nanoVLA start with a last layer near zero, so training starts <em>at</em> the
+base policy, not near it. There the residual was added to the <em>action</em>; here it is added to the
+<em>weights</em> &mdash; \(W + \Delta W\) with \(\Delta W\) starting at 0.</p>
+<p><b>(e) Parameter arithmetic with this model's shapes.</b> A LoRA layer adds \(r(d+k)\) trainable numbers next to a
+frozen \(d\,k\). In SmolVLA, at \(r = 16\):</p>
+<table class="out">
+<tr><th>projection (in &rarr; out)</th><th>layers</th><th>full d&middot;k</th><th>LoRA r(d+k)</th><th>share</th></tr>
+<tr><td>VLM q, o: 960 &rarr; 960</td><td>16 + 16</td><td>921&nbsp;600</td><td>30&nbsp;720</td><td>3.3&nbsp;%</td></tr>
+<tr><td>VLM k, v: 960 &rarr; 320 (grouped-query attention)</td><td>16 + 16</td><td>307&nbsp;200</td><td>20&nbsp;480</td><td>6.7&nbsp;%</td></tr>
+<tr><td>expert q: 720 &rarr; 960, o: 960 &rarr; 720</td><td>16 + 16</td><td>691&nbsp;200</td><td>26&nbsp;880</td><td>3.9&nbsp;%</td></tr>
+<tr><td>expert self-attention k, v: 720 &rarr; 320</td><td>8 + 8</td><td>230&nbsp;400</td><td>16&nbsp;640</td><td>7.2&nbsp;%</td></tr>
+<tr><td>expert cross-attention k, v: 320 &rarr; 320 (reads the VLM's K/V)</td><td>8 + 8</td><td>102&nbsp;400</td><td>10&nbsp;240</td><td>10&nbsp;%</td></tr>
+</table>
+<p class="ref">128 layers, 2&nbsp;928&nbsp;640 adapter parameters (0.65&nbsp;% of the model). The share is smallest on the big
+square matrices &mdash; LoRA saves the most where \(d\,k\) is largest. Every other layer of the expert is
+cross-attention, which is why half its k/v projections are 320 &rarr; 320.</p>
+<p>The four arms, as measured by <code>trainable_report</code>:</p>
+<table class="out">
+<tr><th>arm</th><th>what trains</th><th>trainable</th><th>of total</th></tr>
+<tr><td>A head</td><td>the new-embodiment projections</td><td>1&nbsp;635&nbsp;152</td><td>0.36&nbsp;%</td></tr>
+<tr><td>B LoRA</td><td>A's projections + 128 adapters, r = 16</td><td>4&nbsp;563&nbsp;792</td><td>1.01&nbsp;%</td></tr>
+<tr><td>C expert_full</td><td>A's projections + the whole action expert (lerobot's recipe)</td><td>99&nbsp;880&nbsp;992</td><td>22.2&nbsp;%</td></tr>
+<tr><td>D full</td><td>every parameter, vision tower included (memory probe only)</td><td>450&nbsp;046&nbsp;176</td><td>100&nbsp;%</td></tr>
+</table>
+<details class="code"><summary>inject_lora: freeze the whole model, then wrap every matching nn.Linear</summary><pre><code class="language-python" data-src="src/nfv/lora.py">if freeze:
+    freeze_all(model)
+# ...
+per_layer = {}
+for name in names:  # collected first: never mutate the module tree while iterating it
+    parent, leaf = _parent(model, name)
+    lora = LoRALinear(getattr(parent, leaf), r=r, alpha=alpha, dropout=dropout)  # [in]-&gt;[out]
+    setattr(parent, leaf, lora)
+    per_layer[name] = {"in": lora.in_features, "out": lora.out_features,
+                       "params": lora.n_adapter_params()}  # fmt: skip</code></pre></details>
+<p><b>(f) Where the memory goes &mdash; and what LoRA does and does not save.</b> A parameter that trains costs 16 bytes
+here: its fp32 master copy (4), its gradient (4) and AdamW's two moments (8). A frozen one costs its storage, 2 bytes in
+bf16. So D's parameter state alone is 450&nbsp;M &times; 16&nbsp;B = 7.2&nbsp;GB (6.7&nbsp;GiB) before a single activation
+is stored &mdash; on a card with 9.65&nbsp;GiB usable it could not work, and it did not: CUDA OOM after 8.96&nbsp;GiB, in
+fp32-master precision and in lerobot's as-loaded bf16 alike. C's 99.9&nbsp;M trainable parameters cost 1.6&nbsp;GB of
+state, B's 4.6&nbsp;M cost 73&nbsp;MB. That is the saving LoRA is famous for &mdash; and at this scale it is <em>not</em>
+where most of the memory goes. Measured peaks at batch 16 (torch <code>max_memory_allocated</code>, GiB): A 3.21,
+B 3.61, C 4.74.</p>
+<ul>
+<li><b>Activations dominate.</b> <code>state_proj</code> feeds the VLM's prefix, so every arm back-propagates through
+all 16 frozen VLM layers and stores their activations (2 &times; 64 image tokens, 48 text tokens and the state token per
+sample, 16 samples). The head-only arm A trains 0.36&nbsp;% of the weights and already peaks at 3.21&nbsp;GiB = 0.68
+&times; C &mdash; a floor no adapter method can go below at this batch.</li>
+<li><b>What LoRA removes</b> is C's fp32 expert copy, its gradients and its AdamW moments: about 1.3&nbsp;GiB of the
+measured 1.53&nbsp;GiB between A and C.</li>
+<li><b>What LoRA adds</b> is 0.40&nbsp;GiB over A: 128 adapter paths whose (fp32-upcast) inputs are stored for the
+backward pass.</li>
+</ul>
+<p>So B/C = 3.61/4.74 = 0.76, and the pre-registered "&le;&nbsp;60&nbsp;%" claim is red. LoRA's headline saving (GPT-3:
+1.2&nbsp;TB &rarr; 350&nbsp;GB of training VRAM) is an optimizer-state-dominated number at 175&nbsp;B parameters; at
+450&nbsp;M and batch 16 the levers for activation memory are the batch size and gradient checkpointing. The disk saving
+is the one that scales without caveats: B's adapter file (the trainable tensors only) is 18.35&nbsp;MB, against
+399.58&nbsp;MB for C and ~918&nbsp;MB for a full checkpoint &mdash; one base model plus one small file per robot or
+task.</p>
+<p><b>(g) Merging: zero inference latency.</b> After training, the bypass can be folded into the weight:</p>
+<p>$$W' = W + \frac{\alpha}{r}\,B A,$$</p>
+<p>an ordinary \(d\times k\) matrix in an ordinary <code>nn.Linear</code>. The merged network has exactly the base
+architecture and speed; the adapter disappears. In exact arithmetic the merge is exact. Measured on a real batch
+(predicted flow velocity, fp32, TF32 off): max |v<sub>adapter</sub> &minus; v<sub>merged</sub>| = 1.37e&minus;6 on the
+T3 suite and 3.10e&minus;6 on T0, against a mean |v| of 0.29&ndash;0.31 &mdash; rounding. Merged into the bf16 weights
+the model is <em>stored</em> in, it is not exact: 2.34e&minus;2 and 5.47e&minus;2, i.e. several percent of the output.
+Why: bf16 keeps 8 significant bits, so neighbouring representable values are ~0.8&nbsp;% apart and every entry of
+\(W'\) is rounded to the nearest one; an entry of \(\Delta W\) smaller than half that spacing relative to its \(W\)
+entry vanishes in the sum. The fix is to keep A and B in fp32 (the code does, whatever the base dtype) and merge into an
+fp32 copy, or to serve unmerged.</p>
+<details class="code"><summary>merge: W + ΔW added in fp32, then cast to W's dtype (where bf16 rounds)</summary><pre><code class="language-python" data-src="src/nfv/lora.py">def delta_weight(self) -&gt; Tensor:
+    """ΔW = (alpha / r) · B @ A  [out, in], in the adapter dtype; rank &lt;= r."""
+    return self.scale * (self.lora_B @ self.lora_A)  # [out, r] @ [r, in] -&gt; [out, in]
+
+@torch.no_grad()
+def merge(self) -&gt; nn.Linear:
+    """A plain nn.Linear computing W + ΔW (the base's dtype/device): zero extra latency."""
+    b = self.base  # W = b.weight [out, in], b.bias [out]
+    m = nn.Linear(b.in_features, b.out_features, bias=b.bias is not None,
+                  device=b.weight.device, dtype=b.weight.dtype)  # fmt: skip
+    w = b.weight.to(self.lora_A.dtype) + self.delta_weight()  # [out, in], add in fp32
+    m.weight.copy_(w.to(b.weight.dtype))  # [out, in] in W's dtype: a bf16 W rounds here
+    if b.bias is not None:
+        m.bias.copy_(b.bias)  # [out], unchanged
+    m.requires_grad_(False)
+    return m</code></pre></details>
+<p><b>(h) Which layers.</b> Adapters sit on the attention projections q, k, v and o of all 16 VLM text layers and all 16
+action-expert layers &mdash; 128 layers. Attention is where Hu et al. put LoRA: they adapted only the attention weights
+and froze the MLPs, and found that spreading a fixed budget over more attention matrices at low rank beats a single
+matrix type at high rank. Adapting the VLM's attention also lets B change something C never touches (lerobot's recipe
+freezes the whole VLM). Left out: the MLPs (gate/up/down: 75&nbsp;% of a VLM layer's weights, 71&nbsp;% of an expert
+self-attention layer's), and the vision tower (SigLIP + connector, 98&nbsp;M), whose general image features are kept as
+pretrained &mdash; and whose activations over the full-resolution patch grid no frozen arm has to store.</p>
+<details class="code"><summary>The targets: q/k/v/o of the 16 VLM text layers and of the 16 action-expert layers</summary><pre><code class="language-python" data-src="src/nfv/vla_smolvla.py">LORA_TARGETS = (
+    _P + r"vlm\.model\.text_model\.layers\.\d+\.self_attn\.(q|k|v|o)_proj",
+    _P + r"lm_expert\.layers\.\d+\.self_attn\.(q|k|v|o)_proj",
+)</code></pre></details>
+<p><b>(i) Mixed precision at this scale.</b> The nano models of lessons 15&ndash;19 stayed plain fp32; at ~5&nbsp;M
+parameters there was nothing to save. smolvla_base stores the VLM <em>and</em> 96.6&nbsp;M of the action expert in
+bf16, and trained as loaded, AdamW would keep bf16 weights and bf16 moments. An update smaller than half a bf16 spacing
+of its weight (~0.4&nbsp;% of its magnitude) then rounds to nothing. Measured on C at one peak-learning-rate step (the
+expert elements that the fp32 step moved, re-applied to bf16 storage): <b>72&nbsp;%</b> of them would have been lost in
+the 100-step pilot, <b>83&nbsp;%</b> on the T3 suite, <b>85&nbsp;%</b> on T0 (tech development 20.2). So every
+<em>trainable</em> tensor gets an fp32 master copy, frozen weights stay bf16 (they are never updated), and the
+forward/backward runs under <code>torch.autocast(bfloat16)</code> on the Ampere card &mdash; bf16 compute, not bf16
+weights; unlike fp16 it needs no loss scaling. The same rounding explains (g): a merge into bf16 is one large update
+to bf16 weights.</p>
+<details class="code"><summary>fp32 master copies for exactly what trains; bf16 compute under autocast</summary><pre><code class="language-python" data-src="src/nfv/vla_smolvla.py">for p in policy.parameters():  # fp32 master weights for everything that will be updated
+    if p.requires_grad and p.dtype != torch.float32:
+        p.data = p.data.float()
+# ...
+with torch.autocast("cuda", dtype=torch.bfloat16):
+    loss, _ = policy.forward(batch)
+loss.backward()
+torch.nn.utils.clip_grad_norm_(params, CLIP)
+opt.step()</code></pre></details>
+<details class="code"><summary>How much of one AdamW step bf16 storage would have lost (C, at the end of warm-up)</summary><pre><code class="language-python" data-src="src/nfv/vla_smolvla.py">w1 = params[n].detach()
+d = w1 - w0.to(w1.device)
+moved = d != 0
+b0 = w0.to(w1.device).bfloat16()
+same = (b0.float() + d).bfloat16() == b0
+lost += int((same &amp; moved).sum())
+tot += int(moved.sum())</code></pre></details>
+
+<details class="theory"><summary>Motivation &mdash; why each choice is in this experiment</summary>
+<p><b>Why SmolVLA.</b> It is the open VLA built to be fine-tuned on a single consumer GPU (450&nbsp;M parameters, a
+flow-matching action expert like lesson 16's), with a maintained reference fine-tuning recipe in lerobot. A 7&nbsp;B
+OpenVLA would not even load for training on this card; a nanoVLA has nothing pretrained to adapt.</p>
+<p><b>Why three trained arms.</b> LoRA only means something between two baselines: what you get by adapting
+<em>less</em>, and what standard practice gets by adapting <em>more</em>. All three train the same new-embodiment
+projections from the same data, steps and batch; only what else trains differs.</p>
+<p><b>Why head-only is the floor.</b> It is the linear-probe question: is the pretrained network already right, with only
+the interface to the new robot missing? If A matched C there would be nothing for LoRA to do. On T0 it reaches
+13&nbsp;% where B reaches 99&nbsp;% &mdash; the internals have to change.</p>
+<p><b>Why expert_full is the reference.</b> It is lerobot's own fine-tuning recipe for SmolVLA (VLM frozen, whole
+action expert trained) &mdash; what a practitioner would actually run, and the strongest arm that fits the card.</p>
+<p><b>Why measure D.</b> "Full fine-tuning does not fit" is the premise of the whole lesson; the probe makes it a
+measurement (3 steps, every parameter, peak memory or the OOM) instead of an assumption.</p>
+<p><b>Why the spectrum.</b> LoRA <em>assumes</em> the update is low-rank. C's update is not constrained at all, so its
+singular values are the one place in the experiment where the assumption can be checked rather than imposed.</p>
+</details>
+<details class="theory"><summary>Theory &mdash; LoRA, intrinsic dimension, and what comes next</summary>
+<p><b>LoRA</b> (Hu et al. 2021, <a href="https://arxiv.org/abs/2106.09685" target="_blank" rel="noopener">arXiv
+2106.09685</a>) "freezes the pre-trained model weights and injects trainable rank decomposition matrices into each layer
+of the Transformer architecture"; on GPT-3 175&nbsp;B it cut the trainable parameters 10&nbsp;000&times; and the training
+memory 3&times;, with quality on par with full fine-tuning and "no additional inference latency" (the merge). Section 7
+looks at the learned \(\Delta W\) itself and finds it of very low intrinsic rank &mdash; the check this lesson repeats on
+C.</p>
+<p><b>Intrinsic dimension</b> (Aghajanyan, Zettlemoyer &amp; Gupta 2020, <a href="https://arxiv.org/abs/2012.13255"
+target="_blank" rel="noopener">arXiv 2012.13255</a>): fine-tuning succeeds inside a random subspace of a few hundred to a
+few thousand dimensions; 200 parameters reach 90&nbsp;% of full RoBERTa fine-tuning on MRPC, and pretraining
+<em>lowers</em> the intrinsic dimension. LoRA turns this observation into a per-layer parameterisation that is learned
+rather than random.</p>
+<p><b>QLoRA</b> (Dettmers et al. 2023, <a href="https://arxiv.org/abs/2305.14314" target="_blank" rel="noopener">arXiv
+2305.14314</a>) is the next step: it "backpropagates gradients through a frozen, 4-bit quantized pretrained language
+model into Low Rank Adapters", fine-tuning a 65&nbsp;B model on one 48&nbsp;GB GPU. Quantising the frozen base attacks the
+part of the memory LoRA leaves alone &mdash; the resident weights (0.9&nbsp;GB here). <b>Not implemented in this
+lesson</b>: every number on this page is a bf16 base with fp32 adapters.</p>
+<p><b>SmolVLA</b> (Shukor et al. 2025, <a href="https://arxiv.org/abs/2506.01844" target="_blank" rel="noopener">arXiv
+2506.01844</a>): a compact VLA that "can be trained on a single GPU and deployed on consumer-grade GPUs or even CPUs";
+its own fine-tuning freezes the VLM and trains the action expert &mdash; arm C.</p>
+<p><b>OpenVLA</b> (Kim et al. 2024, <a href="https://arxiv.org/abs/2406.09246" target="_blank" rel="noopener">arXiv
+2406.09246</a>), the 7&nbsp;B open VLA, states in its abstract that it "can be fine-tuned on consumer GPUs via modern
+low-rank adaptation methods" &mdash; LoRA is the standard way large VLAs are adapted to a new robot, which is why it gets
+a lesson.</p>
+</details>
+
+<h3>The architecture</h3>
+<svg viewBox="0 0 780 432" role="img" aria-label="Left: one adapted projection: the input x goes through the frozen weight W and, in parallel, through the trainable down-projection A and up-projection B, which starts at zero; the bypass is scaled by alpha over r and added to W x; after training W plus alpha over r times B A is merged into a plain linear layer. Right: SmolVLA with two cameras feeding the frozen SigLIP vision tower and connector, the instruction and state feeding the frozen 16-layer VLM text model, whose attention carries 64 LoRA adapters, the trainable head projections feeding the 16-layer action expert, which carries the other 64 adapters, and the action chunk out. Bottom: measured peak GPU memory while training at batch 16 for the four arms: head 3.21, LoRA 3.61, expert_full 4.74 GiB, and every parameter out of memory after 8.96 GiB on a 9.65 GiB card" style="width:100%;max-width:780px;font-family:var(--mono);font-size:11px">
+  <defs>
+    <marker id="lvA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+    <marker id="lvG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+  </defs>
+  <text x="14" y="16" fill="var(--muted)">one adapted projection (×128 in the model) &#8594;</text>
+  <rect x="10" y="60" width="90" height="50" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="x"/>
+  <text x="55" y="81" text-anchor="middle" fill="var(--ink)" font-weight="700">input x</text>
+  <text x="55" y="97" text-anchor="middle" fill="var(--muted)">[..., in]</text>
+  <rect x="130" y="26" width="150" height="50" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="W"/>
+  <text x="205" y="47" text-anchor="middle" fill="var(--ink)" font-weight="700">frozen W</text>
+  <text x="205" y="63" text-anchor="middle" fill="var(--muted)">[out, in], bf16</text>
+  <rect x="130" y="104" width="66" height="50" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="A"/>
+  <text x="163" y="125" text-anchor="middle" fill="var(--ink)" font-weight="700">A</text>
+  <text x="163" y="141" text-anchor="middle" fill="var(--muted)">[r, in]</text>
+  <rect x="214" y="104" width="66" height="50" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="B"/>
+  <text x="247" y="125" text-anchor="middle" fill="var(--ink)" font-weight="700">B = 0</text>
+  <text x="247" y="141" text-anchor="middle" fill="var(--muted)">[out, r]</text>
+  <rect x="310" y="60" width="90" height="50" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="sum"/>
+  <text x="355" y="81" text-anchor="middle" fill="var(--ink)" font-weight="700">y = W x</text>
+  <text x="355" y="97" text-anchor="middle" fill="var(--accent)">+ (α/r)·BAx</text>
+  <path d="M100 75H115V51H128" stroke="var(--muted)" fill="none" marker-end="url(#lvA)"/>
+  <path d="M100 95H115V129H128" stroke="var(--accent)" fill="none" marker-end="url(#lvG)"/>
+  <path d="M196 129H212" stroke="var(--accent)" fill="none" marker-end="url(#lvG)"/>
+  <path d="M280 51H295V75H308" stroke="var(--muted)" fill="none" marker-end="url(#lvA)"/>
+  <path d="M280 129H295V95H308" stroke="var(--accent)" fill="none" marker-end="url(#lvG)"/>
+  <text x="130" y="171" fill="var(--accent)">r = 16, α = 32: scale 2 · trainable</text>
+  <rect x="10" y="184" width="390" height="40" rx="8" fill="var(--chip)" stroke="var(--line)" stroke-dasharray="4 3" data-i="merge"/>
+  <text x="205" y="200" text-anchor="middle" fill="var(--ink)">merge after training: W′ = W + (α/r)·B·A</text>
+  <text x="205" y="215" text-anchor="middle" fill="var(--muted)">a plain Linear again: zero added latency</text>
+  <text x="430" y="16" fill="var(--muted)">where the 128 adapters sit in SmolVLA &#8594;</text>
+  <rect x="430" y="26" width="150" height="44" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="cams"/>
+  <text x="505" y="44" text-anchor="middle" fill="var(--ink)">2 cameras 96×96</text>
+  <text x="505" y="60" text-anchor="middle" fill="var(--muted)">→ 512 px, 64 tok</text>
+  <rect x="430" y="80" width="150" height="44" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="words"/>
+  <text x="505" y="98" text-anchor="middle" fill="var(--ink)">instruction</text>
+  <text x="505" y="114" text-anchor="middle" fill="var(--muted)">48 tokens + state</text>
+  <rect x="430" y="150" width="150" height="58" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" data-i="head"/>
+  <text x="505" y="170" text-anchor="middle" fill="var(--ink)" font-weight="700">head projections</text>
+  <text x="505" y="186" text-anchor="middle" fill="var(--muted)">state · action in/out</text>
+  <text x="505" y="200" text-anchor="middle" fill="var(--muted)">time MLP · 1.6 M</text>
+  <rect x="610" y="26" width="160" height="44" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="vision"/>
+  <text x="690" y="44" text-anchor="middle" fill="var(--ink)">SigLIP + connector</text>
+  <text x="690" y="60" text-anchor="middle" fill="var(--muted)">98 M, frozen, no LoRA</text>
+  <rect x="610" y="84" width="160" height="58" rx="8" fill="var(--chip)" stroke="var(--accent)" data-i="vlm"/>
+  <text x="690" y="104" text-anchor="middle" fill="var(--ink)" font-weight="700">VLM text, 16 layers</text>
+  <text x="690" y="119" text-anchor="middle" fill="var(--muted)">252 M, frozen bf16</text>
+  <text x="690" y="134" text-anchor="middle" fill="var(--accent)">+ LoRA q k v o ×64</text>
+  <rect x="610" y="158" width="160" height="58" rx="8" fill="var(--chip)" stroke="var(--accent)" data-i="expert"/>
+  <text x="690" y="178" text-anchor="middle" fill="var(--ink)" font-weight="700">action expert, 16 L</text>
+  <text x="690" y="193" text-anchor="middle" fill="var(--muted)">98 M, width 720</text>
+  <text x="690" y="208" text-anchor="middle" fill="var(--accent)">+ LoRA q k v o ×64</text>
+  <rect x="610" y="232" width="160" height="40" rx="8" fill="var(--chip)" stroke="var(--line)" data-i="chunk"/>
+  <text x="690" y="250" text-anchor="middle" fill="var(--ink)">action chunk</text>
+  <text x="690" y="265" text-anchor="middle" fill="var(--muted)">[16, 32] → [16, 4]</text>
+  <path d="M580 48H608" stroke="var(--muted)" fill="none" marker-end="url(#lvA)"/>
+  <path d="M580 102H595V110H608" stroke="var(--muted)" fill="none" marker-end="url(#lvA)"/>
+  <path d="M690 70V82" stroke="var(--muted)" fill="none" marker-end="url(#lvA)"/>
+  <path d="M690 142V156" stroke="var(--muted)" fill="none" marker-end="url(#lvA)"/>
+  <text x="698" y="153" fill="var(--muted)">K/V</text>
+  <path d="M580 187H608" stroke="var(--accent)" fill="none" marker-end="url(#lvG)"/>
+  <path d="M505 150V126" stroke="var(--accent)" fill="none" stroke-dasharray="4 3" marker-end="url(#lvG)"/>
+  <path d="M690 216V230" stroke="var(--muted)" fill="none" marker-end="url(#lvA)"/>
+  <text x="14" y="300" fill="var(--muted)">peak GPU memory while training, batch 16 (GiB, measured) &#8594;</text>
+  <text x="14" y="325" fill="var(--ink)">A head</text>
+  <rect x="130" y="312" width="192" height="18" rx="3" fill="var(--chip)" stroke="var(--line)" data-i="memA"/>
+  <text x="328" y="325" fill="var(--muted)">3.21</text>
+  <text x="14" y="351" fill="var(--ink)">B LoRA r=16</text>
+  <rect x="130" y="338" width="217" height="18" rx="3" fill="var(--accent-soft)" stroke="var(--accent)" data-i="memB"/>
+  <text x="353" y="351" fill="var(--muted)">3.61</text>
+  <text x="14" y="377" fill="var(--ink)">C expert_full</text>
+  <rect x="130" y="364" width="284" height="18" rx="3" fill="var(--chip)" stroke="var(--line)" data-i="memC"/>
+  <text x="420" y="377" fill="var(--muted)">4.74</text>
+  <text x="14" y="403" fill="var(--ink)">D everything</text>
+  <rect x="130" y="390" width="538" height="18" rx="3" fill="var(--bad-soft)" stroke="var(--bad)" stroke-dasharray="4 3" data-i="memD"/>
+  <text x="652" y="403" text-anchor="end" fill="var(--bad)">CUDA OOM after 8.96</text>
+  <path d="M709 306V412" stroke="var(--warn)" stroke-dasharray="3 3" fill="none"/>
+  <text x="130" y="424" text-anchor="middle" fill="var(--muted)">0</text>
+  <text x="250" y="424" text-anchor="middle" fill="var(--muted)">2</text>
+  <text x="370" y="424" text-anchor="middle" fill="var(--muted)">4</text>
+  <text x="490" y="424" text-anchor="middle" fill="var(--muted)">6</text>
+  <text x="610" y="424" text-anchor="middle" fill="var(--muted)">8</text>
+  <text x="709" y="424" text-anchor="middle" fill="var(--warn)">card 9.65</text>
+</svg>
+<p class="ref">Amber is what trains in arm B: the adapters A and B, and the head projections every arm trains. Click any
+block for its purpose, shapes and update frequency. The dashed amber arrow is <code>state_proj</code> feeding the
+state token into the VLM's prefix &mdash; the reason every arm back-propagates through the frozen VLM.</p>
+
+<h3>What to watch</h3>
+<p><b>The runs.</b> T3 suite <code>261101-210003-27ae</code> (eval <code>261101-222133-94d9</code>) and the pre-registered
+T0 suite <code>261101-222627-da39</code> (eval <code>261101-234737-865a</code>): identical arms, seeds (A 0, B 101,
+C 202), steps and batch; 100 shared held-out seeds per task (T3 80000&ndash;80099, T0 50000&ndash;50099), closed loop,
+flow noise seeded per episode.</p>
+<p><b>What each arm costs</b> (identical on both suites; steps/s given T3 / T0):</p>
+<table class="out">
+<tr><th>arm</th><th>trainable (of total)</th><th>peak VRAM allocated</th><th>steps/s</th><th>adapter file</th><th>full checkpoint</th></tr>
+<tr><td>A head</td><td>1.64&nbsp;M (0.36&nbsp;%)</td><td>3.21&nbsp;GiB</td><td>3.26 / 3.26</td><td>6.55&nbsp;MB</td><td>906.64&nbsp;MB</td></tr>
+<tr><td>B LoRA r=16</td><td>4.56&nbsp;M (1.01&nbsp;%)</td><td>3.61&nbsp;GiB</td><td>3.02 / 3.03</td><td><b>18.35&nbsp;MB</b></td><td>918.35&nbsp;MB</td></tr>
+<tr><td>C expert_full</td><td>99.88&nbsp;M (22.2&nbsp;%)</td><td>4.74&nbsp;GiB</td><td>3.05 / 3.06</td><td>399.58&nbsp;MB</td><td>1&nbsp;099.85&nbsp;MB</td></tr>
+<tr><td>D full</td><td>450.05&nbsp;M (100&nbsp;%)</td><td>CUDA OOM after 8.96&nbsp;GiB (fp32 master and as-loaded bf16)</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td></tr>
+</table>
+<p class="ref">The "adapter file" is everything the arm trained (the A/B tensors and the projections) as saved; the full
+checkpoint is the whole model as stored after setup (C's is larger: its expert is now fp32). LoRA is not faster per
+step here: all three arms run at 3.0&ndash;3.3 steps/s, so the time goes into what they share &mdash; the forward and
+backward pass through the frozen VLM.</p>
+<p><b>What each arm achieves</b> (flow-matching loss, mean of the first and of the last 25 steps; success on 100 seeds,
+Wilson 95&nbsp;%):</p>
+<table class="out">
+<tr><th>arm</th><th>loss T3</th><th>T3 success</th><th>T3 outcomes</th><th>loss T0</th><th>T0 success</th><th>T0 outcomes</th></tr>
+<tr><td>A head</td><td>1.62 &rarr; 0.261</td><td>0/100 (0&ndash;3.7&nbsp;%)</td><td>100 aborts</td><td>2.11 &rarr; 0.224</td><td>13/100 (7.8&ndash;21.0&nbsp;%)</td><td>74 timeouts, 13 aborts</td></tr>
+<tr><td>B LoRA</td><td>1.92 &rarr; 0.189</td><td>0/100 (0&ndash;3.7&nbsp;%)</td><td>100 aborts</td><td>2.29 &rarr; 0.131</td><td><b>99/100</b> (94.6&ndash;99.8&nbsp;%)</td><td>1 timeout</td></tr>
+<tr><td>C expert_full</td><td>1.44 &rarr; 0.160</td><td>3/100 (1.0&ndash;8.5&nbsp;%)</td><td>95 aborts, 2 timeouts</td><td>2.00 &rarr; 0.105</td><td><b>100/100</b> (96.3&ndash;100&nbsp;%)</td><td>&mdash;</td></tr>
+</table>
+<p class="ref">Mean episode peak |F|: T3 26.0 / 25.6 / 25.3&nbsp;N (A / B / C; the abort is at 25&nbsp;N), T0 8.8 / 3.2 /
+3.0&nbsp;N. The final loss ranks the arms in the same order on both tasks (C &lt; B &lt; A) &mdash; and on T3 that order
+means nothing in closed loop: a low imitation loss on a channel that cannot express the contact phase still aborts.</p>
+<p><b>The claims board</b> (bars fixed in <code>nfv.claims.M5_CLAIMS</code> before the runs; success claims judged on
+T0, the rest on the T3 suite, as pre-registered):</p>
+<table class="out">
+<tr><th>claim</th><th>bar</th><th>measured</th><th>verdict</th></tr>
+<tr><td>m5.lora_param_fraction</td><td>B trains &le; 2&nbsp;%</td><td>4&nbsp;563&nbsp;792 of 452&nbsp;974&nbsp;816 = 1.01&nbsp;%</td><td><b>CONFIRMED</b></td></tr>
+<tr><td>m5.lora_matches_expert_ft</td><td>B &minus; C &ge; &minus;10 points</td><td>T0: 99 vs 100&nbsp;%, gap &minus;1, CI &minus;5.4..+3.5 (T3: 0 vs 3&nbsp;%, CI &minus;8.5..+2.7)</td><td><b>CONFIRMED</b> (on T3 too &mdash; by vacuity)</td></tr>
+<tr><td>m5.lora_beats_head_only</td><td>B &minus; A &ge; +10 points</td><td>T0: 99 vs 13&nbsp;%, gap +86, CI +73.6..+92.1 (T3: 0 vs 0)</td><td><b>CONFIRMED</b> on T0 (not on T3)</td></tr>
+<tr><td>m5.lora_memory</td><td>B / C &le; 0.6</td><td>3.61 / 4.74&nbsp;GiB = 0.76</td><td><b>NOT CONFIRMED</b></td></tr>
+<tr><td>m5.full_ft_does_not_fit</td><td>D: OOM or &gt; 9.5&nbsp;GB</td><td>CUDA OOM after 8.96&nbsp;GiB, in both precisions</td><td><b>CONFIRMED</b></td></tr>
+<tr><td>m5.update_is_low_rank</td><td>C's top-16 energy &ge; 0.5</td><td>0.91 (T3), 0.90 (T0)</td><td><b>CONFIRMED</b></td></tr>
+<tr><td>m5.merge_is_exact</td><td>max |&Delta;v| &le; 1e&minus;4, fp32</td><td>1.37e&minus;6 (T3), 3.10e&minus;6 (T0); into bf16: 2.34e&minus;2 / 5.47e&minus;2</td><td><b>CONFIRMED</b></td></tr>
+</table>
+<p><b>How to read it.</b> <em>The memory claim is red, and it should be.</em> The bar came from the paper's 2/3 saving at
+GPT-3 scale; here activations through the frozen VLM dominate every arm, the head-only arm already sits at 0.68 of C,
+and LoRA can only remove what lies between A and C (method (f)). <em>"Matches" on T3 is a floor artefact.</em> Two arms
+at 0&nbsp;% and 3&nbsp;% "match within 10 points" while the same board says LoRA does not beat training the heads alone
+&mdash; a matching claim needs a task where the reference succeeds, which is exactly why the fallback was pre-registered
+(tech development 20.6). <em>T0 is where the comparison has signal</em>, and it is decisive both ways: adapting the
+internals matters (+86 points over the heads), and LoRA on 4.6&nbsp;M parameters lands within one episode of the
+standard recipe on 99.9&nbsp;M. One caveat stays: T0 is easy for C (100/100), so "matches" there is a ceiling
+comparison; a task between floor and ceiling would separate the arms more finely.</p>
+<p><b>Full fine-tuning's update was low-rank on its own: that is LoRA's premise, measured.</b> C was free to change
+every entry of the expert's weights. Its \(\Delta W = W_\text{after} - W_\text{before}\) on three representative expert
+attention layers, against a random Gaussian matrix of the same shape (five draws, computed for this page):</p>
+<table class="out">
+<tr><th>layer [out &times; in]</th><th>C's top-16 energy, T3 / T0</th><th>random matrix</th><th>C's top 5 singular values (T0)</th></tr>
+<tr><td>expert 0 q_proj [960 &times; 720]</td><td>0.88 / 0.88</td><td>0.07</td><td>1.31, 1.06, 0.94, 0.77, 0.62</td></tr>
+<tr><td>expert 7 v_proj [320 &times; 320] (cross-attention)</td><td>0.85 / 0.83</td><td>0.17</td><td>0.66, 0.60, 0.43, 0.35, 0.31</td></tr>
+<tr><td>expert 14 o_proj [720 &times; 960]</td><td>0.98 / 0.98</td><td>0.07</td><td>1.21, 1.05, 0.88, 0.74, 0.68 &mdash; then 0.30</td></tr>
+</table>
+<p class="ref">"Energy" = the share of \(\|\Delta W\|_F^2 = \sum_i s_i^2\) in the top singular values. A matrix with 720
+singular values puts 0.07 of its energy in its top 16 when no direction is special; C's updates put 0.83&ndash;0.98
+there. The late o_proj update is essentially rank 5: its top five carry 0.93 of the energy on T0 (0.92 on T3, where the
+values are 1.02, 1.01, 0.93, 0.86, then 0.44). LoRA's own updates use their rank unevenly too: B's layer-0 q_proj puts
+0.91 (T3) / 0.88 (T0) of its energy into a single direction.</p>
+<details class="code"><summary>The spectrum: what share of ||ΔW||² the top-k singular values carry</summary><pre><code class="language-python" data-src="src/nfv/lora.py">def energy_top_k(s: Tensor, k: int) -&gt; float:
+    # ...
+    e = s.double() ** 2  # [n] s_i^2: the energy along each singular direction
+    tot = float(e.sum())  # ||ΔW||_F^2
+    return float(e[:k].sum()) / tot if tot &gt; 0 else 0.0</code></pre></details>
+<p><b>The viewer's "LoRA anatomy" panel</b> (open either evaluation): the top table is the cost table above per arm, plus
+the two D rows ("OOM (after 8.96)"); the note under it carries the merge check and the bf16 lost-update fraction. Below,
+one cell per spectrum layer with two bar charts: LoRA's \(\Delta W\) (blue, its top r = 16 shaded &mdash; past index 16
+the bars are zero by construction) and C's \(\Delta W\) (orange, the first 64 singular values, top 16 shaded, a dashed
+line at 16). Read the orange bars for where they fall off: well before the dashed line on every layer. Hover a bar for
+its value. The video plays every arm on one seed (T3 80002, the first seed any arm solves; T0 50000, the first where B
+succeeds and A fails).</p>
+
+<p><b>Exercises.</b></p>
+<ol>
+<li><em>Rank, predicted from the spectrum.</em> Train <b>single</b>, mode <b>lora</b>, task <b>t0</b>, at
+<b>r = 4, alpha = 8</b> and again at <b>r = 32, alpha = 64</b> (scale 2 both times, so only capacity changes). The
+tempting prediction is "rank 4 will be much worse than 16". Before running, read the spectrum table: how many directions
+did C's unconstrained update need, and how much of B's r = 16 energy sat in its top four (0.73&ndash;0.995 over the
+measured layers)? Write down a success number for each rank, then run them. Not measured on this page.</li>
+<li><em>Where the memory goes, by batch.</em> Train single <b>lora</b> and <b>expert_full</b> at <b>batch 8</b> (tick
+<b>Measure D</b> on one of them). Activations scale with the batch; parameter state does not. Predict the new B/C ratio
+from method (f) &mdash; does it move toward the 0.6 bar or away from it? &mdash; and whether D's 6.7&nbsp;GiB of
+parameter state plus half the activations fits under 9.65&nbsp;GiB. Not measured on this page.</li>
+<li><em>The deliberately wrong one &mdash; B random instead of zero.</em> In a scratch copy of
+<code>src/nfv/lora.py</code>, initialise <code>lora_B</code> with <code>torch.randn(...) * 0.02</code> instead of
+<code>torch.zeros</code>, and run <code>tests/nfv/test_nfv_lora.py</code>. Predict first which tests fail and why: at
+step 0 the network is no longer the pretrained model &mdash; 128 attention projections each get a random rank-16
+perturbation, every token's attention is shifted before a single gradient step, and training must first undo the noise
+it injected. Then the opposite mistake: both <code>lora_A</code> and <code>lora_B</code> zero &mdash; from method (d)'s
+gradients, which of them ever moves? (The repository's tests encode the right answers:
+<code>test_step0_is_bit_identical_to_the_base</code> and <code>test_step0_gradients_flow_into_B_first</code>.)</li>
+</ol>
+
+<details class="techdev"><summary>Tech development &mdash; what broke, how it was found, what changed</summary>
+<p class="ref">Every change that was needed to make this lesson's experiments and claims work, in the order it was found: symptom, how it was found, cause, change, take-away. Master copy: <code>docs/force_vla_school_techdev.md</code>.</p>
+<p><b>20.1 — lerobot 0.6.1 cannot live in the lab's Python.</b> The brief's recipe was a venv made from the lab interpreter. Found by: reading the installed lerobot's wheel METADATA in the <code>fvb-vla</code> image before writing the Dockerfile — <code>Requires-Python: &gt;=3.12</code>; the lab image is <code>python:3.11</code> (robosuite's numpy&lt;2 world). Change: the <code>/opt/vla</code> venv brings its own CPython 3.12 (uv-managed python-build-standalone under <code>/opt/uv-python</code>; uv is uninstalled from the lab python afterwards), then torch 2.7.1+cu126, <code>lerobot[smolvla]==0.6.1</code>, mujoco 3.3.0, imageio. The lab's python is untouched (3.11, torch 2.5.1, numpy 1.26). Image 7.79 → 13.93 GB (+6.1 GB). Take-away: a dependency's Python floor is as binding as its torch pin — check both.</p>
+<p><b>20.2 — smolvla_base stores the action expert in bf16 too, so lerobot's recipe updates bf16
+weights.</b> Nothing looks wrong in training. Found by: listing parameter dtypes after <code>from_pretrained</code>: the 350 M VLM AND 96.6 M of the expert are bf16 (the expert is built from the VLM's bf16 text config); only the re-created cross-attention k/v (1.6 M) and the projections are fp32. AdamW on bf16 weights keeps bf16 moments, and an update below half a bf16 ulp (~0.4 % of the weight) rounds away. Measured at one peak-LR step of the expert-only fine-tune: 83 % (T3) / 85 % (T0) of the moved expert elements would have been lost in bf16 storage (72 % in the 100-step pilot). Change: every trainable tensor gets an fp32 master copy, frozen weights stay bf16, compute runs under <code>torch.autocast(bfloat16)</code> (Ampere bf16, no loss scaling). Take-away: at 450 M, "bf16 training" must mean bf16 compute, not bf16 weights.</p>
+<p><b>20.3 — an adapter is a drop-in only if it keeps the attributes the host reads.</b> SmolVLA's attention does <code>x.to(layer.self_attn.q_proj.weight.dtype)</code> before every projection. Found by: reading <code>smolvlm_with_expert.py</code> before writing <code>nfv.lora</code>. Change: <code>LoRALinear</code> exposes <code>weight</code> / <code>bias</code> / <code>in_features</code> / <code>out_features</code> as read-through properties of the frozen base (unit-tested with a bf16 base). Take-away: wrap by interface, not just by forward().</p>
+<p><b>20.4 — LoRA did not cut training memory to 60 %; activations dominate at 450 M / batch 16.</b> B peaked at 3.61 GB vs C's 4.74 GB (ratio 0.76, claim NOT CONFIRMED on both suites). Found by: the per-arm peaks — the head-only arm A (1.6 M trainable) already peaks at 3.21 GB = 0.68 x C, a floor no adapter method can beat at this batch. Cause: (i) <code>state_proj</code> feeds the VLM prefix, so every mode back-propagates through all 16 frozen VLM layers and stores their activations (2 cameras x 64 image tokens at 512 px + 48 text + 1 state token); (ii) the 0.91 GB of weights are resident in every arm; (iii) what LoRA removes is C's fp32 expert gradients + AdamW moments (~1.2 GB). B's +0.4 GB over A is the 128 adapter paths (the adapter input is upcast to fp32). D (every parameter) does not fit at all: CUDA OOM after 8.96 GB at batch 16, in fp32-master and in as-loaded bf16. Take-away: LoRA saves memory in proportion to the frozen parameters' optimizer state; the paper's 2/3 saving is a GPT-3-scale, optimizer-dominated number. For activation memory, the levers are batch size and gradient checkpointing.</p>
+<p><b>20.5 — on T3 every arm force-aborts: the dp-only action space cannot express the expert's
+contact phase.</b> T3: A 0 %, B 0 %, C 3 % on 100 shared seeds; 95-100 % of the episodes end in a force abort (mean peak |F| 25-26 N), against the nano base's 31 % aborts / 67 % timeouts. Found by: the outcome counts + splitting the T3 demos by controller mode: 62 % of the demo steps are hybrid force control in search/insert (f_target_z −3.8 N, dp_z exactly 0), while the free-space descent runs at −14.7 mm/step in position mode. Cause: the lesson's action is dp xyz + gripper (as specified), so the force-controlled phase has no channel; one descent step past contact commands 14.7 mm x 800 N/m ≈ 12 N, two reach the 25 N abort, and a chunk executes 8 steps open-loop. Change: none to the arms (pre-registered); the pre-registered fallback (every arm &lt;= 5 % on T3) ran the identical suite on T0. Take-away: the action space decides what can be imitated — the same channel gap as 15.7, 18.8 and 19.18.</p>
+<p><b>20.6 — at the floor, "matches within 10 points" is confirmed by vacuity.</b> On T3 the claim B ≥ C − 0.10 read CONFIRMED (0 % vs 3 %, gap CI −8.5..+2.7) while B ≥ A + 0.10 failed — two arms at 0 % "match". Found by: reading the T3 board before the T0 run. Take-away: a matching claim needs a task where the reference succeeds; the floor fallback was pre-registered for exactly this, and on T0 (A 13 %, B 99 %, C 100 %) both success claims are decisive.</p>
+<p><b>20.7 — what full fine-tuning changed IS low-rank (a result, kept here as a calibration).</b> C's ΔW = W_after − W_before on three expert attention layers: the top-16 singular values carry 0.88 / 0.83 / 0.98 of ||ΔW||²_F on T0 (0.88 / 0.85 / 0.98 on T3); a random Gaussian matrix of the same shapes puts 0.07 / 0.17 / 0.07 there (five draws: 0.172–0.174 for the 320 × 320). The late o_proj update is essentially rank 5 (singular values 1.21, 1.05, 0.88, 0.74, 0.68, then 0.30). The merge is exact in fp32 (max |Δv| 3.1e-6 on a real batch) but not in bf16 storage (5.5e-2): keep adapters fp32 and merge in fp32 before casting.</p>
+</details>
+<h3>Knobs</h3>
+<ul>
+<li><b>Preset</b>: <code>single</code> = one arm; <code>claims_suite</code> = A head, B LoRA, C expert_full in one job,
+plus the D "train everything" memory probe, which runs first on a clean GPU.</li>
+<li><b>Mode (single preset)</b>: <code>head</code> (the new-embodiment projections only), <code>lora</code> (head +
+LoRA on every attention q/k/v/o of the VLM and the action expert) or <code>expert_full</code> (lerobot's recipe: VLM
+frozen, whole action expert).</li>
+<li><b>LoRA rank r</b>: 4, 8, 16 (default) or 32; parameters per layer = r &times; (in + out) (exercise 1).</li>
+<li><b>LoRA alpha</b>: \(\Delta W = (\alpha/r)\,BA\); default 32, \(\alpha = 2r\) is the common choice.</li>
+<li><b>Task</b>: <code>t3</code> (default, peg insertion; the user's choice for this lesson), <code>t0</code> (reach
+&amp; grasp, the pre-registered fallback), or <code>t1</code> / <code>t2</code>.</li>
+<li><b>Training steps per arm</b>: 5000 is the pre-registered budget (26&ndash;28 minutes per arm on the RTX 3080).</li>
+<li><b>Batch size</b>: 16 (exercise 2).</li>
+<li><b>Peak learning rate</b>: 0 = the mode's pre-registered default (head 1e&minus;3, lora 2e&minus;4, expert_full
+1e&minus;4); warm-up min(1000, steps/10), then a cosine to 2.5&nbsp;%.</li>
+<li><b>Demos (first n episodes)</b>: 200 of lesson 15's canonical demos.</li>
+<li><b>Seed</b>: initialisation and batch sampling; the suite's arms use seed + 101&middot;i.</li>
+<li><b>Measure D (train everything) first</b>: the suite always measures it; a single run only when ticked.</li>
+<li><b>Shared held-out seeds</b> (evaluate): every arm rolls on the same seeds, 100 by default.</li>
+<li><b>Eval seed</b> (evaluate): shifts the window inside the task's eval-seed block.</li>
+<li><b>Render the same-seed video</b> (evaluate): every arm on one seed, one after the other.</li>
+<li><b>Eval workers in parallel</b> (evaluate): up to 3, one SmolVLA (~1&nbsp;GB of VRAM) per worker; the simulator is
+CPU-bound.</li>
+</ul>
+
+<script type="application/json" class="blkinfo">{"x": {"t": "input x — the activations entering one projection", "html": "<p><b>Purpose:</b> what the host layer would have fed its nn.Linear: token activations of the VLM (images, words, state) or of the action expert (the noisy chunk). LoRA does not change what arrives here.</p><p><b>Shape:</b> <code>[..., in]</code> — any leading dims (batch × tokens); in = 960 in the VLM, 720 in the expert, 320 for the expert's cross-attention k/v.</p><p><b>Updated:</b> every forward pass.</p>"}, "W": {"t": "frozen W — the pretrained weight, never updated", "html": "<p><b>Purpose:</b> everything SmolVLA learned in pretraining. <code>requires_grad = False</code>: no gradient, no optimizer state, so it costs only its storage (2 bytes per entry in bf16).</p><p><b>Shape:</b> <code>[out, in]</code> + bias <code>[out]</code>; e.g. a VLM q_proj is 960 × 960 = 921 600 numbers.</p><p><b>Updated:</b> never. The wrapper reads <code>.weight</code> / <code>.bias</code> through to it, because SmolVLA's attention code casts its input to <code>q_proj.weight.dtype</code> before every projection (tech development 20.3).</p>"}, "A": {"t": "A — the down-projection (in → r)", "html": "<p><b>Purpose:</b> picks r directions in the input space; the adapter only ever sees x through these r numbers.</p><p><b>Shape:</b> <code>[r, in]</code>, fp32 whatever the base dtype; r = 16 here.</p><p><b>Init:</b> kaiming-uniform (nn.Linear's own). It must not start at zero: with B = 0 its gradient is zero at step 0 anyway, and with both at zero neither would ever move.</p><p><b>Updated:</b> every AdamW step, from the moment B is non-zero.</p>"}, "B": {"t": "B — the up-projection (r → out), zero at step 0", "html": "<p><b>Purpose:</b> says how each of the r directions should move the output. Starting it at zero makes ΔW = BA = 0, so the adapted network computes exactly the pretrained output at step 0 (a unit test, bit for bit).</p><p><b>Shape:</b> <code>[out, r]</code>, fp32.</p><p><b>Updated:</b> every AdamW step; it moves first, since ∂L/∂B = (α/r) g (Ax)ᵀ is non-zero while ∂L/∂A = 0.</p>"}, "sum": {"t": "the sum — W x + (α/r)·B(A x)", "html": "<p><b>Purpose:</b> the layer's output: the frozen path plus the scaled low-rank bypass, computed as B(A x) so ΔW is never formed while training (r·(in + out) multiply-adds per token instead of in·out).</p><p><b>Shape:</b> <code>[..., out]</code>, in the base output's dtype (the bypass is cast back).</p><p><b>Detail:</b> α/r = 32/16 = 2 here. The 1/r keeps the effective step of ΔW roughly independent of the rank, so the rank knob changes capacity, not the learning rate.</p>"}, "merge": {"t": "merge — fold the adapter back into W", "html": "<p><b>Purpose:</b> after training, W' = W + (α/r)·B·A is one ordinary <code>[out, in]</code> matrix in a plain nn.Linear: the deployed network has exactly the base architecture and latency.</p><p><b>Measured:</b> exact to 1.37e-6 (T3) / 3.10e-6 (T0) on a real batch in fp32 (mean |v| 0.29–0.31); merged into bf16 weights 2.34e-2 / 5.47e-2 — bf16 rounds each merged entry to 8 significant bits.</p><p><b>Updated:</b> once, after training (<code>merge_lora</code> replaces all 128 wrappers in place).</p>"}, "cams": {"t": "two cameras — static and wrist", "html": "<p><b>Purpose:</b> the gantry's rgb_static and rgb_wrist become SmolVLA's camera1 and camera2.</p><p><b>Shape:</b> uint8 <code>[96, 96, 3]</code> each → float <code>[B, 3, 96, 96]</code> in [0, 1]; SmolVLA's prepare_images upsamples to 512 × 512 and maps to [−1, 1] for SigLIP; after the connector's pixel shuffle, 64 tokens per camera.</p><p><b>Updated:</b> every chunk (every 8 env steps) in closed loop.</p>"}, "words": {"t": "instruction + state — the rest of the prefix", "html": "<p><b>Purpose:</b> the instruction plus a newline, tokenised by SmolVLM's tokenizer, right-padded to 48 tokens; plus ONE state token made by state_proj from the z-scored 8-D state padded to 32.</p><p><b>Shape:</b> ids <code>[B, 48]</code> + mask; state <code>[B, 32]</code> → <code>[B, 1, 960]</code>.</p><p><b>Detail:</b> because the state token enters the VLM, the trainable state_proj sits <i>below</i> 16 frozen layers — every arm back-propagates through the whole VLM text model, which is why activations dominate the memory.</p>"}, "head": {"t": "head projections — the new-embodiment interface (every arm trains them)", "html": "<p><b>Purpose:</b> state_proj [32 → 960], action_in_proj [32 → 720], action_out_proj [720 → 32] and the time-action MLP (action_time_mlp_in/out): the parts that must be re-learned for a robot with different state and action spaces. Arm A trains only these.</p><p><b>Shape:</b> 1 635 152 parameters, fp32.</p><p><b>Updated:</b> every step in every arm (A at lr 1e-3, B 2e-4, C 1e-4).</p>"}, "vision": {"t": "SigLIP vision tower + connector — frozen in every trained arm", "html": "<p><b>Purpose:</b> turns each 512-px image into patch features; the connector pixel-shuffles them to 64 tokens per camera.</p><p><b>Shape:</b> 86.4 M (vision) + 11.8 M (connector) parameters, bf16.</p><p><b>Updated:</b> never in A, B, C (no LoRA here: its general image features are kept). Only D trains it — and then its activations over the full patch grid must be stored too; D ran out of memory after 8.96 GiB.</p>"}, "vlm": {"t": "VLM text model — 16 layers, frozen, with 64 adapters", "html": "<p><b>Purpose:</b> reads image tokens, words and the state token (the prefix) and provides the keys/values the action expert attends to.</p><p><b>Shape:</b> 251.9 M parameters (bf16), hidden 960; per layer q/o 960 → 960, k/v 960 → 320 (grouped-query), MLP 960 → 2560 → 960 (75 % of the layer's weights, not adapted).</p><p><b>LoRA:</b> q, k, v, o of all 16 layers = 64 adapters, 1 638 400 parameters at r = 16. C (lerobot's recipe) never changes this model; B does, through its adapters.</p>"}, "expert": {"t": "action expert — 16 layers, width 720, with 64 adapters", "html": "<p><b>Purpose:</b> denoises the action chunk by flow matching (10 Euler steps at inference), attending to the VLM's K/V; every other layer is cross-attention.</p><p><b>Shape:</b> 98.2 M parameters (96.6 M bf16 + the re-created cross-attention k/v in fp32); q 720 → 960, o 960 → 720, k/v 720 → 320 (self) or 320 → 320 (cross).</p><p><b>LoRA:</b> q, k, v, o of all 16 layers = 64 adapters, 1 290 240 parameters. Arm C trains every weight of this block instead (99.9 M with the heads); the spectrum layers 0 q_proj, 7 v_proj and 14 o_proj come from here.</p>"}, "chunk": {"t": "action chunk — the policy's output", "html": "<p><b>Purpose:</b> action_out_proj maps the expert's tokens to a 32-dim flow velocity per chunk step; the first 4 dims, de-normalised with the demo statistics, are dp xyz (m/step) and the gripper.</p><p><b>Shape:</b> <code>[16, 32]</code> → <code>[16, 4]</code>; 8 of the 16 steps are executed before re-planning.</p><p><b>Detail:</b> no force channel — on T3 that is why every arm aborts: the demos' search and insert run on a force target with dp_z = 0 (tech development 20.5).</p>"}, "memA": {"t": "A head — 3.21 GiB peak", "html": "<p><b>Measured:</b> torch.cuda.max_memory_allocated while training at batch 16 = 3.206 GiB (both suites); 3.26 steps/s.</p><p><b>What it is:</b> 0.36 % of the weights train, so almost all of this is the resident model (~0.9 GB) and the activations stored for the backward pass through the 16 frozen VLM layers. It is the floor for any adapter method at this batch: 0.68 × C.</p>"}, "memB": {"t": "B LoRA — 3.61 GiB peak", "html": "<p><b>Measured:</b> 3.611 GiB at batch 16; 3.02–3.03 steps/s.</p><p><b>What it is:</b> A's 3.21 GiB plus 0.40 GiB for the 128 adapter paths (their fp32-upcast inputs are stored for backward). Its parameter state is only ~73 MB. B / C = 0.76: the pre-registered 0.6 bar is not met.</p>"}, "memC": {"t": "C expert_full — 4.74 GiB peak", "html": "<p><b>Measured:</b> 4.741 GiB at batch 16; 3.05–3.06 steps/s.</p><p><b>What it is:</b> A's footprint plus the expert's fp32 master copy (+0.19 GB over bf16), its gradients (0.40 GB) and AdamW's two moments (0.80 GB) — ~1.3 GiB of the 1.53 GiB gap to A. This is the part LoRA removes.</p>"}, "memD": {"t": "D everything — CUDA OOM", "html": "<p><b>Measured:</b> 3 training steps with all 450 046 176 parameters trainable at batch 16: CUDA out of memory after 8.96 GiB allocated, on a card with 9.65 GiB total — in fp32-master precision and in lerobot's as-loaded bf16 alike.</p><p><b>Why:</b> 16 bytes per trainable parameter (fp32 weight, gradient, two AdamW moments) is 7.2 GB (6.7 GiB) before any activation — and training the vision tower adds its activations as well.</p>"}}</script>

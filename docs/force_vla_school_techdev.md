@@ -374,3 +374,74 @@ hole it has found, with dp_z ≈ 0, because its demonstrations pushed through th
 position-head base cannot emit. The operator pushes in position mode, and that vertical gap is
 what the residual learned — the same "which action channel carries the motion" lesson as 15.7
 and 18.8.
+
+## Lesson 20 — LoRA on a large pretrained VLA (M5)
+
+Runs: T3 suite `lab/data/runs/lora-vla/261101-210003-27ae` (81 min) + eval `261101-222133-94d9`;
+pre-registered T0 fallback suite `261101-222627-da39` + eval `261101-234737-865a`
+(`outputs/lora_vla/PREREG.txt`). SmolVLA 450 M, batch 16, 5000 steps per arm.
+
+**20.1 — lerobot 0.6.1 cannot live in the lab's Python.** The brief's recipe was a venv made from
+the lab interpreter. Found by: reading the installed lerobot's wheel METADATA in the `fvb-vla`
+image before writing the Dockerfile — `Requires-Python: >=3.12`; the lab image is
+`python:3.11` (robosuite's numpy<2 world). Change: the `/opt/vla` venv brings its own CPython
+3.12 (uv-managed python-build-standalone under `/opt/uv-python`; uv is uninstalled from the lab
+python afterwards), then torch 2.7.1+cu126, `lerobot[smolvla]==0.6.1`, mujoco 3.3.0, imageio.
+The lab's python is untouched (3.11, torch 2.5.1, numpy 1.26). Image 7.79 → 13.93 GB (+6.1 GB).
+Take-away: a dependency's Python floor is as binding as its torch pin — check both.
+
+**20.2 — smolvla_base stores the action expert in bf16 too, so lerobot's recipe updates bf16
+weights.** Nothing looks wrong in training. Found by: listing parameter dtypes after
+`from_pretrained`: the 350 M VLM AND 96.6 M of the expert are bf16 (the expert is built from
+the VLM's bf16 text config); only the re-created cross-attention k/v (1.6 M) and the
+projections are fp32. AdamW on bf16 weights keeps bf16 moments, and an update below half a
+bf16 ulp (~0.4 % of the weight) rounds away. Measured at one peak-LR step of the expert-only
+fine-tune: 83 % (T3) / 85 % (T0) of the moved expert elements would have been lost in bf16
+storage (72 % in the 100-step pilot). Change: every trainable tensor gets an fp32 master copy,
+frozen weights stay bf16, compute runs under `torch.autocast(bfloat16)` (Ampere bf16, no loss
+scaling). Take-away: at 450 M, "bf16 training" must mean bf16 compute, not bf16 weights.
+
+**20.3 — an adapter is a drop-in only if it keeps the attributes the host reads.** SmolVLA's
+attention does `x.to(layer.self_attn.q_proj.weight.dtype)` before every projection. Found by:
+reading `smolvlm_with_expert.py` before writing `nfv.lora`. Change: `LoRALinear` exposes
+`weight` / `bias` / `in_features` / `out_features` as read-through properties of the frozen
+base (unit-tested with a bf16 base). Take-away: wrap by interface, not just by forward().
+
+**20.4 — LoRA did not cut training memory to 60 %; activations dominate at 450 M / batch 16.**
+B peaked at 3.61 GB vs C's 4.74 GB (ratio 0.76, claim NOT CONFIRMED on both suites). Found by:
+the per-arm peaks — the head-only arm A (1.6 M trainable) already peaks at 3.21 GB = 0.68 x C,
+a floor no adapter method can beat at this batch. Cause: (i) `state_proj` feeds the VLM prefix,
+so every mode back-propagates through all 16 frozen VLM layers and stores their activations
+(2 cameras x 64 image tokens at 512 px + 48 text + 1 state token); (ii) the 0.91 GB of weights
+are resident in every arm; (iii) what LoRA removes is C's fp32 expert gradients + AdamW moments
+(~1.2 GB). B's +0.4 GB over A is the 128 adapter paths (the adapter input is upcast to fp32).
+D (every parameter) does not fit at all: CUDA OOM after 8.96 GB at batch 16, in fp32-master and
+in as-loaded bf16. Take-away: LoRA saves memory in proportion to the frozen parameters'
+optimizer state; the paper's 2/3 saving is a GPT-3-scale, optimizer-dominated number. For
+activation memory, the levers are batch size and gradient checkpointing.
+
+**20.5 — on T3 every arm force-aborts: the dp-only action space cannot express the expert's
+contact phase.** T3: A 0 %, B 0 %, C 3 % on 100 shared seeds; 95-100 % of the episodes end in a
+force abort (mean peak |F| 25-26 N), against the nano base's 31 % aborts / 67 % timeouts.
+Found by: the outcome counts + splitting the T3 demos by controller mode: 62 % of the demo steps
+are hybrid force control in search/insert (f_target_z −3.8 N, dp_z exactly 0), while the
+free-space descent runs at −14.7 mm/step in position mode. Cause: the lesson's action is dp xyz
++ gripper (as specified), so the force-controlled phase has no channel; one descent step past
+contact commands 14.7 mm x 800 N/m ≈ 12 N, two reach the 25 N abort, and a chunk executes 8
+steps open-loop. Change: none to the arms (pre-registered); the pre-registered fallback (every
+arm <= 5 % on T3) ran the identical suite on T0. Take-away: the action space decides what can
+be imitated — the same channel gap as 15.7, 18.8 and 19.18.
+
+**20.6 — at the floor, "matches within 10 points" is confirmed by vacuity.** On T3 the claim
+B ≥ C − 0.10 read CONFIRMED (0 % vs 3 %, gap CI −8.5..+2.7) while B ≥ A + 0.10 failed — two
+arms at 0 % "match". Found by: reading the T3 board before the T0 run. Take-away: a matching
+claim needs a task where the reference succeeds; the floor fallback was pre-registered for
+exactly this, and on T0 (A 13 %, B 99 %, C 100 %) both success claims are decisive.
+
+**20.7 — what full fine-tuning changed IS low-rank (a result, kept here as a calibration).** C's
+ΔW = W_after − W_before on three expert attention layers: the top-16 singular values carry
+0.88 / 0.83 / 0.98 of ||ΔW||²_F on T0 (0.88 / 0.85 / 0.98 on T3); a random Gaussian matrix of
+the same shapes puts 0.07 / 0.17 / 0.07 there (five draws: 0.172–0.174 for the 320 × 320). The late o_proj update is essentially rank 5
+(singular values 1.21, 1.05, 0.88, 0.74, 0.68, then 0.30). The merge is exact in fp32 (max
+|Δv| 3.1e-6 on a real batch) but not in bf16 storage (5.5e-2): keep adapters fp32 and merge
+in fp32 before casting.

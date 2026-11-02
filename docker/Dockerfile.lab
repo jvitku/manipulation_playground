@@ -7,3 +7,18 @@ b='https://ossci-datasets.s3.amazonaws.com/mnist/'; \
 [u.urlretrieve(b+f+'.gz', '/opt/mnist/'+f+'.gz') for f in \
 ('train-images-idx3-ubyte','train-labels-idx1-ubyte','t10k-images-idx3-ubyte','t10k-labels-idx1-ubyte')]" \
  && chmod -R a+rX /opt/mnist
+# Lesson 20 (lora-vla): LeRobot 0.6.1 + SmolVLA in a SEPARATE venv /opt/vla, so the lab's own
+# python (3.11, torch 2.5.1, numpy<2 for robosuite) stays exactly as it is. lerobot 0.6.1 needs
+# Python >= 3.12 and torch >= 2.7, so the venv brings its own CPython 3.12 (uv-managed,
+# python-build-standalone, kept under /opt/uv-python) plus torch 2.7.1+cu126; mujoco 3.3.0 (the
+# repo's pin) lets the venv's workers run nfv.sim closed-loop, imageio(-ffmpeg) writes their
+# rollout.mp4. uv is removed again from the lab python afterwards. Weights are NOT baked in: the
+# workers read the bind-mounted cache (HF_HOME=/workspace/outputs/hf_cache, HF_HUB_OFFLINE=1).
+RUN pip install --no-cache-dir "uv==0.13.6" \
+ && UV_PYTHON_INSTALL_DIR=/opt/uv-python uv venv --seed --python 3.12 /opt/vla \
+ && /opt/vla/bin/pip install --no-cache-dir torch==2.7.1 torchvision==0.22.1 \
+      --index-url https://download.pytorch.org/whl/cu126 \
+ && /opt/vla/bin/pip install --no-cache-dir "lerobot[smolvla]==0.6.1" mujoco==3.3.0 \
+      "imageio==2.37.*" "imageio-ffmpeg==0.6.*" \
+ && pip uninstall -y uv \
+ && chmod -R a+rX /opt/vla /opt/uv-python
