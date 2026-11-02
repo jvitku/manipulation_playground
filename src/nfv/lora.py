@@ -140,18 +140,18 @@ class LoRALinear(nn.Module):
 
     def delta_weight(self) -> Tensor:
         """ΔW = (alpha / r) · B @ A  [out, in], in the adapter dtype; rank <= r."""
-        return self.scale * (self.lora_B @ self.lora_A)
+        return self.scale * (self.lora_B @ self.lora_A)  # [out, r] @ [r, in] -> [out, in]
 
     @torch.no_grad()
     def merge(self) -> nn.Linear:
         """A plain nn.Linear computing W + ΔW (the base's dtype/device): zero extra latency."""
-        b = self.base
+        b = self.base  # W = b.weight [out, in], b.bias [out]
         m = nn.Linear(b.in_features, b.out_features, bias=b.bias is not None,
                       device=b.weight.device, dtype=b.weight.dtype)  # fmt: skip
         w = b.weight.to(self.lora_A.dtype) + self.delta_weight()  # [out, in], add in fp32
-        m.weight.copy_(w.to(b.weight.dtype))
+        m.weight.copy_(w.to(b.weight.dtype))  # [out, in] in W's dtype: a bf16 W rounds here
         if b.bias is not None:
-            m.bias.copy_(b.bias)
+            m.bias.copy_(b.bias)  # [out], unchanged
         m.requires_grad_(False)
         return m
 
@@ -234,7 +234,7 @@ def inject_lora(
     per_layer = {}
     for name in names:  # collected first: never mutate the module tree while iterating it
         parent, leaf = _parent(model, name)
-        lora = LoRALinear(getattr(parent, leaf), r=r, alpha=alpha, dropout=dropout)
+        lora = LoRALinear(getattr(parent, leaf), r=r, alpha=alpha, dropout=dropout)  # [in]->[out]
         setattr(parent, leaf, lora)
         per_layer[name] = {"in": lora.in_features, "out": lora.out_features,
                            "params": lora.n_adapter_params()}  # fmt: skip
@@ -304,6 +304,6 @@ def energy_top_k(s: Tensor, k: int) -> float:
     """Share of the squared Frobenius norm ||ΔW||_F^2 = sum_i s_i^2 carried by the top-k
     singular values. A LoRA update has rank <= r, so energy_top_k(s, r) == 1 up to rounding; a
     full fine-tune's update is low-rank in the lesson's sense if this is large for small k."""
-    e = s.double() ** 2
-    tot = float(e.sum())
+    e = s.double() ** 2  # [n] s_i^2: the energy along each singular direction
+    tot = float(e.sum())  # ||ΔW||_F^2
     return float(e[:k].sum()) / tot if tot > 0 else 0.0

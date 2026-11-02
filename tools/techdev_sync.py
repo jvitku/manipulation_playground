@@ -19,6 +19,7 @@ MAP = {
     "nano-force-vla.html": ("## Lesson 17",),
     "nano-force-vla2.html": ("## Lesson 18",),
     "force-rl.html": ("## Lesson 19",),
+    "lora-vla.html": ("## Lesson 20",),
 }
 SUMMARY = "Tech development &mdash; what broke, how it was found, what changed"
 BLOCK = re.compile(r'<details class="techdev">.*?</details>\n?', re.S)

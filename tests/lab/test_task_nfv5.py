@@ -54,7 +54,7 @@ def test_spec_shape():
     assert {c["id"] for c in s.charts} >= {"loss", "vram", "speed"}
 
 
-def test_lesson_placeholder_has_the_question():
+def test_lesson_has_the_question():
     txt = (ROOT / "lab/web/lessons/lora-vla.html").read_text()
     assert "<h3>The question</h3>" in txt and "<p>" in txt
 

@@ -441,7 +441,7 @@ exactly this, and on T0 (A 13 %, B 99 %, C 100 %) both success claims are decisi
 **20.7 — what full fine-tuning changed IS low-rank (a result, kept here as a calibration).** C's
 ΔW = W_after − W_before on three expert attention layers: the top-16 singular values carry
 0.88 / 0.83 / 0.98 of ||ΔW||²_F on T0 (0.88 / 0.85 / 0.98 on T3); a random Gaussian matrix of
-the same shapes puts 0.07 / 0.18 / 0.07 there. The late o_proj update is essentially rank 5
+the same shapes puts 0.07 / 0.17 / 0.07 there (five draws: 0.172–0.174 for the 320 × 320). The late o_proj update is essentially rank 5
 (singular values 1.21, 1.05, 0.88, 0.74, 0.68, then 0.30). The merge is exact in fp32 (max
 |Δv| 3.1e-6 on a real batch) but not in bf16 storage (5.5e-2): keep adapters fp32 and merge
 in fp32 before casting.
